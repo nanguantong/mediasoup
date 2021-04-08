@@ -94,6 +94,7 @@ namespace Channel
 		}
 		else
 		{
+			// 长度字符个数
 			nsNumLen = static_cast<size_t>(std::ceil(std::log10(static_cast<double>(nsPayloadLen) + 1)));
 			std::sprintf(reinterpret_cast<char*>(this->WriteBuffer), "%zu:", nsPayloadLen);
 			std::memcpy(this->WriteBuffer + nsNumLen + 1, nsPayload, nsPayloadLen);

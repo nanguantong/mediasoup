@@ -93,15 +93,19 @@ namespace RTC
 
 	private:
 		// Allocated by this.
+		// Table of transportId / Transport pairs.
 		std::unordered_map<std::string, RTC::Transport*> mapTransports;
+		// Table of rtpObserverId / RtpObserver pairs.
 		std::unordered_map<std::string, RTC::RtpObserver*> mapRtpObservers;
 		// Others.
 		std::unordered_map<RTC::Producer*, std::unordered_set<RTC::Consumer*>> mapProducerConsumers;
 		std::unordered_map<RTC::Consumer*, RTC::Producer*> mapConsumerProducer;
 		std::unordered_map<RTC::Producer*, std::unordered_set<RTC::RtpObserver*>> mapProducerRtpObservers;
+		// Table of producerId / Producer pairs.
 		std::unordered_map<std::string, RTC::Producer*> mapProducers;
 		std::unordered_map<RTC::DataProducer*, std::unordered_set<RTC::DataConsumer*>> mapDataProducerDataConsumers;
 		std::unordered_map<RTC::DataConsumer*, RTC::DataProducer*> mapDataConsumerDataProducer;
+		// Table of dataProducerId / DataProducer pairs.
 		std::unordered_map<std::string, RTC::DataProducer*> mapDataProducers;
 	};
 } // namespace RTC

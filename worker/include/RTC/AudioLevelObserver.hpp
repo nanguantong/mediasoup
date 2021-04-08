@@ -43,7 +43,9 @@ namespace RTC
 	private:
 		// Passed by argument.
 		uint16_t maxEntries{ 1u };
+		// [-127, 0]
 		int8_t threshold{ -80 };
+		// [250, 5000]
 		uint16_t interval{ 1000u };
 		// Allocated by this.
 		Timer* periodicTimer{ nullptr };

@@ -54,6 +54,7 @@ private:
 	PayloadChannel::UnixStreamSocket* payloadChannel{ nullptr };
 	// Allocated by this.
 	SignalsHandler* signalsHandler{ nullptr };
+	// <routerId, RTC::Router*>
 	std::unordered_map<std::string, RTC::Router*> mapRouters;
 	// Others.
 	bool closed{ false };
