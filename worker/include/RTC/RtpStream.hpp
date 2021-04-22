@@ -44,10 +44,10 @@ namespace RTC
 			uint32_t rtxSsrc{ 0u };
 			uint8_t rtxPayloadType{ 0u };
 			bool useNack{ false };
-			bool usePli{ false };
-			bool useFir{ false };
+			bool usePli{ false }; // Picture Loss Indication
+			bool useFir{ false }; // Full Intra Request
 			bool useInBandFec{ false };
-			bool useDtx{ false };
+			bool useDtx{ false }; // Discontinuous Transmission
 			uint8_t spatialLayers{ 1u };
 			uint8_t temporalLayers{ 1u };
 		};

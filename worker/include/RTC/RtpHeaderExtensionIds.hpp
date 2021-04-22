@@ -9,8 +9,8 @@ namespace RTC
 	{
 		// 0 means no id.
 		uint8_t mid{ 0u };
-		uint8_t rid{ 0u };
-		uint8_t rrid{ 0u };
+		uint8_t rid{ 0u };  // RTP_STREAM_ID
+		uint8_t rrid{ 0u }; // REPAIRED_RTP_STREAM_ID
 		uint8_t absSendTime{ 0u };
 		uint8_t transportWideCc01{ 0u };
 		uint8_t frameMarking07{ 0u }; // NOTE: Remove once RFC.
