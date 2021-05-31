@@ -1,9 +1,19 @@
 # Changelog
 
 
-### 3.7.6 (WIP)
+### 3.7.7 (WIP)
 
-* SctpAssociation: don't warn if SCTP send buffer is full.
+* Thread and memory safety fixes needed for mediasoup-rust (PR #562 by @nazar-pc).
+* Update NPM deps.
+
+
+### 3.7.6
+
+* `Transport`: Implement new `setMaxOutgoingBitrate()` method (PR #555 by @t-mullen). 
+* `SctpAssociation`: Don't warn if SCTP send buffer is full.
+* Rust: Update modules structure and other minor improvements for Rust version (PR #558).
+* `mediasoup-worker`: Avoid duplicated basenames so that libmediasoup-worker is compilable on macOS (PR #557).
+* Update NPM deps.
 
 
 ### 3.7.5
