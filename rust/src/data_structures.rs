@@ -196,6 +196,44 @@ pub enum TransportTuple {
     },
 }
 
+impl TransportTuple {
+    /// Local IP address.
+    pub fn local_ip(&self) -> IpAddr {
+        let (Self::WithRemote { local_ip, .. } | Self::LocalOnly { local_ip, .. }) = self;
+        *local_ip
+    }
+
+    /// Local port.
+    pub fn local_port(&self) -> u16 {
+        let (Self::WithRemote { local_port, .. } | Self::LocalOnly { local_port, .. }) = self;
+        *local_port
+    }
+
+    /// Protocol.
+    pub fn protocol(&self) -> TransportProtocol {
+        let (Self::WithRemote { protocol, .. } | Self::LocalOnly { protocol, .. }) = self;
+        *protocol
+    }
+
+    /// Remote IP address.
+    pub fn remote_ip(&self) -> Option<IpAddr> {
+        if let TransportTuple::WithRemote { remote_ip, .. } = self {
+            Some(*remote_ip)
+        } else {
+            None
+        }
+    }
+
+    /// Remote port.
+    pub fn remote_port(&self) -> Option<u16> {
+        if let TransportTuple::WithRemote { remote_port, .. } = self {
+            Some(*remote_port)
+        } else {
+            None
+        }
+    }
+}
+
 /// DTLS state.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -752,4 +790,81 @@ impl WebRtcMessage {
             WebRtcMessage::EmptyBinary => (57_u32, Bytes::from(vec![0_u8])),
         }
     }
+}
+
+/// RTP packet info in trace event.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RtpPacketTraceInfo {
+    /// RTP payload type.
+    pub payload_type: u8,
+    /// Sequence number.
+    pub sequence_number: u16,
+    /// Timestamp.
+    pub timestamp: u32,
+    /// Whether packet has marker or not.
+    pub marker: bool,
+    /// RTP stream SSRC.
+    pub ssrc: u32,
+    /// Whether packet contains a key frame.
+    pub is_key_frame: bool,
+    /// Packet size.
+    pub size: usize,
+    /// Payload size.
+    pub payload_size: usize,
+    /// The spatial layer index (from 0 to N).
+    pub spatial_layer: u8,
+    /// The temporal layer index (from 0 to N).
+    pub temporal_layer: u8,
+    /// The MID RTP extension value as defined in the BUNDLE specification
+    pub mid: Option<String>,
+    /// RTP stream RID value.
+    pub rid: Option<String>,
+    /// RTP stream RRID value.
+    pub rrid: Option<String>,
+    /// Transport-wide sequence number.
+    pub wide_sequence_number: Option<u16>,
+    /// Whether this is an RTX packet.
+    #[serde(default)]
+    pub is_rtx: bool,
+}
+
+/// SSRC info in trace event.
+#[derive(Debug, Copy, Clone, Deserialize, Serialize)]
+pub struct SsrcTraceInfo {
+    /// RTP stream SSRC.
+    ssrc: u32,
+}
+
+/// Bandwidth estimation type.
+#[derive(Debug, Copy, Clone, Deserialize, Serialize)]
+pub enum BweType {
+    /// Transport-wide Congestion Control.
+    #[serde(rename = "transport-cc")]
+    TransportCc,
+    /// Receiver Estimated Maximum Bitrate.
+    #[serde(rename = "remb")]
+    Remb,
+}
+
+/// BWE info in trace event.
+#[derive(Debug, Copy, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BweTraceInfo {
+    /// Bandwidth estimation type.
+    r#type: BweType,
+    /// Desired bitrate
+    desired_bitrate: u32,
+    /// Effective desired bitrate.
+    effective_desired_bitrate: u32,
+    /// Min bitrate.
+    min_bitrate: u32,
+    /// Max bitrate.
+    max_bitrate: u32,
+    /// Start bitrate.
+    start_bitrate: u32,
+    /// Max padding bitrate.
+    max_padding_bitrate: u32,
+    /// Available bitrate.
+    available_bitrate: u32,
 }
