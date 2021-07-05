@@ -17,6 +17,99 @@
 
 namespace RTC
 {
+	/**
+	 * {
+	 *   "id":                     // optional,  string, 序列化时有效
+	 *   "type":,                  // optional,  string, 序列化时有效
+	 *   "kind":,                  // mandatory, string, audio/video
+	 *   "rtpParameters": {        // mandatory, RtpParameters
+	 *     "mid":,                 // optional,  string
+	 *     "codecs": [{            // mandatory, RtpCodecParameters
+	 *       "mimeType":,          // mandatory, string
+	 *       "payloadType":,       // mandatory, uint8_t
+	 *       "clockRate":,         // mandatory, uint32_t
+	 *       "channels":,          // optional,  uint8_t
+	 *       "parameters": {       // optional,  Parameters
+	 *       },
+	 *       "rtcpFeedback": [{    // optional,  RtcpFeedback
+	 *         "type":,            // mandatory, string
+	 *         "parameter":        // optional,  string
+	 *       }]
+	 *     }],
+	 *     "encodings": [{         // mandatory, RtpEncodingParameters
+	 *       "ssrc":,              // optional,  uint32_t
+	 *       "rid":,               // optional,  string
+	 *       "codecPayloadType":,  // optional,  uint8_t
+	 *       "rtx": {              // optional,  RtpRtxParameters
+	 *         "ssrc":             // optional,  uint32_t
+	 *       },
+	 *       "maxBitrate":,        // optional,  uint32_t
+	 *       "maxFramerate":,      // optional,  double
+	 *       "dtx":,               // optional,  bool
+	 *       "scalabilityMode":,   // optional,  string
+	 *       "spatialLayers":,     // optional,  uint8_t
+	 *       "temporalLayers":,    // optional,  uint8_t
+	 *       "ksvc":               // optional,  bool
+	 *     }],
+	 *     "headerExtensions": {   // optional,  RtpHeaderExtensionParameters
+	 *       "uri":,               // mandatory, string, 获取 RtpHeaderExtensionUri::Type
+	 *       "id":,                // mandatory, uint8_t, >0
+	 *       "encrypt":,           // optional,  bool
+	 *       "parameters": {       // optional,  Parameters
+	 *       }
+	 *     },
+	 *     "rtcp": {               // optional, RtcpParameters
+	 *       "cname":,             // optional, string
+	 *       "ssrc":,              // optional, uint32_t
+	 *       "reducedSize":        // optional, bool
+	 *     }
+	 *   },
+	 *   "rtpMapping": {           // mandatory
+	 *     "codecs": [{
+	 *       "payloadType":,       // mandatory, uint8_t
+	 *       "mappedPayloadType":  // mandatory, uint8_t
+	 *     }],
+	 *     "encodings": [{
+	 *       "ssrc":               // optional,  uint32_t
+	 *       "rid":,               // optional,  string
+	 *       "mappedSsrc":         // mandatory, uint32_t
+	 *     }]
+	 *   },
+	 *   "paused":,                // optional, bool
+	 *   "keyFrameRequestDelay":   // optional, uint32_t, kind=="video"时有效, KeyFrameRequestManager
+	 *   "rtpStreams": [{          // optional, RtpStreamRecv, 序列化时有效
+	 *     "params": {             // mandatory, Params
+	 *       "encodingIdx":,       // mandatory, uint32_t
+	 *       "ssrc":,              // mandatory, uint32_t
+	 *       "payloadType":,       // mandatory, uint8_t
+	 *       "mimeType":,          // mandatory, string
+	 *       "clockRate":,         // mandatory, uint32_t
+	 *       "rid":,               // optional,  string
+	 *       "cname":,             // mandatory, string
+	 *       "rtxSsrc":,           // optional,  uint32_t
+	 *       "rtxPayloadType":,    // optional,  uint8_t
+	 *       "useNack":,           // mandatory, bool
+	 *       "usePli":,            // mandatory, bool
+	 *       "useFir":,            // mandatory, bool
+	 *       "useInBandFec":,      // mandatory, bool
+	 *       "useDtx":,            // mandatory, bool
+	 *       "spatialLayers":,     // mandatory, uint8_t
+	 *       "temporalLayers":     // mandatory, uint8_t
+	 *     },
+	 *     "score":,               // mandatory, uint8_t
+	 *     "rtxStream": {          // optional,  RtxStream
+	 *       "ssrc":,              // mandatory, uint32_t
+	 *       "payloadType":,       // mandatory, uint8_t
+	 *       "mimeType":,          // mandatory, string
+	 *       "clockRate":,         // mandatory, uint32_t
+	 *       "rrid":,              // optional, string
+	 *       "cname":              // mandatory, string
+	 *     }
+	 *   }],
+	 *   "traceEventTypes"         // optional, string, "rtp,keyframe,nack,pli,fir", 序列化时有效
+	 * }
+	 */
+
 	/* Instance methods. */
 
 	Producer::Producer(const std::string& id, RTC::Producer::Listener* listener, json& data)
@@ -437,6 +530,7 @@ namespace RTC
 		jsonObject["traceEventTypes"] = traceEventTypesStream.str();
 	}
 
+	// 填充所有的 RtpStreamRecv stats
 	void Producer::FillJsonStats(json& jsonArray) const
 	{
 		MS_TRACE();
@@ -503,6 +597,7 @@ namespace RTC
 
 				MS_DEBUG_DEV("Producer paused [producerId:%s]", this->id.c_str());
 
+				// 通知 router
 				this->listener->OnProducerPaused(this);
 
 				request->Accept();

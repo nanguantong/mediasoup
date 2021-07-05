@@ -2326,6 +2326,7 @@ namespace RTC
 		}
 	}
 
+	// 分配可用输出码率给 所有的mapConsumers (每个consumer可能有多层)
 	void Transport::DistributeAvailableOutgoingBitrate()
 	{
 		MS_TRACE();
@@ -2409,6 +2410,7 @@ namespace RTC
 		}
 	}
 
+	// 计算mapConsumers累积需要的输出码率
 	void Transport::ComputeOutgoingDesiredBitrate(bool forceBitrate)
 	{
 		MS_TRACE();

@@ -64,8 +64,8 @@ namespace RTC
 			uint8_t len : 4;
 			uint8_t id : 4;
 #elif defined(MS_BIG_ENDIAN)
-			uint8_t id : 4;
-			uint8_t len : 4;
+			uint8_t id : 4;  // (0, 14]
+			uint8_t len : 4; // (0, 16]
 #endif
 			uint8_t value[1];
 		};
@@ -614,13 +614,13 @@ namespace RTC
 		std::map<uint8_t, TwoBytesExtension*> mapTwoBytesExtensions;
 		uint8_t midExtensionId{ 0u };
 		uint8_t ridExtensionId{ 0u };
-		uint8_t rridExtensionId{ 0u };
-		uint8_t absSendTimeExtensionId{ 0u };
-		uint8_t transportWideCc01ExtensionId{ 0u };
+		uint8_t rridExtensionId{ 0u }; // repaired rid
+		uint8_t absSendTimeExtensionId{ 0u }; // 3个字节长度
+		uint8_t transportWideCc01ExtensionId{ 0u }; // 2个字节长度，wideSeqNumber
 		uint8_t frameMarking07ExtensionId{ 0u }; // NOTE: Remove once RFC.
-		uint8_t frameMarkingExtensionId{ 0u };
-		uint8_t ssrcAudioLevelExtensionId{ 0u };
-		uint8_t videoOrientationExtensionId{ 0u };
+		uint8_t frameMarkingExtensionId{ 0u }; // 字节长度<=3
+		uint8_t ssrcAudioLevelExtensionId{ 0u }; // 1个字节长度, voice(1bit)+volume(7bit)
+		uint8_t videoOrientationExtensionId{ 0u }; // 1个字节长度
 		uint8_t* payload{ nullptr };
 		size_t payloadLength{ 0u };
 		uint8_t payloadPadding{ 0u };

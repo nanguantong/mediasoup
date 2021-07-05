@@ -655,6 +655,7 @@ namespace RTC
 		}
 	}
 
+	// 通知 producer SR 给所有 consumers
 	inline void Router::OnTransportProducerRtcpSenderReport(
 	  RTC::Transport* /*transport*/, RTC::Producer* producer, RTC::RtpStream* rtpStream, bool first)
 	{
@@ -668,6 +669,7 @@ namespace RTC
 		}
 	}
 
+	// 转发 producer 的 packet 给所有 consumers 和 observers
 	inline void Router::OnTransportProducerRtpPacketReceived(
 	  RTC::Transport* /*transport*/, RTC::Producer* producer, RTC::RtpPacket* packet)
 	{

@@ -235,6 +235,13 @@ namespace RTC
 		}
 		if (this->absSendTimeExtensionId != 0u)
 		{
+			// uint32_t absSendtime;
+
+			// if (ReadAbsSendTime(absSendtime))
+			// {
+			// 	MS_DUMP("  absSendTime       : extId:%" PRIu8 ", value:%" PRIu32,
+			// 		this->absSendTimeExtensionId, absSendtime);
+			// }
 			MS_DUMP("  absSendTime       : extId:%" PRIu8, this->absSendTimeExtensionId);
 		}
 		if (this->transportWideCc01ExtensionId != 0u)
@@ -860,6 +867,7 @@ namespace RTC
 			// Clear the One-Byte extension elements map.
 			this->mapOneByteExtensions.clear();
 
+			// 跳过id和len的4个字节
 			uint8_t* extensionStart = reinterpret_cast<uint8_t*>(this->headerExtension) + 4;
 			uint8_t* extensionEnd   = extensionStart + GetHeaderExtensionLength();
 			uint8_t* ptr            = extensionStart;
@@ -909,6 +917,7 @@ namespace RTC
 			// Clear the Two-Bytes extension elements map.
 			this->mapTwoBytesExtensions.clear();
 
+			// 跳过id和len的4个字节
 			uint8_t* extensionStart = reinterpret_cast<uint8_t*>(this->headerExtension) + 4;
 			uint8_t* extensionEnd   = extensionStart + GetHeaderExtensionLength();
 			uint8_t* ptr            = extensionStart;

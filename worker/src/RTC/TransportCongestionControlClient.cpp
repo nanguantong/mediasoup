@@ -177,6 +177,7 @@ namespace RTC
 		this->maxOutgoingBitrate = maxBitrate;
 	}
 
+	// 设置需求码率
 	void TransportCongestionControlClient::SetDesiredBitrate(uint32_t desiredBitrate, bool force)
 	{
 		MS_TRACE();
@@ -245,6 +246,7 @@ namespace RTC
 		return this->bitrates.availableBitrate;
 	}
 
+	// 重新设置可用码率通知周期时间
 	void TransportCongestionControlClient::RescheduleNextAvailableBitrateEvent()
 	{
 		MS_TRACE();
@@ -252,6 +254,7 @@ namespace RTC
 		this->lastAvailableBitrateEventAtMs = DepLibUV::GetTimeMs();
 	}
 
+	// 周期通知 listener 可用码率变化事件
 	void TransportCongestionControlClient::MayEmitAvailableBitrateEvent(uint32_t previousAvailableBitrate)
 	{
 		MS_TRACE();
@@ -318,6 +321,7 @@ namespace RTC
 		}
 	}
 
+	// 收到新的可用码率并通知 listener
 	void TransportCongestionControlClient::OnTargetTransferRate(webrtc::TargetTransferRate targetTransferRate)
 	{
 		MS_TRACE();
