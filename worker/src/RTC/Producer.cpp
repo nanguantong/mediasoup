@@ -597,7 +597,7 @@ namespace RTC
 
 				MS_DEBUG_DEV("Producer paused [producerId:%s]", this->id.c_str());
 
-				// 通知 router
+				// 通知 router 暂停
 				this->listener->OnProducerPaused(this);
 
 				request->Accept();
@@ -626,6 +626,7 @@ namespace RTC
 
 				MS_DEBUG_DEV("Producer resumed [producerId:%s]", this->id.c_str());
 
+				// 通知 router 恢复
 				this->listener->OnProducerResumed(this);
 
 				if (this->keyFrameRequestManager)
@@ -700,6 +701,7 @@ namespace RTC
 		// Count number of RTP streams.
 		auto numRtpStreamsBefore = this->mapSsrcRtpStream.size();
 
+		// 获取对应 ssrc 的 RtpStreamRecv (CreateRtpStream)
 		auto* rtpStream = GetRtpStream(packet);
 
 		if (!rtpStream)
@@ -762,6 +764,7 @@ namespace RTC
 		// May have to announce a new RTP stream to the listener.
 		if (this->mapSsrcRtpStream.size() > numRtpStreamsBefore)
 		{
+			// 首帧必须是关键包, 否则强制请求关键帧
 			// Request a key frame for this stream since we may have lost the first packets
 			// (do not do it if this is a key frame).
 			if (this->keyFrameRequestManager && !this->paused && !packet->IsKeyFrame())
@@ -1499,6 +1502,15 @@ namespace RTC
 		}
 	}
 
+	/**
+	 * score:
+	 * [{
+	 *   "encodingIdx":,   // mandatory, uint32_t
+	 *   "ssrc":,          // mandatory, uint32_t
+	 *   "rid":,           // optional,  string
+	 *   "score":          // mandatory, uint8_t
+	 * }]
+	 */
 	inline void Producer::EmitScore() const
 	{
 		MS_TRACE();
@@ -1526,6 +1538,17 @@ namespace RTC
 		Channel::ChannelNotifier::Emit(this->id, "score", data);
 	}
 
+	/**
+	 * trace:
+	 * {
+	 *   "type":,         // mandatory, string, "keyframe" / "rtp"
+	 *   "timestamp":,    // mandatory, uint64_t
+	 *   "direction":,    // mandatory, string, "in"
+	 *   "info": {        // mandatory
+	 *     "isRtx":       // optional,  bool
+	 *   }
+	 * }
+	 */
 	inline void Producer::EmitTraceEventRtpAndKeyFrameTypes(RTC::RtpPacket* packet, bool isRtx) const
 	{
 		MS_TRACE();
@@ -1562,6 +1585,17 @@ namespace RTC
 		}
 	}
 
+	/**
+	 * trace:
+	 * {
+	 *   "type":,         // mandatory, string, "pli"
+	 *   "timestamp":,    // mandatory, uint64_t
+	 *   "direction":,    // mandatory, string, "out"
+	 *   "info": {        // mandatory
+	 *     "ssrc":        // mandatory, uint32_t
+	 *   }
+	 * }
+	 */
 	inline void Producer::EmitTraceEventPliType(uint32_t ssrc) const
 	{
 		MS_TRACE();
@@ -1579,6 +1613,17 @@ namespace RTC
 		Channel::ChannelNotifier::Emit(this->id, "trace", data);
 	}
 
+	/**
+	 * trace:
+	 * {
+	 *   "type":,         // mandatory, string, "fir"
+	 *   "timestamp":,    // mandatory, uint64_t
+	 *   "direction":,    // mandatory, string, "out"
+	 *   "info": {        // mandatory
+	 *     "ssrc":        // mandatory,  uint32_t
+	 *   }
+	 * }
+	 */
 	inline void Producer::EmitTraceEventFirType(uint32_t ssrc) const
 	{
 		MS_TRACE();
@@ -1596,6 +1641,16 @@ namespace RTC
 		Channel::ChannelNotifier::Emit(this->id, "trace", data);
 	}
 
+	/**
+	 * trace:
+	 * {
+	 *   "type":,         // mandatory, string, "nack"
+	 *   "timestamp":,    // mandatory, uint64_t
+	 *   "direction":,    // mandatory, string, "out"
+	 *   "info": {        // mandatory
+	 *   }
+	 * }
+	 */
 	inline void Producer::EmitTraceEventNackType() const
 	{
 		MS_TRACE();

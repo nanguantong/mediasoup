@@ -577,6 +577,7 @@ namespace RTC
 		this->mapProducerRtpObservers.erase(mapProducerRtpObserversIt);
 	}
 
+	// 通知 consumers 和 observers producer 已经暂停
 	inline void Router::OnTransportProducerPaused(RTC::Transport* /*transport*/, RTC::Producer* producer)
 	{
 		MS_TRACE();
@@ -601,6 +602,7 @@ namespace RTC
 		}
 	}
 
+	// 通知 consumers 和 observers producer 已经恢复
 	inline void Router::OnTransportProducerResumed(RTC::Transport* /*transport*/, RTC::Producer* producer)
 	{
 		MS_TRACE();
