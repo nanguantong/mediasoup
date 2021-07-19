@@ -240,7 +240,7 @@
     'include_dirs':
     [
       'include',
-      'deps/json/single_include/nlohmann'
+      'deps/json/single_include'
     ],
     'conditions':
     [
@@ -389,7 +389,7 @@
       'include_dirs':
       [
         'test/include',
-        'deps/catch/single_include/catch2'
+        'deps/catch2/single_include'
       ],
       'xcode_settings':
       {
@@ -438,8 +438,8 @@
         'fuzzer/src/RTC/RTCP/FuzzerXr.cpp',
         # C++ include files.
         'fuzzer/include/FuzzerUtils.hpp',
-        'fuzzer/include/RTC/FuzzerStunMessage.hpp',
         'fuzzer/include/RTC/FuzzerRtpPacket.hpp',
+        'fuzzer/include/RTC/FuzzerStunPacket.hpp',
         'fuzzer/include/RTC/FuzzerTrendCalculator.hpp',
         'fuzzer/include/RTC/RTCP/FuzzerBye.hpp',
         'fuzzer/include/RTC/RTCP/FuzzerFeedbackPs.hpp',
@@ -461,7 +461,7 @@
         'fuzzer/include/RTC/RTCP/FuzzerFeedbackRtpTransport.hpp',
         'fuzzer/include/RTC/RTCP/FuzzerPacket.hpp',
         'fuzzer/include/RTC/RTCP/FuzzerReceiverReport.hpp',
-        'fuzzer/include/RTC/RTCP/FuzzerSdesReport.hpp',
+        'fuzzer/include/RTC/RTCP/FuzzerSdes.hpp',
         'fuzzer/include/RTC/RTCP/FuzzerSenderReport.hpp',
         'fuzzer/include/RTC/RTCP/FuzzerXr.hpp',
       ],
