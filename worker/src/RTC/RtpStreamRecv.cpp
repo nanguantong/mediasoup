@@ -416,6 +416,7 @@ namespace RTC
 
 		if (this->params.useInBandFec)
 		{
+			// nanuns add: 从router里获取对应的producer下的所有comsumers的最大worstRemoteFractionLost
 			// Notify the listener so we'll get the worst remote fraction lost.
 			static_cast<RTC::RtpStreamRecv::Listener*>(this->listener)
 			  ->OnRtpStreamNeedWorstRemoteFractionLost(this, worstRemoteFractionLost);

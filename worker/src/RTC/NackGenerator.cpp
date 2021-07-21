@@ -36,6 +36,7 @@ namespace RTC
 		delete this->timer;
 	}
 
+	// nanuns add: isRecovered 代表是否是rtx包, true:是
 	// Returns true if this is a found nacked packet. False otherwise.
 	bool NackGenerator::ReceivePacket(RTC::RtpPacket* packet, bool isRecovered)
 	{

@@ -701,7 +701,6 @@ namespace RTC
 		// Count number of RTP streams.
 		auto numRtpStreamsBefore = this->mapSsrcRtpStream.size();
 
-		// 获取对应 ssrc 的 RtpStreamRecv (CreateRtpStream)
 		auto* rtpStream = GetRtpStream(packet);
 
 		if (!rtpStream)
@@ -764,7 +763,7 @@ namespace RTC
 		// May have to announce a new RTP stream to the listener.
 		if (this->mapSsrcRtpStream.size() > numRtpStreamsBefore)
 		{
-			// 首帧必须是关键包, 否则强制请求关键帧
+			// nanuns add: 首帧必须是关键包, 否则强制请求关键帧
 			// Request a key frame for this stream since we may have lost the first packets
 			// (do not do it if this is a key frame).
 			if (this->keyFrameRequestManager && !this->paused && !packet->IsKeyFrame())
@@ -922,6 +921,7 @@ namespace RTC
 		this->keyFrameRequestManager->KeyFrameNeeded(ssrc);
 	}
 
+	// nanuns add: 获取对应 ssrc 的 RtpStreamRecv (CreateRtpStream)
 	RTC::RtpStreamRecv* Producer::GetRtpStream(RTC::RtpPacket* packet)
 	{
 		MS_TRACE();
