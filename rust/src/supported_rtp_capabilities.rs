@@ -233,26 +233,10 @@ pub fn get_supported_rtp_capabilities() -> RtpCapabilities {
                 mime_type: MimeTypeVideo::H264,
                 preferred_payload_type: None,
                 clock_rate: NonZeroU32::new(90000).unwrap(),
-                parameters: RtpCodecParametersParameters::from([
-                    ("packetization-mode", 1_u32.into()),
-                    ("level-asymmetry-allowed", 1_u32.into()),
-                ]),
-                rtcp_feedback: vec![
-                    RtcpFeedback::Nack,
-                    RtcpFeedback::NackPli,
-                    RtcpFeedback::CcmFir,
-                    RtcpFeedback::GoogRemb,
-                    RtcpFeedback::TransportCc,
-                ],
-            },
-            RtpCodecCapability::Video {
-                mime_type: MimeTypeVideo::H264,
-                preferred_payload_type: None,
-                clock_rate: NonZeroU32::new(90000).unwrap(),
-                parameters: RtpCodecParametersParameters::from([
-                    ("packetization-mode", 0_u32.into()),
-                    ("level-asymmetry-allowed", 1_u32.into()),
-                ]),
+                parameters: RtpCodecParametersParameters::from([(
+                    "level-asymmetry-allowed",
+                    1_u32.into(),
+                )]),
                 rtcp_feedback: vec![
                     RtcpFeedback::Nack,
                     RtcpFeedback::NackPli,
@@ -265,26 +249,10 @@ pub fn get_supported_rtp_capabilities() -> RtpCapabilities {
                 mime_type: MimeTypeVideo::H265,
                 preferred_payload_type: None,
                 clock_rate: NonZeroU32::new(90000).unwrap(),
-                parameters: RtpCodecParametersParameters::from([
-                    ("packetization-mode", 1_u32.into()),
-                    ("level-asymmetry-allowed", 1_u32.into()),
-                ]),
-                rtcp_feedback: vec![
-                    RtcpFeedback::Nack,
-                    RtcpFeedback::NackPli,
-                    RtcpFeedback::CcmFir,
-                    RtcpFeedback::GoogRemb,
-                    RtcpFeedback::TransportCc,
-                ],
-            },
-            RtpCodecCapability::Video {
-                mime_type: MimeTypeVideo::H265,
-                preferred_payload_type: None,
-                clock_rate: NonZeroU32::new(90000).unwrap(),
-                parameters: RtpCodecParametersParameters::from([
-                    ("packetization-mode", 0_u32.into()),
-                    ("level-asymmetry-allowed", 1_u32.into()),
-                ]),
+                parameters: RtpCodecParametersParameters::from([(
+                    "level-asymmetry-allowed",
+                    1_u32.into(),
+                )]),
                 rtcp_feedback: vec![
                     RtcpFeedback::Nack,
                     RtcpFeedback::NackPli,
@@ -385,6 +353,20 @@ pub fn get_supported_rtp_capabilities() -> RtpCapabilities {
                 kind: MediaKind::Video,
                 uri: RtpHeaderExtensionUri::TimeOffset,
                 preferred_id: 12,
+                preferred_encrypt: false,
+                direction: RtpHeaderExtensionDirection::SendRecv,
+            },
+            RtpHeaderExtension {
+                kind: MediaKind::Video,
+                uri: RtpHeaderExtensionUri::AbsCaptureTime,
+                preferred_id: 13,
+                preferred_encrypt: false,
+                direction: RtpHeaderExtensionDirection::SendRecv,
+            },
+            RtpHeaderExtension {
+                kind: MediaKind::Audio,
+                uri: RtpHeaderExtensionUri::AbsCaptureTime,
+                preferred_id: 13,
                 preferred_encrypt: false,
                 direction: RtpHeaderExtensionDirection::SendRecv,
             },
