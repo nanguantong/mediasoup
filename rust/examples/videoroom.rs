@@ -12,6 +12,7 @@ mod room {
     use crate::participant::ParticipantId;
     use event_listener_primitives::{Bag, BagOnce, HandlerId};
     use mediasoup::prelude::*;
+    use mediasoup::worker::{WorkerLogLevel, WorkerLogTag};
     use parking_lot::Mutex;
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
@@ -36,8 +37,10 @@ mod room {
 
     #[derive(Default)]
     struct Handlers {
-        producer_add: Bag<Box<dyn Fn(&ParticipantId, &Producer) + Send + Sync>>,
-        producer_remove: Bag<Box<dyn Fn(&ParticipantId, &ProducerId) + Send + Sync>>,
+        producer_add:
+            Bag<Arc<dyn Fn(&ParticipantId, &Producer) + Send + Sync>, ParticipantId, Producer>,
+        producer_remove:
+            Bag<Arc<dyn Fn(&ParticipantId, &ProducerId) + Send + Sync>, ParticipantId, ProducerId>,
         close: BagOnce<Box<dyn FnOnce() + Send>>,
     }
 
@@ -85,7 +88,27 @@ mod room {
             id: RoomId,
         ) -> Result<Room, String> {
             let worker = worker_manager
-                .create_worker(WorkerSettings::default())
+                .create_worker({
+                    let mut settings = WorkerSettings::default();
+                    settings.log_level = WorkerLogLevel::Debug;
+                    settings.log_tags = vec![
+                        WorkerLogTag::Info,
+                        WorkerLogTag::Ice,
+                        WorkerLogTag::Dtls,
+                        WorkerLogTag::Rtp,
+                        WorkerLogTag::Srtp,
+                        WorkerLogTag::Rtcp,
+                        WorkerLogTag::Rtx,
+                        WorkerLogTag::Bwe,
+                        WorkerLogTag::Score,
+                        WorkerLogTag::Simulcast,
+                        WorkerLogTag::Svc,
+                        WorkerLogTag::Sctp,
+                        WorkerLogTag::Message,
+                    ];
+
+                    settings
+                })
                 .await
                 .map_err(|error| format!("Failed to create worker: {}", error))?;
             let router = worker
@@ -125,9 +148,10 @@ mod room {
                 .or_default()
                 .push(producer.clone());
 
-            self.inner.handlers.producer_add.call(|callback| {
-                callback(&participant_id, &producer);
-            });
+            self.inner
+                .handlers
+                .producer_add
+                .call_simple(&participant_id, &producer);
         }
 
         /// Remove participant and all of its associated producers
@@ -136,9 +160,10 @@ mod room {
 
             for producer in producers.unwrap_or_default() {
                 let producer_id = &producer.id();
-                self.inner.handlers.producer_remove.call(|callback| {
-                    callback(participant_id, producer_id);
-                });
+                self.inner
+                    .handlers
+                    .producer_remove
+                    .call_simple(participant_id, producer_id);
             }
         }
 
@@ -164,7 +189,7 @@ mod room {
             &self,
             callback: F,
         ) -> HandlerId {
-            self.inner.handlers.producer_add.add(Box::new(callback))
+            self.inner.handlers.producer_add.add(Arc::new(callback))
         }
 
         /// Subscribe to notifications when producer is removed from the room
@@ -172,7 +197,7 @@ mod room {
             &self,
             callback: F,
         ) -> HandlerId {
-            self.inner.handlers.producer_remove.add(Box::new(callback))
+            self.inner.handlers.producer_remove.add(Arc::new(callback))
         }
 
         /// Subscribe to notification when room is closed

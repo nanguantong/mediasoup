@@ -3,8 +3,8 @@
 
 #include "RTC/RtpObserver.hpp"
 #include "handles/Timer.hpp"
+#include <absl/container/flat_hash_map.h>
 #include <nlohmann/json.hpp>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -25,8 +25,8 @@ namespace RTC
 			Speaker();
 			void EvalActivityScores();
 			double GetActivityScore(int32_t interval);
-			void LevelChanged(uint32_t level, uint64_t time);
-			void LevelTimedOut();
+			void LevelChanged(uint32_t level, uint64_t now);
+			void LevelTimedOut(uint64_t now);
 
 		private:
 			bool ComputeImmediates();
@@ -52,6 +52,7 @@ namespace RTC
 			std::vector<uint8_t> mediums;
 			std::vector<uint8_t> longs;
 			std::vector<uint8_t> levels;
+			size_t nextLevelIndex;
 		};
 
 		struct ProducerSpeaker
@@ -88,7 +89,7 @@ namespace RTC
 		std::string dominantId{ "" };
 		Timer* periodicTimer{ nullptr };
 		uint16_t interval{ 300u };
-		std::unordered_map<std::string, struct ProducerSpeaker> mapProducerSpeaker;
+		absl::flat_hash_map<std::string, struct ProducerSpeaker> mapProducerSpeaker;
 		uint64_t lastLevelIdleTime{ 0 };
 	};
 } // namespace RTC
