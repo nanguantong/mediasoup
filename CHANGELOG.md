@@ -1,6 +1,69 @@
 # Changelog
 
 
+### Next
+
+* Node: Define TypeScript types for `internal` and `data` objects (PR #891).
+* `Channel` and `PayloadChannel`: Refactor `internal` with a single `handlerId` (PR #889).
+* `Channel` and `PayloadChannel`: Optimize message format and JSON generation (PR #893).
+* New C++ `ChannelMessageHandlers` class (PR #894).
+* Fix Rust support after recent changes (PR #898).
+* Update NPM deps.
+
+
+### 3.10.5
+
+* `RtpStreamSend`: Do not store too old RTP packets (PR #885).
+* Do not clone RTP packets if not needed (PR #850).
+* Log error details in channel socket. (PR #875 by @mstyura).
+
+### 3.10.4
+
+* Do not clone RTP packets if not needed (PR #850).
+* Fix DTLS related crash (PR #867).
+* Update NPM deps. 
+
+
+### 3.10.3
+
+* `SimpleConsumer`: Fix. Only process Opus codec (PR #865).
+* TypeScript: Improve `WebRtcTransportOptions` type to not allow `webRtcServer` and `listenIps`options at the same time (PR #852).
+
+
+### 3.10.2
+
+* Fix release contents by including meson_options.txt (PR #863).
+
+
+### 3.10.1
+
+* `RtpStreamSend`: Memory optimizations (PR #840). Extracted from #675, by @nazar-pc.
+* `SimpleConsumer`: Opus DTX ignore capabilities (PR #846).
+* Update `libuv` to 1.44.1: Fixes `libuv` build (PR #857).
+* Update NPM deps.
+
+
+### 3.10.0
+
+* `WebRtcServer`: A new class that brings to `WebRtcTransports` the ability to listen on a single UDP/TCP port (PR #834).
+* More SRTP crypto suites (PR #837).
+* Improve `EnhancedEventEmitter` (PR #836).
+* `TransportCongestionControlClient`: Allow setting max outgoing bitrate before `tccClient` is created (PR #833).
+* Update NPM deps and TypeScript version.
+
+
+### 3.9.17
+
+* `RateCalculator`: Fix old buffer items cleanup (PR #830 by @dsdolzhenko).
+* Update NPM deps and TypeScript version.
+
+
+### 3.9.16
+
+* `SimulcastConsumer`: Fix spatial layer switch with unordered packets (PR #823 by @jcague).
+* Update NPM deps and TypeScript version.
+
+
 ### 3.9.15
 
 * `RateCalculator`: Revert Fix old buffer items cleanup (PR #819 by @dsdolzhenko).

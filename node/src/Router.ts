@@ -31,7 +31,7 @@ export type RouterOptions =
 	 * Custom application data.
 	 */
 	appData?: Record<string, unknown>;
-}
+};
 
 export type PipeToRouterOptions =
 {
@@ -74,7 +74,7 @@ export type PipeToRouterOptions =
 	 * Enable SRTP.
 	 */
 	enableSrtp?: boolean;
-}
+};
 
 export type PipeToRouterResult =
 {
@@ -97,7 +97,7 @@ export type PipeToRouterResult =
 	 * The DataProducer created in the target Router.
 	 */
 	pipeDataProducer?: DataProducer;
-}
+};
 
 type PipeTransportPair =
 {
@@ -107,24 +107,28 @@ type PipeTransportPair =
 export type RouterEvents =
 { 
 	workerclose: [];
-}
+	// Private events.
+	'@close': [];
+};
 
 export type RouterObserverEvents =
 {
 	close: [];
 	newtransport: [Transport];
 	newrtpobserver: [RtpObserver];
-}
+};
+
+export type RouterInternal =
+{
+	routerId: string;
+};
 
 const logger = new Logger('Router');
 
 export class Router extends EnhancedEventEmitter<RouterEvents>
 {
 	// Internal data.
-	readonly #internal:
-	{
-		routerId: string;
-	};
+	readonly #internal: RouterInternal;
 
 	// Router data.
 	readonly #data:
@@ -166,8 +170,6 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 
 	/**
 	 * @private
-	 * @emits workerclose
-	 * @emits @close
 	 */
 	constructor(
 		{
@@ -178,7 +180,7 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 			appData
 		}:
 		{
-			internal: any;
+			internal: RouterInternal;
 			data: any;
 			channel: Channel;
 			payloadChannel: PayloadChannel;
@@ -239,14 +241,19 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 
 	/**
 	 * Observer.
-	 *
-	 * @emits close
-	 * @emits newtransport - (transport: Transport)
-	 * @emits newrtpobserver - (rtpObserver: RtpObserver)
 	 */
 	get observer(): EnhancedEventEmitter<RouterObserverEvents>
 	{
 		return this.#observer;
+	}
+
+	/**
+	 * @private
+	 * Just for testing purposes.
+	 */
+	get transportsForTesting(): Map<string, Transport>
+	{
+		return this.#transports;
 	}
 
 	/**
@@ -261,7 +268,9 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 
 		this.#closed = true;
 
-		this.#channel.request('router.close', this.#internal)
+		const reqData = { routerId: this.#internal.routerId };
+
+		this.#channel.request('worker.closeRouter', undefined, reqData)
 			.catch(() => {});
 
 		// Close every Transport.
@@ -337,7 +346,7 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 	{
 		logger.debug('dump()');
 
-		return this.#channel.request('router.dump', this.#internal);
+		return this.#channel.request('router.dump', this.#internal.routerId);
 	}
 
 	/**
@@ -345,6 +354,7 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 	 */
 	async createWebRtcTransport(
 		{
+			webRtcServer,
 			listenIps,
 			port,
 			enableUdp = true,
@@ -362,32 +372,37 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 	{
 		logger.debug('createWebRtcTransport()');
 
-		if (!Array.isArray(listenIps))
-			throw new TypeError('missing listenIps');
+		if (!webRtcServer && !Array.isArray(listenIps))
+			throw new TypeError('missing webRtcServer and listenIps (one of them is mandatory)');
 		else if (appData && typeof appData !== 'object')
 			throw new TypeError('if given, appData must be an object');
 
-		listenIps = listenIps.map((listenIp) =>
+		if (listenIps)
 		{
-			if (typeof listenIp === 'string' && listenIp)
+			listenIps = listenIps.map((listenIp) =>
 			{
-				return { ip: listenIp };
-			}
-			else if (typeof listenIp === 'object')
-			{
-				return {
-					ip          : listenIp.ip,
-					announcedIp : listenIp.announcedIp || undefined
-				};
-			}
-			else
-			{
-				throw new TypeError('wrong listenIp');
-			}
-		});
+				if (typeof listenIp === 'string' && listenIp)
+				{
+					return { ip: listenIp };
+				}
+				else if (typeof listenIp === 'object')
+				{
+					return {
+						ip          : listenIp.ip,
+						announcedIp : listenIp.announcedIp || undefined
+					};
+				}
+				else
+				{
+					throw new TypeError('wrong listenIp');
+				}
+			});
+		}
 
-		const internal = { ...this.#internal, transportId: uuidv4() };
-		const reqData = {
+		const reqData =
+		{
+			transportId    : uuidv4(),
+			webRtcServerId : webRtcServer ? webRtcServer.id : undefined,
 			listenIps,
 			port,
 			enableUdp,
@@ -399,15 +414,20 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 			numSctpStreams,
 			maxSctpMessageSize,
 			sctpSendBufferSize,
-			isDataChannel : true
+			isDataChannel  : true
 		};
 
-		const data =
-			await this.#channel.request('router.createWebRtcTransport', internal, reqData);
+		const data = webRtcServer
+			? await this.#channel.request('router.createWebRtcTransportWithServer', this.#internal.routerId, reqData)
+			: await this.#channel.request('router.createWebRtcTransport', this.#internal.routerId, reqData);
 
 		const transport = new WebRtcTransport(
 			{
-				internal,
+				internal :
+				{
+					...this.#internal,
+					transportId : reqData.transportId
+				},
 				data,
 				channel                  : this.#channel,
 				payloadChannel           : this.#payloadChannel,
@@ -423,6 +443,7 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 
 		this.#transports.set(transport.id, transport);
 		transport.on('@close', () => this.#transports.delete(transport.id));
+		transport.on('@listenserverclose', () => this.#transports.delete(transport.id));
 		transport.on('@newproducer', (producer: Producer) => this.#producers.set(producer.id, producer));
 		transport.on('@producerclose', (producer: Producer) => this.#producers.delete(producer.id));
 		transport.on('@newdataproducer', (dataProducer: DataProducer) => (
@@ -431,6 +452,9 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 		transport.on('@dataproducerclose', (dataProducer: DataProducer) => (
 			this.#dataProducers.delete(dataProducer.id)
 		));
+
+		if (webRtcServer)
+			webRtcServer.handleWebRtcTransport(transport);
 
 		// Emit observer event.
 		this.#observer.safeEmit('newtransport', transport);
@@ -481,8 +505,9 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 			throw new TypeError('wrong listenIp');
 		}
 
-		const internal = { ...this.#internal, transportId: uuidv4() };
-		const reqData = {
+		const reqData =
+		{
+			transportId   : uuidv4(),
 			listenIp,
 			port,
 			rtcpMux,
@@ -497,11 +522,15 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 		};
 
 		const data =
-			await this.#channel.request('router.createPlainTransport', internal, reqData);
+			await this.#channel.request('router.createPlainTransport', this.#internal.routerId, reqData);
 
 		const transport = new PlainTransport(
 			{
-				internal,
+				internal :
+				{
+					...this.#internal,
+					transportId : reqData.transportId
+				},
 				data,
 				channel                  : this.#channel,
 				payloadChannel           : this.#payloadChannel,
@@ -517,6 +546,7 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 
 		this.#transports.set(transport.id, transport);
 		transport.on('@close', () => this.#transports.delete(transport.id));
+		transport.on('@listenserverclose', () => this.#transports.delete(transport.id));
 		transport.on('@newproducer', (producer: Producer) => this.#producers.set(producer.id, producer));
 		transport.on('@producerclose', (producer: Producer) => this.#producers.delete(producer.id));
 		transport.on('@newdataproducer', (dataProducer: DataProducer) => (
@@ -530,19 +560,6 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 		this.#observer.safeEmit('newtransport', transport);
 
 		return transport;
-	}
-
-	/**
-	 * DEPRECATED: Use createPlainTransport().
-	 */
-	async createPlainRtpTransport(
-		options: PlainTransportOptions
-	): Promise<PlainTransport>
-	{
-		logger.warn(
-			'createPlainRtpTransport() is DEPRECATED, use createPlainTransport()');
-
-		return this.createPlainTransport(options);
 	}
 
 	/**
@@ -586,8 +603,9 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 			throw new TypeError('wrong listenIp');
 		}
 
-		const internal = { ...this.#internal, transportId: uuidv4() };
-		const reqData = {
+		const reqData =
+		{
+			transportId   : uuidv4(),
 			listenIp,
 			port,
 			enableSctp,
@@ -600,11 +618,15 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 		};
 
 		const data =
-			await this.#channel.request('router.createPipeTransport', internal, reqData);
+			await this.#channel.request('router.createPipeTransport', this.#internal.routerId, reqData);
 
 		const transport = new PipeTransport(
 			{
-				internal,
+				internal :
+				{
+					...this.#internal,
+					transportId : reqData.transportId
+				},
 				data,
 				channel                  : this.#channel,
 				payloadChannel           : this.#payloadChannel,
@@ -620,6 +642,7 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 
 		this.#transports.set(transport.id, transport);
 		transport.on('@close', () => this.#transports.delete(transport.id));
+		transport.on('@listenserverclose', () => this.#transports.delete(transport.id));
 		transport.on('@newproducer', (producer: Producer) => this.#producers.set(producer.id, producer));
 		transport.on('@producerclose', (producer: Producer) => this.#producers.delete(producer.id));
 		transport.on('@newdataproducer', (dataProducer: DataProducer) => (
@@ -650,15 +673,23 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 	{
 		logger.debug('createDirectTransport()');
 
-		const internal = { ...this.#internal, transportId: uuidv4() };
-		const reqData = { direct: true, maxMessageSize };
+		const reqData =
+		{
+			transportId : uuidv4(),
+			direct      : true,
+			maxMessageSize
+		};
 
 		const data =
-			await this.#channel.request('router.createDirectTransport', internal, reqData);
+			await this.#channel.request('router.createDirectTransport', this.#internal.routerId, reqData);
 
 		const transport = new DirectTransport(
 			{
-				internal,
+				internal :
+				{
+					...this.#internal,
+					transportId : reqData.transportId
+				},
 				data,
 				channel                  : this.#channel,
 				payloadChannel           : this.#payloadChannel,
@@ -674,6 +705,7 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 
 		this.#transports.set(transport.id, transport);
 		transport.on('@close', () => this.#transports.delete(transport.id));
+		transport.on('@listenserverclose', () => this.#transports.delete(transport.id));
 		transport.on('@newproducer', (producer: Producer) => this.#producers.set(producer.id, producer));
 		transport.on('@producerclose', (producer: Producer) => this.#producers.delete(producer.id));
 		transport.on('@newdataproducer', (dataProducer: DataProducer) => (
@@ -993,14 +1025,21 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 		if (appData && typeof appData !== 'object')
 			throw new TypeError('if given, appData must be an object');
 		
-		const internal = { ...this.#internal, rtpObserverId: uuidv4() };
-		const reqData = { interval };
+		const reqData =
+		{
+			rtpObserverId : uuidv4(),
+			interval
+		};
 
-		await this.#channel.request('router.createActiveSpeakerObserver', internal, reqData);
+		await this.#channel.request('router.createActiveSpeakerObserver', this.#internal.routerId, reqData);
 
 		const activeSpeakerObserver = new ActiveSpeakerObserver(
 			{
-				internal,
+				internal :
+				{
+					...this.#internal,
+					rtpObserverId : reqData.rtpObserverId
+				},
 				channel         : this.#channel,
 				payloadChannel  : this.#payloadChannel,
 				appData,
@@ -1038,14 +1077,23 @@ export class Router extends EnhancedEventEmitter<RouterEvents>
 		if (appData && typeof appData !== 'object')
 			throw new TypeError('if given, appData must be an object');
 
-		const internal = { ...this.#internal, rtpObserverId: uuidv4() };
-		const reqData = { maxEntries, threshold, interval };
+		const reqData =
+		{
+			rtpObserverId : uuidv4(),
+			maxEntries,
+			threshold,
+			interval
+		};
 
-		await this.#channel.request('router.createAudioLevelObserver', internal, reqData);
+		await this.#channel.request('router.createAudioLevelObserver', this.#internal.routerId, reqData);
 
 		const audioLevelObserver = new AudioLevelObserver(
 			{
-				internal,
+				internal :
+				{
+					...this.#internal,
+					rtpObserverId : reqData.rtpObserverId
+				},
 				channel         : this.#channel,
 				payloadChannel  : this.#payloadChannel,
 				appData,

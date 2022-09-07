@@ -4,11 +4,8 @@ mod tests;
 use crate::consumer::{Consumer, ConsumerId, ConsumerOptions};
 use crate::data_consumer::{DataConsumer, DataConsumerId, DataConsumerOptions, DataConsumerType};
 use crate::data_producer::{DataProducer, DataProducerId, DataProducerOptions, DataProducerType};
-use crate::data_structures::{AppData, SctpState, TransportListenIp, TransportTuple};
-use crate::messages::{
-    PipeTransportData, TransportCloseRequest, TransportConnectPipeRequest,
-    TransportConnectRequestPipeData, TransportInternal,
-};
+use crate::data_structures::{AppData, ListenIp, SctpState, TransportTuple};
+use crate::messages::{PipeTransportData, TransportCloseRequest, TransportConnectPipeRequest};
 use crate::producer::{Producer, ProducerId, ProducerOptions};
 use crate::router::transport::{TransportImpl, TransportType};
 use crate::router::Router;
@@ -37,7 +34,7 @@ use std::sync::{Arc, Weak};
 #[non_exhaustive]
 pub struct PipeTransportOptions {
     /// Listening IP address.
-    pub listen_ip: TransportListenIp,
+    pub listen_ip: ListenIp,
     /// Fixed port to listen on instead of selecting automatically from Worker's port range.
     pub port: Option<u16>,
     /// Create a SCTP association.
@@ -67,7 +64,7 @@ pub struct PipeTransportOptions {
 impl PipeTransportOptions {
     /// Create Pipe transport options with given listen IP.
     #[must_use]
-    pub fn new(listen_ip: TransportListenIp) -> Self {
+    pub fn new(listen_ip: ListenIp) -> Self {
         Self {
             listen_ip,
             port: None,
@@ -82,7 +79,7 @@ impl PipeTransportOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[doc(hidden)]
 #[non_exhaustive]
@@ -161,6 +158,7 @@ pub struct PipeTransportRemoteParameters {
 }
 
 #[derive(Default)]
+#[allow(clippy::type_complexity)]
 struct Handlers {
     new_producer: Bag<Arc<dyn Fn(&Producer) + Send + Sync>, Producer>,
     new_consumer: Bag<Arc<dyn Fn(&Consumer) + Send + Sync>, Consumer>,
@@ -219,16 +217,14 @@ impl Inner {
 
             if close_request {
                 let channel = self.channel.clone();
+                let router_id = self.router.id();
                 let request = TransportCloseRequest {
-                    internal: TransportInternal {
-                        router_id: self.router.id(),
-                        transport_id: self.id,
-                    },
+                    transport_id: self.id,
                 };
 
                 self.executor
                     .spawn(async move {
-                        if let Err(error) = channel.request(request).await {
+                        if let Err(error) = channel.request(router_id, request).await {
                             error!("transport closing failed on drop: {}", error);
                         }
                     })
@@ -557,14 +553,14 @@ impl PipeTransport {
         let response = self
             .inner
             .channel
-            .request(TransportConnectPipeRequest {
-                internal: self.get_internal(),
-                data: TransportConnectRequestPipeData {
+            .request(
+                self.id(),
+                TransportConnectPipeRequest {
                     ip: remote_parameters.ip,
                     port: remote_parameters.port,
                     srtp_parameters: remote_parameters.srtp_parameters,
                 },
-            })
+            )
             .await?;
 
         *self.inner.data.tuple.lock() = response.tuple;
@@ -638,13 +634,6 @@ impl PipeTransport {
     pub fn downgrade(&self) -> WeakPipeTransport {
         WeakPipeTransport {
             inner: Arc::downgrade(&self.inner),
-        }
-    }
-
-    fn get_internal(&self) -> TransportInternal {
-        TransportInternal {
-            router_id: self.router().id(),
-            transport_id: self.id(),
         }
     }
 }

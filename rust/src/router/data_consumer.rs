@@ -5,8 +5,7 @@ use crate::data_producer::{DataProducer, DataProducerId, WeakDataProducer};
 use crate::data_structures::{AppData, WebRtcMessage};
 use crate::messages::{
     DataConsumerCloseRequest, DataConsumerDumpRequest, DataConsumerGetBufferedAmountRequest,
-    DataConsumerGetStatsRequest, DataConsumerInternal, DataConsumerSendRequest,
-    DataConsumerSendRequestData, DataConsumerSetBufferedAmountLowThresholdData,
+    DataConsumerGetStatsRequest, DataConsumerSendRequest,
     DataConsumerSetBufferedAmountLowThresholdRequest,
 };
 use crate::sctp_parameters::SctpStreamParameters;
@@ -125,7 +124,7 @@ impl DataConsumerOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[doc(hidden)]
 #[non_exhaustive]
@@ -140,7 +139,7 @@ pub struct DataConsumerDump {
 }
 
 /// RTC statistics of the data consumer.
-#[derive(Debug, Clone, PartialOrd, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialOrd, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 #[allow(missing_docs)]
@@ -182,6 +181,7 @@ enum PayloadNotification {
 }
 
 #[derive(Default)]
+#[allow(clippy::type_complexity)]
 struct Handlers {
     message: Bag<Arc<dyn Fn(&WebRtcMessage<'_>) + Send + Sync>>,
     sctp_send_buffer_full: Bag<Arc<dyn Fn() + Send + Sync>>,
@@ -230,20 +230,16 @@ impl Inner {
 
             if close_request {
                 let channel = self.channel.clone();
+                let transport_id = self.transport.id();
                 let request = DataConsumerCloseRequest {
-                    internal: DataConsumerInternal {
-                        router_id: self.transport.router().id(),
-                        transport_id: self.transport.id(),
-                        data_consumer_id: self.id,
-                        data_producer_id: self.data_producer_id,
-                    },
+                    data_consumer_id: self.id,
                 };
                 let weak_data_producer = self.weak_data_producer.clone();
 
                 self.executor
                     .spawn(async move {
                         if weak_data_producer.upgrade().is_some() {
-                            if let Err(error) = channel.request(request).await {
+                            if let Err(error) = channel.request(transport_id, request).await {
                                 error!("consumer closing failed on drop: {}", error);
                             }
                         }
@@ -532,9 +528,7 @@ impl DataConsumer {
 
         self.inner()
             .channel
-            .request(DataConsumerDumpRequest {
-                internal: self.get_internal(),
-            })
+            .request(self.id(), DataConsumerDumpRequest {})
             .await
     }
 
@@ -547,9 +541,7 @@ impl DataConsumer {
 
         self.inner()
             .channel
-            .request(DataConsumerGetStatsRequest {
-                internal: self.get_internal(),
-            })
+            .request(self.id(), DataConsumerGetStatsRequest {})
             .await
     }
 
@@ -566,9 +558,7 @@ impl DataConsumer {
         let response = self
             .inner()
             .channel
-            .request(DataConsumerGetBufferedAmountRequest {
-                internal: self.get_internal(),
-            })
+            .request(self.id(), DataConsumerGetBufferedAmountRequest {})
             .await?;
 
         Ok(response.buffered_amount)
@@ -587,10 +577,10 @@ impl DataConsumer {
 
         self.inner()
             .channel
-            .request(DataConsumerSetBufferedAmountLowThresholdRequest {
-                internal: self.get_internal(),
-                data: DataConsumerSetBufferedAmountLowThresholdData { threshold },
-            })
+            .request(
+                self.id(),
+                DataConsumerSetBufferedAmountLowThresholdRequest { threshold },
+            )
             .await
     }
 
@@ -675,15 +665,6 @@ impl DataConsumer {
             DataConsumer::Direct(data_consumer) => &data_consumer.inner,
         }
     }
-
-    fn get_internal(&self) -> DataConsumerInternal {
-        DataConsumerInternal {
-            router_id: self.inner().transport.router().id(),
-            transport_id: self.inner().transport.id(),
-            data_consumer_id: self.inner().id,
-            data_producer_id: self.inner().data_producer_id,
-        }
-    }
 }
 
 impl DirectDataConsumer {
@@ -694,15 +675,8 @@ impl DirectDataConsumer {
         self.inner
             .payload_channel
             .request(
-                DataConsumerSendRequest {
-                    internal: DataConsumerInternal {
-                        router_id: self.inner.transport.router().id(),
-                        transport_id: self.inner.transport.id(),
-                        data_consumer_id: self.inner.id,
-                        data_producer_id: self.inner.data_producer_id,
-                    },
-                    data: DataConsumerSendRequestData { ppid },
-                },
+                self.inner.id,
+                DataConsumerSendRequest { ppid },
                 payload.into_owned(),
             )
             .await
