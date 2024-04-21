@@ -1,9 +1,10 @@
-#ifndef MS_RTC_RTP_PACKET_OBSERVER_HPP
-#define MS_RTC_RTP_PACKET_OBSERVER_HPP
+#ifndef MS_RTC_RTP_OBSERVER_HPP
+#define MS_RTC_RTP_OBSERVER_HPP
 
 #include "common.hpp"
 #include "RTC/Producer.hpp"
 #include "RTC/RtpPacket.hpp"
+#include "RTC/Shared.hpp"
 #include <string>
 
 namespace RTC
@@ -25,8 +26,8 @@ namespace RTC
 		};
 
 	public:
-		RtpObserver(const std::string& id, RTC::RtpObserver::Listener* listener);
-		virtual ~RtpObserver();
+		RtpObserver(RTC::Shared* shared, const std::string& id, RTC::RtpObserver::Listener* listener);
+		~RtpObserver() override;
 
 	public:
 		void Pause();
@@ -49,15 +50,17 @@ namespace RTC
 		virtual void Paused()  = 0;
 		virtual void Resumed() = 0;
 
-	private:
-		std::string GetProducerIdFromData(json& data) const;
-
 	public:
 		// Passed by argument.
 		const std::string id;
-		RTC::RtpObserver::Listener* listener{ nullptr };
+
+	protected:
+		// Passed by argument.
+		RTC::Shared* shared{ nullptr };
 
 	private:
+		// Passed by argument.
+		RTC::RtpObserver::Listener* listener{ nullptr };
 		// Others.
 		bool paused{ false };
 	};

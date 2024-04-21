@@ -1,6 +1,6 @@
 #include "common.hpp"
 #include "RTC/RTCP/Bye.hpp"
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memcmp()
 #include <string>
 
@@ -31,7 +31,7 @@ namespace TestBye
 	{
 		REQUIRE(packet->GetReason() == reason);
 
-		ByePacket::Iterator it = packet->Begin();
+		auto it = packet->Begin();
 
 		REQUIRE(*it == ssrc1);
 

@@ -2,87 +2,114 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/DirectTransport.hpp"
-#include "ChannelMessageHandlers.hpp"
 #include "Logger.hpp"
-#include "MediaSoupErrors.hpp"
-#include "PayloadChannel/PayloadChannelNotifier.hpp"
 
 namespace RTC
 {
 	/* Instance methods. */
 
 	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-	DirectTransport::DirectTransport(const std::string& id, RTC::Transport::Listener* listener, json& data)
-	  : RTC::Transport::Transport(id, listener, data)
+	DirectTransport::DirectTransport(
+	  RTC::Shared* shared,
+	  const std::string& id,
+	  RTC::Transport::Listener* listener,
+	  const FBS::DirectTransport::DirectTransportOptions* options)
+	  : RTC::Transport::Transport(shared, id, listener, options->base())
 	{
 		MS_TRACE();
 
 		// NOTE: This may throw.
-		ChannelMessageHandlers::RegisterHandler(
+		this->shared->channelMessageRegistrator->RegisterHandler(
 		  this->id,
 		  /*channelRequestHandler*/ this,
-		  /*payloadChannelRequestHandler*/ this,
-		  /*payloadChannelNotificationHandler*/ this);
+		  /*channelNotificationHandler*/ this);
 	}
 
 	DirectTransport::~DirectTransport()
 	{
 		MS_TRACE();
 
-		ChannelMessageHandlers::UnregisterHandler(this->id);
+		// Tell the Transport parent class that we are about to destroy
+		// the class instance.
+		Destroying();
+
+		this->shared->channelMessageRegistrator->UnregisterHandler(this->id);
 	}
 
-	void DirectTransport::FillJson(json& jsonObject) const
+	flatbuffers::Offset<FBS::DirectTransport::DumpResponse> DirectTransport::FillBuffer(
+	  flatbuffers::FlatBufferBuilder& builder) const
+	{
+		// Add base transport dump.
+		auto base = Transport::FillBuffer(builder);
+
+		return FBS::DirectTransport::CreateDumpResponse(builder, base);
+	}
+
+	flatbuffers::Offset<FBS::DirectTransport::GetStatsResponse> DirectTransport::FillBufferStats(
+	  flatbuffers::FlatBufferBuilder& builder)
 	{
 		MS_TRACE();
 
-		// Call the parent method.
-		RTC::Transport::FillJson(jsonObject);
-	}
+		// Base Transport stats.
+		auto base = Transport::FillBufferStats(builder);
 
-	void DirectTransport::FillJsonStats(json& jsonArray)
-	{
-		MS_TRACE();
-
-		// Call the parent method.
-		RTC::Transport::FillJsonStats(jsonArray);
-
-		auto& jsonObject = jsonArray[0];
-
-		// Add type.
-		jsonObject["type"] = "direct-transport";
+		return FBS::DirectTransport::CreateGetStatsResponse(builder, base);
 	}
 
 	void DirectTransport::HandleRequest(Channel::ChannelRequest* request)
 	{
 		MS_TRACE();
 
-		// Pass it to the parent class.
-		RTC::Transport::HandleRequest(request);
+		switch (request->method)
+		{
+			case Channel::ChannelRequest::Method::TRANSPORT_GET_STATS:
+			{
+				auto responseOffset = FillBufferStats(request->GetBufferBuilder());
+
+				request->Accept(FBS::Response::Body::DirectTransport_GetStatsResponse, responseOffset);
+
+				break;
+			}
+
+			case Channel::ChannelRequest::Method::TRANSPORT_DUMP:
+			{
+				auto dumpOffset = FillBuffer(request->GetBufferBuilder());
+
+				request->Accept(FBS::Response::Body::DirectTransport_DumpResponse, dumpOffset);
+
+				break;
+			}
+
+			default:
+			{
+				// Pass it to the parent class.
+				RTC::Transport::HandleRequest(request);
+			}
+		}
 	}
 
-	void DirectTransport::HandleNotification(PayloadChannel::PayloadChannelNotification* notification)
+	void DirectTransport::HandleNotification(Channel::ChannelNotification* notification)
 	{
 		MS_TRACE();
 
-		switch (notification->eventId)
+		switch (notification->event)
 		{
-			case PayloadChannel::PayloadChannelNotification::EventId::TRANSPORT_SEND_RTCP:
+			case Channel::ChannelNotification::Event::TRANSPORT_SEND_RTCP:
 			{
-				const auto* data = notification->payload;
-				auto len         = notification->payloadLen;
+				const auto* body = notification->data->body_as<FBS::Transport::SendRtcpNotification>();
+				auto len         = body->data()->size();
 
 				// Increase receive transmission.
 				RTC::Transport::DataReceived(len);
 
 				if (len > RTC::MtuSize + 100)
 				{
-					MS_WARN_TAG(rtp, "given RTCP packet exceeds maximum size [len:%zu]", len);
+					MS_WARN_TAG(rtp, "given RTCP packet exceeds maximum size [len:%i]", len);
 
 					return;
 				}
 
-				RTC::RTCP::Packet* packet = RTC::RTCP::Packet::Parse(data, len);
+				RTC::RTCP::Packet* packet = RTC::RTCP::Packet::Parse(body->data()->data(), len);
 
 				if (!packet)
 				{
@@ -122,11 +149,17 @@ namespace RTC
 			return;
 		}
 
-		const uint8_t* data = packet->GetData();
-		size_t len          = packet->GetSize();
+		const auto data = this->shared->channelNotifier->GetBufferBuilder().CreateVector(
+		  packet->GetData(), packet->GetSize());
 
-		// Notify the Node DirectTransport.
-		PayloadChannel::PayloadChannelNotifier::Emit(consumer->id, "rtp", data, len);
+		auto notification =
+		  FBS::Consumer::CreateRtpNotification(this->shared->channelNotifier->GetBufferBuilder(), data);
+
+		this->shared->channelNotifier->Emit(
+		  consumer->id,
+		  FBS::Notification::Event::CONSUMER_RTP,
+		  FBS::Notification::Body::Consumer_RtpNotification,
+		  notification);
 
 		if (cb)
 		{
@@ -135,48 +168,69 @@ namespace RTC
 		}
 
 		// Increase send transmission.
-		RTC::Transport::DataSent(len);
+		RTC::Transport::DataSent(packet->GetSize());
 	}
 
 	void DirectTransport::SendRtcpPacket(RTC::RTCP::Packet* packet)
 	{
 		MS_TRACE();
 
-		const uint8_t* data = packet->GetData();
-		size_t len          = packet->GetSize();
-
 		// Notify the Node DirectTransport.
-		PayloadChannel::PayloadChannelNotifier::Emit(this->id, "rtcp", data, len);
+		const auto data = this->shared->channelNotifier->GetBufferBuilder().CreateVector(
+		  packet->GetData(), packet->GetSize());
+
+		auto notification = FBS::DirectTransport::CreateRtcpNotification(
+		  this->shared->channelNotifier->GetBufferBuilder(), data);
+
+		this->shared->channelNotifier->Emit(
+		  this->id,
+		  FBS::Notification::Event::DIRECTTRANSPORT_RTCP,
+		  FBS::Notification::Body::DirectTransport_RtcpNotification,
+		  notification);
 
 		// Increase send transmission.
-		RTC::Transport::DataSent(len);
+		RTC::Transport::DataSent(packet->GetSize());
 	}
 
 	void DirectTransport::SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet)
 	{
 		MS_TRACE();
 
-		const uint8_t* data = packet->GetData();
-		size_t len          = packet->GetSize();
+		packet->Serialize(RTC::RTCP::Buffer);
 
-		// Notify the Node DirectTransport.
-		PayloadChannel::PayloadChannelNotifier::Emit(this->id, "rtcp", data, len);
+		const auto data = this->shared->channelNotifier->GetBufferBuilder().CreateVector(
+		  packet->GetData(), packet->GetSize());
 
-		// Increase send transmission.
-		RTC::Transport::DataSent(len);
+		auto notification = FBS::DirectTransport::CreateRtcpNotification(
+		  this->shared->channelNotifier->GetBufferBuilder(), data);
+
+		this->shared->channelNotifier->Emit(
+		  this->id,
+		  FBS::Notification::Event::DIRECTTRANSPORT_RTCP,
+		  FBS::Notification::Body::DirectTransport_RtcpNotification,
+		  notification);
 	}
 
 	void DirectTransport::SendMessage(
-	  RTC::DataConsumer* dataConsumer, uint32_t ppid, const uint8_t* msg, size_t len, onQueuedCallback* cb)
+	  RTC::DataConsumer* dataConsumer,
+	  const uint8_t* msg,
+	  size_t len,
+	  uint32_t ppid,
+	  onQueuedCallback* /*cb*/)
 	{
 		MS_TRACE();
 
 		// Notify the Node DirectTransport.
-		json data = json::object();
+		auto data = this->shared->channelNotifier->GetBufferBuilder().CreateVector(msg, len);
 
-		data["ppid"] = ppid;
+		auto notification = FBS::DataConsumer::CreateMessageNotification(
+		  this->shared->channelNotifier->GetBufferBuilder(), ppid, data);
 
-		PayloadChannel::PayloadChannelNotifier::Emit(dataConsumer->id, "message", data, msg, len);
+		this->shared->channelNotifier->Emit(
+		  dataConsumer->id,
+		  FBS::Notification::Event::DATACONSUMER_MESSAGE,
+		  FBS::Notification::Body::DataConsumer_MessageNotification,
+		  notification);
 
 		// Increase send transmission.
 		RTC::Transport::DataSent(len);

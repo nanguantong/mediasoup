@@ -51,7 +51,7 @@ fn generate_router_rtp_capabilities_succeeds() {
                     ("useinbandfec", 1_u32.into()),
                     ("foo", "bar".into()),
                 ]),
-                rtcp_feedback: vec![RtcpFeedback::TransportCc],
+                rtcp_feedback: vec![RtcpFeedback::Nack, RtcpFeedback::TransportCc,],
             },
             RtpCodecCapabilityFinalized::Video {
                 mime_type: MimeTypeVideo::Vp8,
@@ -368,7 +368,6 @@ fn get_producer_rtp_parameters_mapping_get_consumable_rtp_parameters_get_consume
         RtcpParameters {
             cname: rtp_parameters.rtcp.cname.clone(),
             reduced_size: true,
-            mux: Some(true),
         }
     );
 
@@ -451,9 +450,13 @@ fn get_producer_rtp_parameters_mapping_get_consumable_rtp_parameters_get_consume
         ],
     };
 
-    let consumer_rtp_parameters =
-        get_consumer_rtp_parameters(&consumable_rtp_parameters, &remote_rtp_capabilities, false)
-            .expect("Failed to get consumer RTP parameters");
+    let consumer_rtp_parameters = get_consumer_rtp_parameters(
+        &consumable_rtp_parameters,
+        &remote_rtp_capabilities,
+        false,
+        true,
+    )
+    .expect("Failed to get consumer RTP parameters");
 
     assert_eq!(
         consumer_rtp_parameters.codecs,
@@ -502,7 +505,7 @@ fn get_producer_rtp_parameters_mapping_get_consumable_rtp_parameters_get_consume
             .get(0)
             .unwrap()
             .scalability_mode,
-        ScalabilityMode::S3T3,
+        ScalabilityMode::L3T3,
     );
     assert_eq!(
         consumer_rtp_parameters
@@ -539,7 +542,6 @@ fn get_producer_rtp_parameters_mapping_get_consumable_rtp_parameters_get_consume
         RtcpParameters {
             cname: rtp_parameters.rtcp.cname.clone(),
             reduced_size: true,
-            mux: Some(true),
         },
     );
 
@@ -646,7 +648,6 @@ fn get_producer_rtp_parameters_mapping_get_consumable_rtp_parameters_get_consume
         RtcpParameters {
             cname: rtp_parameters.rtcp.cname,
             reduced_size: true,
-            mux: Some(true),
         },
     );
 }

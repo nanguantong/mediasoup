@@ -1,6 +1,6 @@
 #include "common.hpp"
 #include "RTC/RTCP/FeedbackPsLei.hpp"
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memcmp()
 
 using namespace RTC::RTCP;
@@ -66,7 +66,7 @@ SCENARIO("RTCP Feedback PS LEI parsing", "[parser][rtcp][feedback-ps][lei]")
 	{
 		FeedbackPsLeiPacket packet(senderSsrc, mediaSsrc);
 
-		FeedbackPsLeiItem* item = new FeedbackPsLeiItem(ssrc);
+		auto* item = new FeedbackPsLeiItem(ssrc);
 
 		packet.AddItem(item);
 

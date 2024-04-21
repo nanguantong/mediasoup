@@ -1,7 +1,7 @@
 #include "common.hpp"
 #include "helpers.hpp"
 #include "RTC/RtpPacket.hpp"
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 #include <string>
 #include <vector>
@@ -20,12 +20,16 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		std::string rid;
 
 		if (!helpers::readBinaryFile("data/packet1.raw", buffer, &len))
+		{
 			FAIL("cannot open file");
+		}
 
 		RtpPacket* packet = RtpPacket::Parse(buffer, len);
 
 		if (!packet)
+		{
 			FAIL("not a RTP packet");
+		}
 
 		REQUIRE(packet->HasMarker() == false);
 		REQUIRE(packet->HasHeaderExtension() == true);
@@ -55,12 +59,16 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		size_t len;
 
 		if (!helpers::readBinaryFile("data/packet2.raw", buffer, &len))
+		{
 			FAIL("cannot open file");
+		}
 
 		RtpPacket* packet = RtpPacket::Parse(buffer, len);
 
 		if (!packet)
+		{
 			FAIL("not a RTP packet");
+		}
 
 		REQUIRE(packet->HasMarker() == false);
 		REQUIRE(packet->HasHeaderExtension() == false);
@@ -86,12 +94,16 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		uint32_t absSendTime;
 
 		if (!helpers::readBinaryFile("data/packet3.raw", buffer, &len))
+		{
 			FAIL("cannot open file");
+		}
 
 		RtpPacket* packet = RtpPacket::Parse(buffer, len);
 
 		if (!packet)
+		{
 			FAIL("not a RTP packet");
+		}
 
 		REQUIRE(packet->HasMarker() == false);
 		REQUIRE(packet->HasHeaderExtension() == true);
@@ -172,16 +184,18 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		// clang-format off
 		uint8_t buffer[] =
 		{
-			0b10000000, 0b00000001, 0, 8,
-			0, 0, 0, 4,
-			0, 0, 0, 5
+			0x80, 0x01, 0x00, 0x08,
+			0x00, 0x00, 0x00, 0x04,
+			0x00, 0x00, 0x00, 0x05
 		};
 		// clang-format on
 
 		RtpPacket* packet = RtpPacket::Parse(buffer, sizeof(buffer));
 
 		if (!packet)
+		{
 			FAIL("not a RTP packet");
+		}
 
 		REQUIRE(packet->HasMarker() == false);
 		REQUIRE(packet->HasHeaderExtension() == false);
@@ -200,20 +214,22 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		// clang-format off
 		uint8_t buffer[] =
 		{
-			0b10010000, 0b00000001, 0, 8,
-			0, 0, 0, 4,
-			0, 0, 0, 5,
-			0xBE, 0xDE, 0, 3, // Header Extension
-			0b00010000, 0xFF, 0b00100001, 0xFF,
-			0xFF, 0, 0, 0b00110011,
-			0xFF, 0xFF, 0xFF, 0xFF
+			0x90, 0x01, 0x00, 0x08,
+			0x00, 0x00, 0x00, 0x04,
+			0x00, 0x00, 0x00, 0x05,
+			0xbe, 0xde, 0x00, 0x03, // Header Extension
+			0x10, 0xff, 0x21, 0xff,
+			0xff, 0x00, 0x00, 0x33,
+			0xff, 0xff, 0xff, 0xff
 		};
 		// clang-format on
 
 		RtpPacket* packet = RtpPacket::Parse(buffer, sizeof(buffer));
 
 		if (!packet)
+		{
 			FAIL("not a RTP packet");
+		}
 
 		REQUIRE(packet->HasMarker() == false);
 		REQUIRE(packet->HasHeaderExtension() == true);
@@ -241,14 +257,14 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		// clang-format off
 		uint8_t buffer[] =
 		{
-			0b10010000, 0b00000001, 0, 8,
-			0, 0, 0, 4,
-			0, 0, 0, 5,
-			0b00010000, 0, 0, 4, // Header Extension
-			0, 0, 1, 0,
-			2, 1, 0x42, 0,
-			3, 2, 0x11, 0x22,
-			0, 0, 4, 0
+			0x90, 0x01, 0x00, 0x08,
+			0x00, 0x00, 0x00, 0x04,
+			0x00, 0x00, 0x00, 0x05,
+			0x10, 0x00, 0x00, 0x04, // Header Extension
+			0x00, 0x00, 0x01, 0x00,
+			0x02, 0x01, 0x42, 0x00,
+			0x03, 0x02, 0x11, 0x22,
+			0x00, 0x00, 0x04, 0x00
 		};
 		// clang-format on
 
@@ -258,7 +274,9 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		RtpPacket* packet = RtpPacket::Parse(buffer, sizeof(buffer));
 
 		if (!packet)
+		{
 			FAIL("not a RTP packet");
+		}
 
 		REQUIRE(packet->HasMarker() == false);
 		REQUIRE(packet->HasHeaderExtension() == true);
@@ -307,14 +325,14 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		// clang-format off
 		uint8_t buffer[] =
 		{
-			0b10010000, 0b00000001, 0, 8,
-			0, 0, 0, 4,
-			0, 0, 0, 5,
-			0b00010000, 0, 0, 3, // Header Extension
-			1, 0, 2, 1,
-			0xFF, 0, 3, 4,
-			0xFF, 0xFF, 0xFF, 0xFF,
-			0x11, 0x11, 0x11, 0x11 // Payload
+			0x90, 0x01, 0x00, 0x08,
+			0x00, 0x00, 0x00, 0x04,
+			0x00, 0x00, 0x00, 0x05,
+			0x10, 0x00, 0x00, 0x03, // Header Extension
+			0x01, 0x00, 0x02, 0x01,
+			0xff, 0x00, 0x03, 0x04,
+			0xff, 0xff, 0xff, 0xff,
+			0x11, 0x11, 0x11, 0x11 // payload
 		};
 		// clang-format on
 
@@ -325,7 +343,9 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		RtpPacket* packet = RtpPacket::Parse(buffer, sizeof(buffer));
 
 		if (!packet)
+		{
 			FAIL("not a RTP packet");
+		}
 
 		REQUIRE(packet->HasMarker() == false);
 		REQUIRE(packet->HasHeaderExtension() == true);
@@ -338,7 +358,7 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		REQUIRE(packet->HasOneByteExtensions() == false);
 		REQUIRE(packet->HasTwoBytesExtensions());
 
-		auto rtxPacket = packet->Clone();
+		auto* rtxPacket = packet->Clone();
 
 		delete packet;
 
@@ -378,13 +398,13 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		// clang-format off
 		uint8_t buffer[] =
 		{
-			0b10110000, 0b00000001, 0, 8,
-			0, 0, 0, 4,
-			0, 0, 0, 5,
-			0xBE, 0xDE, 0, 3, // Header Extension
-			0b00010000, 0xFF, 0b00100001, 0xFF,
-			0xFF, 0, 0, 0b00110011,
-			0xFF, 0xFF, 0xFF, 0xFF,
+			0xb0, 0x01, 0x00, 0x08,
+			0x00, 0x00, 0x00, 0x04,
+			0x00, 0x00, 0x00, 0x05,
+			0xbe, 0xde, 0x00, 0x03, // Header Extension
+			0x10, 0xff, 0x21, 0xff,
+			0xff, 0x00, 0x00, 0x33,
+			0xff, 0xff, 0xff, 0xff,
 			0x00, 0x01, 0x02, 0x03, // Payload
 			0x04, 0x05, 0x06, 0x07,
 			0x00, 0x00, 0x00, 0x04, // 4 padding bytes
@@ -399,7 +419,9 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		RtpPacket* packet = RtpPacket::Parse(buffer, len);
 
 		if (!packet)
+		{
 			FAIL("not a RTP packet");
+		}
 
 		REQUIRE(packet->HasMarker() == false);
 		REQUIRE(packet->GetPayloadType() == 1);
@@ -489,12 +511,12 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		// clang-format off
 		uint8_t buffer[] =
 		{
-			0b10100000, 0b00000001, 0, 8,
-			0, 0, 0, 4,
-			0, 0, 0, 5,
+			0xa0, 0x01, 0x00, 0x08,
+			0x00, 0x00, 0x00, 0x04,
+			0x00, 0x00, 0x00, 0x05,
 			0x11, 0x22, 0x33, 0x44, // Payload
 			0x55, 0x66, 0x77, 0x88,
-			0x99, 0xAA, 0xBB, 0xCC,
+			0x99, 0xaa, 0xbb, 0xcc,
 			0x00, 0x00, 0x00, 0x04, // 4 padding bytes
 			// Extra buffer
 			0x00, 0x00, 0x00, 0x00,
@@ -511,7 +533,9 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		uint8_t* extenValue;
 
 		if (!packet)
+		{
 			FAIL("not a RTP packet");
+		}
 
 		REQUIRE(packet->GetSize() == 28);
 		REQUIRE(packet->HasHeaderExtension() == false);
@@ -653,12 +677,12 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		// clang-format off
 		uint8_t buffer[] =
 		{
-			0b10100000, 0b00000001, 0, 8,
-			0, 0, 0, 4,
-			0, 0, 0, 5,
+			0xa0, 0x01, 0x00, 0x08,
+			0x00, 0x00, 0x00, 0x04,
+			0x00, 0x00, 0x00, 0x05,
 			0x11, 0x22, 0x33, 0x44, // Payload
 			0x55, 0x66, 0x77, 0x88,
-			0x99, 0xAA, 0xBB, 0xCC,
+			0x99, 0xaa, 0xbb, 0xcc,
 			0x00, 0x00, 0x00, 0x04, // 4 padding bytes
 			// Extra buffer
 			0x00, 0x00, 0x00, 0x00,
@@ -674,7 +698,9 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		uint8_t* extenValue;
 
 		if (!packet)
+		{
 			FAIL("not a RTP packet");
+		}
 
 		REQUIRE(packet->GetSize() == 28);
 		REQUIRE(packet->HasHeaderExtension() == false);
@@ -798,19 +824,21 @@ SCENARIO("parse RTP packets", "[parser][rtp]")
 		// clang-format off
 		uint8_t buffer[] =
 		{
-			0b10010000, 0b00000001, 0, 8,
-			0, 0, 0, 4,
-			0, 0, 0, 5,
-			0xBE, 0xDE, 0, 1, // Header Extension
-			0b00110010, 0b10101011, 1, 5,
-			1, 2, 3, 4
+			0x90, 0x01, 0x00, 0x08,
+			0x00, 0x00, 0x00, 0x04,
+			0x00, 0x00, 0x00, 0x05,
+			0xbe, 0xde, 0x00, 0x01, // Header Extension
+			0x32, 0xab, 0x01, 0x05,
+			0x01, 0x02, 0x03, 0x04
 		};
 		// clang-format on
 
 		RtpPacket* packet = RtpPacket::Parse(buffer, sizeof(buffer));
 
 		if (!packet)
+		{
 			FAIL("not a RTP packet");
+		}
 
 		REQUIRE(packet->HasMarker() == false);
 		REQUIRE(packet->HasHeaderExtension() == true);

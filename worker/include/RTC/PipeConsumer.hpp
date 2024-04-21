@@ -1,9 +1,9 @@
-#ifndef MS_RTC_PIPE_CONSUMER_HPP
-#define MS_RTC_PIPE_CONSUMER_HPP
+#ifndef MS_RTC_PIPECONSUMER_HPP
+#define MS_RTC_PIPECONSUMER_HPP
 
 #include "RTC/Consumer.hpp"
-#include "RTC/RtpStreamSend.hpp"
 #include "RTC/SeqManager.hpp"
+#include "RTC/Shared.hpp"
 
 namespace RTC
 {
@@ -11,27 +11,32 @@ namespace RTC
 	{
 	public:
 		PipeConsumer(
+		  RTC::Shared* shared,
 		  const std::string& id,
 		  const std::string& producerId,
 		  RTC::Consumer::Listener* listener,
-		  json& data);
+		  const FBS::Transport::ConsumeRequest* data);
 		~PipeConsumer() override;
 
 	public:
-		void FillJson(json& jsonObject) const override;
-		void FillJsonStats(json& jsonArray) const override;
-		void FillJsonScore(json& jsonObject) const override;
-		void ProducerRtpStream(RTC::RtpStream* rtpStream, uint32_t mappedSsrc) override;
-		void ProducerNewRtpStream(RTC::RtpStream* rtpStream, uint32_t mappedSsrc) override;
-		void ProducerRtpStreamScore(RTC::RtpStream* rtpStream, uint8_t score, uint8_t previousScore) override;
-		void ProducerRtcpSenderReport(RTC::RtpStream* rtpStream, bool first) override;
+		flatbuffers::Offset<FBS::Consumer::DumpResponse> FillBuffer(
+		  flatbuffers::FlatBufferBuilder& builder) const;
+		flatbuffers::Offset<FBS::Consumer::GetStatsResponse> FillBufferStats(
+		  flatbuffers::FlatBufferBuilder& builder) override;
+		flatbuffers::Offset<FBS::Consumer::ConsumerScore> FillBufferScore(
+		  flatbuffers::FlatBufferBuilder& builder) const override;
+		void ProducerRtpStream(RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc) override;
+		void ProducerNewRtpStream(RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc) override;
+		void ProducerRtpStreamScore(
+		  RTC::RtpStreamRecv* rtpStream, uint8_t score, uint8_t previousScore) override;
+		void ProducerRtcpSenderReport(RTC::RtpStreamRecv* rtpStream, bool first) override;
 		uint8_t GetBitratePriority() const override;
 		uint32_t IncreaseLayer(uint32_t bitrate, bool considerLoss) override;
 		void ApplyLayers() override;
 		uint32_t GetDesiredBitrate() const override;
 		void SendRtpPacket(RTC::RtpPacket* packet, std::shared_ptr<RTC::RtpPacket>& sharedPacket) override;
-		void GetRtcp(RTC::RTCP::CompoundPacket* packet, RTC::RtpStreamSend* rtpStream, uint64_t nowMs) override;
-		std::vector<RTC::RtpStreamSend*> GetRtpStreams() override
+		bool GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs) override;
+		const std::vector<RTC::RtpStreamSend*>& GetRtpStreams() const override
 		{
 			return this->rtpStreams;
 		}

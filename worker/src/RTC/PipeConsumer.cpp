@@ -2,8 +2,6 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/PipeConsumer.hpp"
-#include "ChannelMessageHandlers.hpp"
-#include "DepLibUV.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "RTC/Codecs/Tools.hpp"
@@ -13,17 +11,23 @@ namespace RTC
 	/* Instance methods. */
 
 	PipeConsumer::PipeConsumer(
-	  const std::string& id, const std::string& producerId, RTC::Consumer::Listener* listener, json& data)
-	  : RTC::Consumer::Consumer(id, producerId, listener, data, RTC::RtpParameters::Type::PIPE)
+	  RTC::Shared* shared,
+	  const std::string& id,
+	  const std::string& producerId,
+	  RTC::Consumer::Listener* listener,
+	  const FBS::Transport::ConsumeRequest* data)
+	  : RTC::Consumer::Consumer(shared, id, producerId, listener, data, RTC::RtpParameters::Type::PIPE)
 	{
 		MS_TRACE();
 
 		// Ensure there are as many encodings as consumable encodings.
 		if (this->rtpParameters.encodings.size() != this->consumableRtpEncodings.size())
+		{
 			MS_THROW_TYPE_ERROR("number of rtpParameters.encodings and consumableRtpEncodings do not match");
+		}
 
-		auto& encoding   = this->rtpParameters.encodings[0];
-		auto* mediaCodec = this->rtpParameters.GetCodecForEncoding(encoding);
+		auto& encoding         = this->rtpParameters.encodings[0];
+		const auto* mediaCodec = this->rtpParameters.GetCodecForEncoding(encoding);
 
 		this->keyFrameSupported = RTC::Codecs::Tools::CanBeKeyFrame(mediaCodec->mimeType);
 
@@ -31,18 +35,17 @@ namespace RTC
 		CreateRtpStreams();
 
 		// NOTE: This may throw.
-		ChannelMessageHandlers::RegisterHandler(
+		this->shared->channelMessageRegistrator->RegisterHandler(
 		  this->id,
 		  /*channelRequestHandler*/ this,
-		  /*payloadChannelRequestHandler*/ nullptr,
-		  /*payloadChannelNotificationHandler*/ nullptr);
+		  /*channelNotificationHandler*/ nullptr);
 	}
 
 	PipeConsumer::~PipeConsumer()
 	{
 		MS_TRACE();
 
-		ChannelMessageHandlers::UnregisterHandler(this->id);
+		this->shared->channelMessageRegistrator->UnregisterHandler(this->id);
 
 		for (auto* rtpStream : this->rtpStreams)
 		{
@@ -53,75 +56,91 @@ namespace RTC
 		this->mapSsrcRtpStream.clear();
 	}
 
-	void PipeConsumer::FillJson(json& jsonObject) const
+	flatbuffers::Offset<FBS::Consumer::DumpResponse> PipeConsumer::FillBuffer(
+	  flatbuffers::FlatBufferBuilder& builder) const
 	{
 		MS_TRACE();
 
 		// Call the parent method.
-		RTC::Consumer::FillJson(jsonObject);
+		auto base = RTC::Consumer::FillBuffer(builder);
 
 		// Add rtpStreams.
-		jsonObject["rtpStreams"] = json::array();
-		auto jsonRtpStreamsIt    = jsonObject.find("rtpStreams");
+		std::vector<flatbuffers::Offset<FBS::RtpStream::Dump>> rtpStreams;
+		rtpStreams.reserve(this->rtpStreams.size());
 
-		for (auto* rtpStream : this->rtpStreams)
+		for (const auto* rtpStream : this->rtpStreams)
 		{
-			jsonRtpStreamsIt->emplace_back(json::value_t::object);
-
-			auto& jsonEntry = (*jsonRtpStreamsIt)[jsonRtpStreamsIt->size() - 1];
-
-			rtpStream->FillJson(jsonEntry);
+			rtpStreams.emplace_back(rtpStream->FillBuffer(builder));
 		}
+
+		auto dump = FBS::Consumer::CreateConsumerDumpDirect(builder, base, &rtpStreams);
+
+		return FBS::Consumer::CreateDumpResponse(builder, dump);
 	}
 
-	void PipeConsumer::FillJsonStats(json& jsonArray) const
+	flatbuffers::Offset<FBS::Consumer::GetStatsResponse> PipeConsumer::FillBufferStats(
+	  flatbuffers::FlatBufferBuilder& builder)
 	{
 		MS_TRACE();
+
+		std::vector<flatbuffers::Offset<FBS::RtpStream::Stats>> rtpStreams;
+		rtpStreams.reserve(this->rtpStreams.size());
 
 		// Add stats of our send streams.
 		for (auto* rtpStream : this->rtpStreams)
 		{
-			jsonArray.emplace_back(json::value_t::object);
-
-			auto& jsonEntry = jsonArray[jsonArray.size() - 1];
-
-			rtpStream->FillJsonStats(jsonEntry);
+			rtpStreams.emplace_back(rtpStream->FillBufferStats(builder));
 		}
+
+		return FBS::Consumer::CreateGetStatsResponseDirect(builder, &rtpStreams);
 	}
 
-	void PipeConsumer::FillJsonScore(json& jsonObject) const
+	flatbuffers::Offset<FBS::Consumer::ConsumerScore> PipeConsumer::FillBufferScore(
+	  flatbuffers::FlatBufferBuilder& builder) const
 	{
 		MS_TRACE();
 
 		MS_ASSERT(this->producerRtpStreamScores, "producerRtpStreamScores not set");
 
 		// NOTE: Hardcoded values in PipeTransport.
-		jsonObject["score"]          = 10;
-		jsonObject["producerScore"]  = 10;
-		jsonObject["producerScores"] = *this->producerRtpStreamScores;
+		return FBS::Consumer::CreateConsumerScoreDirect(builder, 10, 10, this->producerRtpStreamScores);
 	}
 
 	void PipeConsumer::HandleRequest(Channel::ChannelRequest* request)
 	{
 		MS_TRACE();
 
-		switch (request->methodId)
+		switch (request->method)
 		{
-			case Channel::ChannelRequest::MethodId::CONSUMER_REQUEST_KEY_FRAME:
+			case Channel::ChannelRequest::Method::CONSUMER_DUMP:
+			{
+				auto dumpOffset = FillBuffer(request->GetBufferBuilder());
+
+				request->Accept(FBS::Response::Body::Consumer_DumpResponse, dumpOffset);
+
+				break;
+			}
+
+			case Channel::ChannelRequest::Method::CONSUMER_REQUEST_KEY_FRAME:
 			{
 				if (IsActive())
+				{
 					RequestKeyFrame();
+				}
 
 				request->Accept();
 
 				break;
 			}
 
-			case Channel::ChannelRequest::MethodId::CONSUMER_SET_PREFERRED_LAYERS:
+			case Channel::ChannelRequest::Method::CONSUMER_SET_PREFERRED_LAYERS:
 			{
-				// Do nothing.
+				// Accept with empty preferred layers object.
 
-				request->Accept();
+				auto responseOffset =
+				  FBS::Consumer::CreateSetPreferredLayersResponse(request->GetBufferBuilder());
+
+				request->Accept(FBS::Response::Body::Consumer_SetPreferredLayersResponse, responseOffset);
 
 				break;
 			}
@@ -134,14 +153,14 @@ namespace RTC
 		}
 	}
 
-	void PipeConsumer::ProducerRtpStream(RTC::RtpStream* /*rtpStream*/, uint32_t /*mappedSsrc*/)
+	void PipeConsumer::ProducerRtpStream(RTC::RtpStreamRecv* /*rtpStream*/, uint32_t /*mappedSsrc*/)
 	{
 		MS_TRACE();
 
 		// Do nothing.
 	}
 
-	void PipeConsumer::ProducerNewRtpStream(RTC::RtpStream* /*rtpStream*/, uint32_t /*mappedSsrc*/)
+	void PipeConsumer::ProducerNewRtpStream(RTC::RtpStreamRecv* /*rtpStream*/, uint32_t /*mappedSsrc*/)
 	{
 		MS_TRACE();
 
@@ -149,14 +168,14 @@ namespace RTC
 	}
 
 	void PipeConsumer::ProducerRtpStreamScore(
-	  RTC::RtpStream* /*rtpStream*/, uint8_t /*score*/, uint8_t /*previousScore*/)
+	  RTC::RtpStreamRecv* /*rtpStream*/, uint8_t /*score*/, uint8_t /*previousScore*/)
 	{
 		MS_TRACE();
 
 		// Do nothing.
 	}
 
-	void PipeConsumer::ProducerRtcpSenderReport(RTC::RtpStream* /*rtpStream*/, bool /*first*/)
+	void PipeConsumer::ProducerRtcpSenderReport(RTC::RtpStreamRecv* /*rtpStream*/, bool /*first*/)
 	{
 		MS_TRACE();
 
@@ -198,16 +217,30 @@ namespace RTC
 	{
 		MS_TRACE();
 
+#ifdef MS_RTC_LOGGER_RTP
+		packet->logger.consumerId = this->id;
+#endif
+
 		if (!IsActive())
+		{
+#ifdef MS_RTC_LOGGER_RTP
+			packet->logger.Dropped(RtcLogger::RtpPacket::DropReason::CONSUMER_INACTIVE);
+#endif
+
 			return;
+		}
 
 		auto payloadType = packet->GetPayloadType();
 
 		// NOTE: This may happen if this Consumer supports just some codecs of those
 		// in the corresponding Producer.
-		if (this->supportedCodecPayloadTypes.find(payloadType) == this->supportedCodecPayloadTypes.end())
+		if (!this->supportedCodecPayloadTypes[payloadType])
 		{
 			MS_DEBUG_DEV("payload type not supported [payloadType:%" PRIu8 "]", payloadType);
+
+#ifdef MS_RTC_LOGGER_RTP
+			packet->logger.Dropped(RtcLogger::RtpPacket::DropReason::UNSUPPORTED_PAYLOAD_TYPE);
+#endif
 
 			return;
 		}
@@ -220,16 +253,24 @@ namespace RTC
 		// If we need to sync, support key frames and this is not a key frame, ignore
 		// the packet.
 		if (syncRequired && this->keyFrameSupported && !packet->IsKeyFrame())
+		{
+#ifdef MS_RTC_LOGGER_RTP
+			packet->logger.Dropped(RtcLogger::RtpPacket::DropReason::NOT_A_KEYFRAME);
+#endif
+
 			return;
+		}
 
 		// Whether this is the first packet after re-sync.
-		bool isSyncPacket = syncRequired;
+		const bool isSyncPacket = syncRequired;
 
 		// Sync sequence number and timestamp if required.
 		if (isSyncPacket)
 		{
 			if (packet->IsKeyFrame())
+			{
 				MS_DEBUG_TAG(rtp, "sync key frame received");
+			}
 
 			rtpSeqManager.Sync(packet->GetSequenceNumber() - 1);
 
@@ -248,6 +289,11 @@ namespace RTC
 		// Rewrite packet.
 		packet->SetSsrc(ssrc);
 		packet->SetSequenceNumber(seq);
+
+#ifdef MS_RTC_LOGGER_RTP
+		packet->logger.sendRtpTimestamp = packet->GetTimestamp();
+		packet->logger.sendSeqNumber    = seq;
+#endif
 
 		if (isSyncPacket)
 		{
@@ -289,14 +335,9 @@ namespace RTC
 		packet->SetSequenceNumber(origSeq);
 	}
 
-	void PipeConsumer::GetRtcp(
-	  RTC::RTCP::CompoundPacket* packet, RTC::RtpStreamSend* rtpStream, uint64_t nowMs)
+	bool PipeConsumer::GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs)
 	{
 		MS_TRACE();
-
-		MS_ASSERT(
-		  std::find(this->rtpStreams.begin(), this->rtpStreams.end(), rtpStream) != this->rtpStreams.end(),
-		  "RTP stream does exist");
 
 		// Special condition for PipeConsumer since this method will be called in a loop for
 		// each stream in this PipeConsumer.
@@ -307,32 +348,45 @@ namespace RTC
 		)
 		// clang-format on
 		{
-			return;
+			return true;
 		}
 
-		auto* report = rtpStream->GetRtcpSenderReport(nowMs);
+		std::vector<RTCP::SenderReport*> senderReports;
+		std::vector<RTCP::SdesChunk*> sdesChunks;
+		std::vector<RTCP::DelaySinceLastRr::SsrcInfo*> delaySinceLastRrSsrcInfos;
 
-		if (!report)
-			return;
-
-		packet->AddSenderReport(report);
-
-		// Build SDES chunk for this sender.
-		auto* sdesChunk = rtpStream->GetRtcpSdesChunk();
-
-		packet->AddSdesChunk(sdesChunk);
-
-		auto* dlrr = rtpStream->GetRtcpXrDelaySinceLastRr(nowMs);
-
-		if (dlrr)
+		for (auto* rtpStream : this->rtpStreams)
 		{
-			auto* report = new RTC::RTCP::DelaySinceLastRr();
+			auto* report = rtpStream->GetRtcpSenderReport(nowMs);
 
-			report->AddSsrcInfo(dlrr);
-			packet->AddDelaySinceLastRr(report);
+			if (!report)
+			{
+				continue;
+			}
+
+			senderReports.push_back(report);
+
+			// Build SDES chunk for this sender.
+			auto* sdesChunk = rtpStream->GetRtcpSdesChunk();
+			sdesChunks.push_back(sdesChunk);
+
+			auto* delaySinceLastRrSsrcInfo = rtpStream->GetRtcpXrDelaySinceLastRrSsrcInfo(nowMs);
+
+			if (delaySinceLastRrSsrcInfo)
+			{
+				delaySinceLastRrSsrcInfos.push_back(delaySinceLastRrSsrcInfo);
+			}
+		}
+
+		// RTCP Compound packet buffer cannot hold the data.
+		if (!packet->Add(senderReports, sdesChunks, delaySinceLastRrSsrcInfos))
+		{
+			return false;
 		}
 
 		this->lastRtcpSentTime = nowMs;
+
+		return true;
 	}
 
 	void PipeConsumer::NeedWorstRemoteFractionLost(uint32_t /*mappedSsrc*/, uint8_t& worstRemoteFractionLost)
@@ -340,7 +394,9 @@ namespace RTC
 		MS_TRACE();
 
 		if (!IsActive())
+		{
 			return;
+		}
 
 		for (auto* rtpStream : this->rtpStreams)
 		{
@@ -348,7 +404,9 @@ namespace RTC
 
 			// If our fraction lost is worse than the given one, update it.
 			if (fractionLost > worstRemoteFractionLost)
+			{
 				worstRemoteFractionLost = fractionLost;
+			}
 		}
 	}
 
@@ -357,7 +415,9 @@ namespace RTC
 		MS_TRACE();
 
 		if (!IsActive())
+		{
 			return;
+		}
 
 		// May emit 'trace' event.
 		EmitTraceEventNackType();
@@ -396,7 +456,9 @@ namespace RTC
 		rtpStream->ReceiveKeyFrameRequest(messageType);
 
 		if (IsActive())
+		{
 			RequestKeyFrame();
+		}
 	}
 
 	void PipeConsumer::ReceiveRtcpReceiverReport(RTC::RTCP::ReceiverReport* report)
@@ -423,7 +485,9 @@ namespace RTC
 		MS_TRACE();
 
 		if (!IsActive())
+		{
 			return 0u;
+		}
 
 		uint32_t rate{ 0u };
 
@@ -444,7 +508,9 @@ namespace RTC
 		for (auto* rtpStream : this->rtpStreams)
 		{
 			if (rtpStream->GetRtt() > rtt)
+			{
 				rtt = rtpStream->GetRtt();
+			}
 		}
 
 		return rtt;
@@ -587,12 +653,16 @@ namespace RTC
 
 			// If the Consumer is paused, tell the RtpStreamSend.
 			if (IsPaused() || IsProducerPaused())
+			{
 				rtpStream->Pause();
+			}
 
 			const auto* rtxCodec = this->rtpParameters.GetRtxCodecForEncoding(encoding);
 
 			if (rtxCodec && encoding.hasRtx)
+			{
 				rtpStream->SetRtx(rtxCodec->payloadType, encoding.rtx.ssrc);
+			}
 
 			this->rtpStreams.push_back(rtpStream);
 			this->mapMappedSsrcSsrc[consumableEncoding.ssrc] = encoding.ssrc;
@@ -607,7 +677,9 @@ namespace RTC
 		MS_TRACE();
 
 		if (this->kind != RTC::Media::Kind::VIDEO)
+		{
 			return;
+		}
 
 		for (auto& consumableRtpEncoding : this->consumableRtpEncodings)
 		{

@@ -136,18 +136,24 @@ impl EchoConnection {
                 settings
             })
             .await
-            .map_err(|error| format!("Failed to create worker: {}", error))?;
+            .map_err(|error| format!("Failed to create worker: {error}"))?;
         let router = worker
             .create_router(RouterOptions::new(media_codecs()))
             .await
-            .map_err(|error| format!("Failed to create router: {}", error))?;
+            .map_err(|error| format!("Failed to create router: {error}"))?;
 
         // For simplicity we will create plain transport for audio producer right away
         let plain_transport = router
             .create_plain_transport({
-                let mut options = PlainTransportOptions::new(ListenIp {
+                let mut options = PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
                     ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    announced_ip: None,
+                    announced_address: None,
+                    port: None,
+                    port_range: None,
+                    flags: None,
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
                 });
 
                 options.comedia = true;
@@ -156,7 +162,7 @@ impl EchoConnection {
                 options
             })
             .await
-            .map_err(|error| format!("Failed to create plain transport: {}", error))?;
+            .map_err(|error| format!("Failed to create plain transport: {error}"))?;
 
         // And creating audio producer that will be consumed over WebRTC later
         let rtp_producer = plain_transport
@@ -185,7 +191,7 @@ impl EchoConnection {
                 },
             ))
             .await
-            .map_err(|error| format!("Failed to create audio producer: {}", error))?;
+            .map_err(|error| format!("Failed to create audio producer: {error}"))?;
 
         println!(
             "Plain transport created:\n  \
@@ -193,9 +199,9 @@ impl EchoConnection {
             RTCP listening on {}:{}\n  \
             PT=100\n  \
             SSRC=1111",
-            plain_transport.tuple().local_ip(),
+            plain_transport.tuple().local_address(),
             plain_transport.tuple().local_port(),
-            plain_transport.rtcp_tuple().unwrap().local_ip(),
+            plain_transport.rtcp_tuple().unwrap().local_address(),
             plain_transport.rtcp_tuple().unwrap().local_port(),
         );
 
@@ -215,9 +221,9 @@ impl EchoConnection {
                 rtpbin.send_rtp_sink_0 \\\n  \
                 rtpbin.send_rtp_src_0 ! udpsink host={} port={} sync=false async=false \\\n  \
                 rtpbin.send_rtcp_src_0 ! udpsink host={} port={} sync=false async=false",
-                plain_transport.tuple().local_ip(),
+                plain_transport.tuple().local_address(),
                 plain_transport.tuple().local_port(),
-                plain_transport.rtcp_tuple().unwrap().local_ip(),
+                plain_transport.rtcp_tuple().unwrap().local_address(),
                 plain_transport.rtcp_tuple().unwrap().local_port(),
         );
 
@@ -225,14 +231,20 @@ impl EchoConnection {
         // it right away. This may not be the case for real-world applications or you may create
         // this at a different time and/or in different order.
         let consumer_transport = router
-            .create_webrtc_transport(WebRtcTransportOptions::new(TransportListenIps::new(
-                ListenIp {
+            .create_webrtc_transport(WebRtcTransportOptions::new(
+                WebRtcTransportListenInfos::new(ListenInfo {
+                    protocol: Protocol::Udp,
                     ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    announced_ip: None,
-                },
-            )))
+                    announced_address: None,
+                    port: None,
+                    port_range: None,
+                    flags: None,
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
+                }),
+            ))
             .await
-            .map_err(|error| format!("Failed to create consumer transport: {}", error))?;
+            .map_err(|error| format!("Failed to create consumer transport: {error}"))?;
 
         Ok(Self {
             client_rtp_capabilities: None,
@@ -290,11 +302,11 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for EchoConnection {
                     ctx.address().do_send(message);
                 }
                 Err(error) => {
-                    eprintln!("Failed to parse client message: {}\n{}", error, text);
+                    eprintln!("Failed to parse client message: {error}\n{text}");
                 }
             },
             Ok(ws::Message::Binary(bin)) => {
-                eprintln!("Unexpected binary message: {:?}", bin);
+                eprintln!("Unexpected binary message: {bin:?}");
             }
             Ok(ws::Message::Close(reason)) => {
                 ctx.close(reason);
@@ -329,7 +341,7 @@ impl Handler<ClientMessage> for EchoConnection {
                             println!("Consumer transport connected");
                         }
                         Err(error) => {
-                            eprintln!("Failed to connect consumer transport: {}", error);
+                            eprintln!("Failed to connect consumer transport: {error}");
                             address.do_send(InternalMessage::Stop);
                         }
                     }
@@ -365,10 +377,10 @@ impl Handler<ClientMessage> for EchoConnection {
                             // Consumer is stored in a hashmap since if we don't do it, it will get
                             // destroyed as soon as its instance goes out out scope
                             address.do_send(InternalMessage::SaveConsumer(consumer));
-                            println!("{:?} consumer created: {}", kind, id);
+                            println!("{kind:?} consumer created: {id}");
                         }
                         Err(error) => {
-                            eprintln!("Failed to create consumer: {}", error);
+                            eprintln!("Failed to create consumer: {error}");
                             address.do_send(InternalMessage::Stop);
                         }
                     }
@@ -417,7 +429,7 @@ async fn ws_index(
     match EchoConnection::new(&worker_manager).await {
         Ok(echo_server) => ws::start(echo_server, &request, stream),
         Err(error) => {
-            eprintln!("{}", error);
+            eprintln!("{error}");
 
             Ok(HttpResponse::InternalServerError().finish())
         }

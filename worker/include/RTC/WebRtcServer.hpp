@@ -3,15 +3,16 @@
 
 #include "Channel/ChannelRequest.hpp"
 #include "RTC/IceCandidate.hpp"
+#include "RTC/Shared.hpp"
 #include "RTC/StunPacket.hpp"
 #include "RTC/TcpConnection.hpp"
 #include "RTC/TcpServer.hpp"
 #include "RTC/TransportTuple.hpp"
 #include "RTC/UdpSocket.hpp"
 #include "RTC/WebRtcTransport.hpp"
+#include <flatbuffers/flatbuffers.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -24,43 +25,41 @@ namespace RTC
 	                     public Channel::ChannelSocket::RequestHandler
 	{
 	private:
-		struct ListenInfo
-		{
-			RTC::TransportTuple::Protocol protocol;
-			std::string ip;
-			std::string announcedIp;
-			uint16_t port;
-		};
-
-	private:
 		struct UdpSocketOrTcpServer
 		{
 			// Expose a constructor to use vector.emplace_back().
-			UdpSocketOrTcpServer(RTC::UdpSocket* udpSocket, RTC::TcpServer* tcpServer, std::string& announcedIp)
-			  : udpSocket(udpSocket), tcpServer(tcpServer), announcedIp(announcedIp)
+			UdpSocketOrTcpServer(
+			  RTC::UdpSocket* udpSocket, RTC::TcpServer* tcpServer, std::string& announcedAddress)
+			  : udpSocket(udpSocket), tcpServer(tcpServer), announcedAddress(announcedAddress)
 			{
 			}
 
 			RTC::UdpSocket* udpSocket;
 			RTC::TcpServer* tcpServer;
-			std::string announcedIp;
+			std::string announcedAddress;
 		};
 
-	public:
-		WebRtcServer(const std::string& id, json& data);
-		~WebRtcServer();
+	private:
+		static std::string GetLocalIceUsernameFragmentFromReceivedStunPacket(RTC::StunPacket* packet);
 
 	public:
-		void FillJson(json& jsonObject) const;
+		WebRtcServer(
+		  RTC::Shared* shared,
+		  const std::string& id,
+		  const flatbuffers::Vector<flatbuffers::Offset<FBS::Transport::ListenInfo>>* listenInfos);
+		~WebRtcServer() override;
+
+	public:
+		flatbuffers::Offset<FBS::WebRtcServer::DumpResponse> FillBuffer(
+		  flatbuffers::FlatBufferBuilder& builder) const;
 		std::vector<RTC::IceCandidate> GetIceCandidates(
-		  bool enableUdp, bool enableTcp, bool preferUdp, bool preferTcp);
+		  bool enableUdp, bool enableTcp, bool preferUdp, bool preferTcp) const;
 
 		/* Methods inherited from Channel::ChannelSocket::RequestHandler. */
 	public:
 		void HandleRequest(Channel::ChannelRequest* request) override;
 
 	private:
-		std::string GetLocalIceUsernameFragmentFromReceivedStunPacket(RTC::StunPacket* packet) const;
 		void OnPacketReceived(RTC::TransportTuple* tuple, const uint8_t* data, size_t len);
 		void OnStunDataReceived(RTC::TransportTuple* tuple, const uint8_t* data, size_t len);
 		void OnNonStunDataReceived(RTC::TransportTuple* tuple, const uint8_t* data, size_t len);
@@ -97,6 +96,8 @@ namespace RTC
 		const std::string id;
 
 	private:
+		// Passed by argument.
+		RTC::Shared* shared{ nullptr };
 		// Vector of UdpSockets and TcpServers in the user given order.
 		std::vector<UdpSocketOrTcpServer> udpSocketOrTcpServers;
 		// Set of WebRtcTransports.
@@ -105,6 +106,8 @@ namespace RTC
 		absl::flat_hash_map<std::string, RTC::WebRtcTransport*> mapLocalIceUsernameFragmentWebRtcTransport;
 		// Map of WebRtcTransports indexed by TransportTuple.hash.
 		absl::flat_hash_map<uint64_t, RTC::WebRtcTransport*> mapTupleWebRtcTransport;
+		// Whether the destructor has been called.
+		bool closing{ false };
 	};
 } // namespace RTC
 

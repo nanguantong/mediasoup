@@ -1,9 +1,10 @@
 #ifndef MS_RTC_SIMPLE_CONSUMER_HPP
 #define MS_RTC_SIMPLE_CONSUMER_HPP
 
+#include "FBS/transport.h"
 #include "RTC/Consumer.hpp"
-#include "RTC/RtpStreamSend.hpp"
 #include "RTC/SeqManager.hpp"
+#include "RTC/Shared.hpp"
 
 namespace RTC
 {
@@ -11,40 +12,47 @@ namespace RTC
 	{
 	public:
 		SimpleConsumer(
+		  RTC::Shared* shared,
 		  const std::string& id,
 		  const std::string& producerId,
 		  RTC::Consumer::Listener* listener,
-		  json& data);
+		  const FBS::Transport::ConsumeRequest* data);
 		~SimpleConsumer() override;
 
 	public:
-		void FillJson(json& jsonObject) const override;
-		void FillJsonStats(json& jsonArray) const override;
-		void FillJsonScore(json& jsonObject) const override;
+		flatbuffers::Offset<FBS::Consumer::DumpResponse> FillBuffer(
+		  flatbuffers::FlatBufferBuilder& builder) const;
+		flatbuffers::Offset<FBS::Consumer::GetStatsResponse> FillBufferStats(
+		  flatbuffers::FlatBufferBuilder& builder) override;
+		flatbuffers::Offset<FBS::Consumer::ConsumerScore> FillBufferScore(
+		  flatbuffers::FlatBufferBuilder& builder) const override;
 		bool IsActive() const override
 		{
 			// clang-format off
 			return (
 				RTC::Consumer::IsActive() &&
 				this->producerRtpStream &&
-				(this->producerRtpStream->GetScore() > 0u || this->producerRtpStream->HasDtx())
+				// If there is no RTP inactivity check do not consider the stream
+				// inactive despite it has score 0.
+				(this->producerRtpStream->GetScore() > 0u || !this->producerRtpStream->HasRtpInactivityCheckEnabled())
 			);
 			// clang-format on
 		}
-		void ProducerRtpStream(RTC::RtpStream* rtpStream, uint32_t mappedSsrc) override;
-		void ProducerNewRtpStream(RTC::RtpStream* rtpStream, uint32_t mappedSsrc) override;
-		void ProducerRtpStreamScore(RTC::RtpStream* rtpStream, uint8_t score, uint8_t previousScore) override;
-		void ProducerRtcpSenderReport(RTC::RtpStream* rtpStream, bool first) override;
+		void ProducerRtpStream(RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc) override;
+		void ProducerNewRtpStream(RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc) override;
+		void ProducerRtpStreamScore(
+		  RTC::RtpStreamRecv* rtpStream, uint8_t score, uint8_t previousScore) override;
+		void ProducerRtcpSenderReport(RTC::RtpStreamRecv* rtpStream, bool first) override;
 		uint8_t GetBitratePriority() const override;
 		uint32_t IncreaseLayer(uint32_t bitrate, bool considerLoss) override;
 		void ApplyLayers() override;
 		uint32_t GetDesiredBitrate() const override;
 		void SendRtpPacket(RTC::RtpPacket* packet, std::shared_ptr<RTC::RtpPacket>& sharedPacket) override;
-		std::vector<RTC::RtpStreamSend*> GetRtpStreams() override
+		const std::vector<RTC::RtpStreamSend*>& GetRtpStreams() const override
 		{
 			return this->rtpStreams;
 		}
-		void GetRtcp(RTC::RTCP::CompoundPacket* packet, RTC::RtpStreamSend* rtpStream, uint64_t nowMs) override;
+		bool GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs) override;
 		void NeedWorstRemoteFractionLost(uint32_t mappedSsrc, uint8_t& worstRemoteFractionLost) override;
 		void ReceiveNack(RTC::RTCP::FeedbackRtpNackPacket* nackPacket) override;
 		void ReceiveKeyFrameRequest(RTC::RTCP::FeedbackPs::MessageType messageType, uint32_t ssrc) override;
@@ -76,7 +84,7 @@ namespace RTC
 		RTC::RtpStreamSend* rtpStream{ nullptr };
 		// Others.
 		std::vector<RTC::RtpStreamSend*> rtpStreams;
-		RTC::RtpStream* producerRtpStream{ nullptr };
+		RTC::RtpStreamRecv* producerRtpStream{ nullptr };
 		bool keyFrameSupported{ false };
 		bool syncRequired{ false };
 		RTC::SeqManager<uint16_t> rtpSeqManager;

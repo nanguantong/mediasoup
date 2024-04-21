@@ -1,6 +1,6 @@
 #include "common.hpp"
 #include "RTC/RTCP/FeedbackPsFir.hpp"
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memcmp()
 
 using namespace RTC::RTCP;
@@ -69,7 +69,7 @@ SCENARIO("RTCP Feedback PS FIR parsing", "[parser][rtcp][feedback-ps][fir]")
 	{
 		FeedbackPsFirPacket packet(senderSsrc, mediaSsrc);
 
-		FeedbackPsFirItem* item = new FeedbackPsFirItem(ssrc, seq);
+		auto* item = new FeedbackPsFirItem(ssrc, seq);
 
 		packet.AddItem(item);
 

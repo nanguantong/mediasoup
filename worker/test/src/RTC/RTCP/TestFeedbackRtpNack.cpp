@@ -1,6 +1,6 @@
 #include "common.hpp"
 #include "RTC/RTCP/FeedbackRtpNack.hpp"
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memcmp()
 
 using namespace RTC::RTCP;
@@ -69,7 +69,7 @@ SCENARIO("RTCP Feeback RTP NACK parsing", "[parser][rtcp][feedback-rtp][nack]")
 	SECTION("create FeedbackRtpNackPacket")
 	{
 		FeedbackRtpNackPacket packet(senderSsrc, mediaSsrc);
-		FeedbackRtpNackItem* item = new FeedbackRtpNackItem(pid, lostPacketBitmask);
+		auto* item = new FeedbackRtpNackItem(pid, lostPacketBitmask);
 
 		packet.AddItem(item);
 

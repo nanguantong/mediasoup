@@ -4,6 +4,7 @@
 #include "common.hpp"
 #include "Channel/ChannelRequest.hpp"
 #include "Channel/ChannelSocket.hpp"
+#include "FBS/consumer.h"
 #include "RTC/RTCP/CompoundPacket.hpp"
 #include "RTC/RTCP/FeedbackPs.hpp"
 #include "RTC/RTCP/FeedbackPsFir.hpp"
@@ -14,13 +15,12 @@
 #include "RTC/RtpHeaderExtensionIds.hpp"
 #include "RTC/RtpPacket.hpp"
 #include "RTC/RtpStream.hpp"
+#include "RTC/RtpStreamRecv.hpp"
 #include "RTC/RtpStreamSend.hpp"
+#include "RTC/Shared.hpp"
 #include <absl/container/flat_hash_set.h>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
-
-using json = nlohmann::json;
 
 namespace RTC
 {
@@ -60,17 +60,24 @@ namespace RTC
 
 	public:
 		Consumer(
+		  RTC::Shared* shared,
 		  const std::string& id,
 		  const std::string& producerId,
 		  RTC::Consumer::Listener* listener,
-		  json& data,
+		  const FBS::Transport::ConsumeRequest* data,
 		  RTC::RtpParameters::Type type);
-		virtual ~Consumer();
+		~Consumer() override;
 
 	public:
-		virtual void FillJson(json& jsonObject) const;
-		virtual void FillJsonStats(json& jsonArray) const  = 0;
-		virtual void FillJsonScore(json& jsonObject) const = 0;
+		flatbuffers::Offset<FBS::Consumer::BaseConsumerDump> FillBuffer(
+		  flatbuffers::FlatBufferBuilder& builder) const;
+		virtual flatbuffers::Offset<FBS::Consumer::GetStatsResponse> FillBufferStats(
+		  flatbuffers::FlatBufferBuilder& builder) = 0;
+		virtual flatbuffers::Offset<FBS::Consumer::ConsumerScore> FillBufferScore(
+		  flatbuffers::FlatBufferBuilder& /*builder*/) const
+		{
+			return 0;
+		};
 		RTC::Media::Kind GetKind() const
 		{
 			return this->kind;
@@ -127,12 +134,12 @@ namespace RTC
 		}
 		void ProducerPaused();
 		void ProducerResumed();
-		virtual void ProducerRtpStream(RTC::RtpStream* rtpStream, uint32_t mappedSsrc)    = 0;
-		virtual void ProducerNewRtpStream(RTC::RtpStream* rtpStream, uint32_t mappedSsrc) = 0;
+		virtual void ProducerRtpStream(RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc)    = 0;
+		virtual void ProducerNewRtpStream(RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc) = 0;
 		void ProducerRtpStreamScores(const std::vector<uint8_t>* scores);
 		virtual void ProducerRtpStreamScore(
-		  RTC::RtpStream* rtpStream, uint8_t score, uint8_t previousScore)           = 0;
-		virtual void ProducerRtcpSenderReport(RTC::RtpStream* rtpStream, bool first) = 0;
+		  RTC::RtpStreamRecv* rtpStream, uint8_t score, uint8_t previousScore)           = 0;
+		virtual void ProducerRtcpSenderReport(RTC::RtpStreamRecv* rtpStream, bool first) = 0;
 		void ProducerClosed();
 		void SetExternallyManagedBitrate()
 		{
@@ -143,9 +150,8 @@ namespace RTC
 		virtual void ApplyLayers()                                          = 0;
 		virtual uint32_t GetDesiredBitrate() const                          = 0;
 		virtual void SendRtpPacket(RTC::RtpPacket* packet, std::shared_ptr<RTC::RtpPacket>& sharedPacket) = 0;
-		virtual std::vector<RTC::RtpStreamSend*> GetRtpStreams() = 0;
-		virtual void GetRtcp(
-		  RTC::RTCP::CompoundPacket* packet, RTC::RtpStreamSend* rtpStream, uint64_t nowMs) = 0;
+		virtual bool GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs) = 0;
+		virtual const std::vector<RTC::RtpStreamSend*>& GetRtpStreams() const   = 0;
 		virtual void NeedWorstRemoteFractionLost(uint32_t mappedSsrc, uint8_t& worstRemoteFractionLost) = 0;
 		virtual void ReceiveNack(RTC::RTCP::FeedbackRtpNackPacket* nackPacket) = 0;
 		virtual void ReceiveKeyFrameRequest(
@@ -165,6 +171,7 @@ namespace RTC
 		void EmitTraceEventPliType(uint32_t ssrc) const;
 		void EmitTraceEventFirType(uint32_t ssrc) const;
 		void EmitTraceEventNackType() const;
+		void EmitTraceEvent(flatbuffers::Offset<FBS::Consumer::TraceNotification>& notification) const;
 
 	private:
 		virtual void UserOnTransportConnected()    = 0;
@@ -179,15 +186,18 @@ namespace RTC
 
 	protected:
 		// Passed by argument.
+		RTC::Shared* shared{ nullptr };
 		RTC::Consumer::Listener* listener{ nullptr };
 		RTC::Media::Kind kind;
 		RTC::RtpParameters rtpParameters;
-		RTC::RtpParameters::Type type{ RTC::RtpParameters::Type::NONE };
+		RTC::RtpParameters::Type type;
 		std::vector<RTC::RtpEncodingParameters> consumableRtpEncodings;
 		struct RTC::RtpHeaderExtensionIds rtpHeaderExtensionIds;
 		const std::vector<uint8_t>* producerRtpStreamScores{ nullptr };
 		// Others.
-		absl::flat_hash_set<uint8_t> supportedCodecPayloadTypes;
+		// Whether a payload type is supported or not is represented in the
+		// corresponding position of the bitset.
+		std::bitset<128u> supportedCodecPayloadTypes;
 		uint64_t lastRtcpSentTime{ 0u };
 		uint16_t maxRtcpInterval{ 0u };
 		bool externallyManagedBitrate{ false };

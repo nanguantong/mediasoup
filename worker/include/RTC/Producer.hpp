@@ -4,7 +4,6 @@
 #include "common.hpp"
 #include "Channel/ChannelRequest.hpp"
 #include "Channel/ChannelSocket.hpp"
-#include "PayloadChannel/PayloadChannelSocket.hpp"
 #include "RTC/KeyFrameRequestManager.hpp"
 #include "RTC/RTCP/CompoundPacket.hpp"
 #include "RTC/RTCP/Packet.hpp"
@@ -14,18 +13,16 @@
 #include "RTC/RtpHeaderExtensionIds.hpp"
 #include "RTC/RtpPacket.hpp"
 #include "RTC/RtpStreamRecv.hpp"
-#include <nlohmann/json.hpp>
+#include "RTC/Shared.hpp"
 #include <string>
 #include <vector>
-
-using json = nlohmann::json;
 
 namespace RTC
 {
 	class Producer : public RTC::RtpStreamRecv::Listener,
 	                 public RTC::KeyFrameRequestManager::Listener,
 	                 public Channel::ChannelSocket::RequestHandler,
-	                 public PayloadChannel::PayloadChannelSocket::NotificationHandler
+	                 public Channel::ChannelSocket::NotificationHandler
 	{
 	public:
 		class Listener
@@ -39,11 +36,14 @@ namespace RTC
 			virtual void OnProducerPaused(RTC::Producer* producer)                                   = 0;
 			virtual void OnProducerResumed(RTC::Producer* producer)                                  = 0;
 			virtual void OnProducerNewRtpStream(
-			  RTC::Producer* producer, RTC::RtpStream* rtpStream, uint32_t mappedSsrc) = 0;
+			  RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc) = 0;
 			virtual void OnProducerRtpStreamScore(
-			  RTC::Producer* producer, RTC::RtpStream* rtpStream, uint8_t score, uint8_t previousScore) = 0;
+			  RTC::Producer* producer,
+			  RTC::RtpStreamRecv* rtpStream,
+			  uint8_t score,
+			  uint8_t previousScore) = 0;
 			virtual void OnProducerRtcpSenderReport(
-			  RTC::Producer* producer, RTC::RtpStream* rtpStream, bool first)                         = 0;
+			  RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, bool first)                     = 0;
 			virtual void OnProducerRtpPacketReceived(RTC::Producer* producer, RTC::RtpPacket* packet) = 0;
 			virtual void OnProducerSendRtcpPacket(RTC::Producer* producer, RTC::RTCP::Packet* packet) = 0;
 			virtual void OnProducerNeedWorstRemoteFractionLost(
@@ -89,15 +89,22 @@ namespace RTC
 			bool nack{ false };
 			bool pli{ false };
 			bool fir{ false };
+			bool sr{ false };
 		};
 
 	public:
-		Producer(const std::string& id, RTC::Producer::Listener* listener, json& data);
-		virtual ~Producer();
+		Producer(
+		  RTC::Shared* shared,
+		  const std::string& id,
+		  RTC::Producer::Listener* listener,
+		  const FBS::Transport::ProduceRequest* data);
+		~Producer() override;
 
 	public:
-		void FillJson(json& jsonObject) const;
-		void FillJsonStats(json& jsonArray) const;
+		flatbuffers::Offset<FBS::Producer::DumpResponse> FillBuffer(
+		  flatbuffers::FlatBufferBuilder& builder) const;
+		flatbuffers::Offset<FBS::Producer::GetStatsResponse> FillBufferStats(
+		  flatbuffers::FlatBufferBuilder& builder);
 		RTC::Media::Kind GetKind() const
 		{
 			return this->kind;
@@ -129,16 +136,16 @@ namespace RTC
 		ReceiveRtpPacketResult ReceiveRtpPacket(RTC::RtpPacket* packet);
 		void ReceiveRtcpSenderReport(RTC::RTCP::SenderReport* report);
 		void ReceiveRtcpXrDelaySinceLastRr(RTC::RTCP::DelaySinceLastRr::SsrcInfo* ssrcInfo);
-		void GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs);
+		bool GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs);
 		void RequestKeyFrame(uint32_t mappedSsrc);
 
 		/* Methods inherited from Channel::ChannelSocket::RequestHandler. */
 	public:
 		void HandleRequest(Channel::ChannelRequest* request) override;
 
-		/* Methods inherited from PayloadChannel::PayloadChannelSocket::NotificationHandler. */
+		/* Methods inherited from Channel::ChannelSocket::NotificationHandler. */
 	public:
-		void HandleNotification(PayloadChannel::PayloadChannelNotification* notification) override;
+		void HandleNotification(Channel::ChannelNotification* notification) override;
 
 	private:
 		RTC::RtpStreamRecv* GetRtpStream(RTC::RtpPacket* packet);
@@ -154,6 +161,8 @@ namespace RTC
 		void EmitTraceEventPliType(uint32_t ssrc) const;
 		void EmitTraceEventFirType(uint32_t ssrc) const;
 		void EmitTraceEventNackType() const;
+		void EmitTraceEventSrType(RTC::RTCP::SenderReport* report) const;
+		void EmitTraceEvent(flatbuffers::Offset<FBS::Producer::TraceNotification>& notification) const;
 
 		/* Pure virtual methods inherited from RTC::RtpStreamRecv::Listener. */
 	public:
@@ -172,6 +181,7 @@ namespace RTC
 
 	private:
 		// Passed by argument.
+		RTC::Shared* shared{ nullptr };
 		RTC::Producer::Listener* listener{ nullptr };
 		// Allocated by this.
 		absl::flat_hash_map<uint32_t, RTC::RtpStreamRecv*> mapSsrcRtpStream;
@@ -179,7 +189,7 @@ namespace RTC
 		// Others.
 		RTC::Media::Kind kind;
 		RTC::RtpParameters rtpParameters;
-		RTC::RtpParameters::Type type{ RTC::RtpParameters::Type::NONE };
+		RTC::RtpParameters::Type type;
 		struct RtpMapping rtpMapping;
 		std::vector<RTC::RtpStreamRecv*> rtpStreamByEncodingIdx;
 		std::vector<uint8_t> rtpStreamScores;
