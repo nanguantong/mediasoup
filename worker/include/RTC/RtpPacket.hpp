@@ -16,12 +16,6 @@
 
 namespace RTC
 {
-	// Max MTU size.
-	constexpr size_t MtuSize{ 1500u };
-	// MID header extension max length (just used when setting/updating MID
-	// extension).
-	constexpr uint8_t MidMaxLength{ 8u };
-
 	class RtpPacket
 	{
 	public:
@@ -152,7 +146,7 @@ namespace RTC
 
 		const uint8_t* GetData() const
 		{
-			return (const uint8_t*)this->header;
+			return reinterpret_cast<const uint8_t*>(this->header);
 		}
 
 		size_t GetSize() const
@@ -312,6 +306,11 @@ namespace RTC
 		void SetPlayoutDelayExtensionId(uint8_t id)
 		{
 			this->playoutDelayExtensionId = id;
+		}
+
+		void SetDependencyDescriptorExtensionId(uint8_t id)
+		{
+			this->dependencyDescriptorExtensionId = id;
 		}
 
 		bool ReadMid(std::string& mid) const
@@ -510,6 +509,27 @@ namespace RTC
 			return true;
 		}
 
+		bool ReadDependencyDescriptor(
+		  std::unique_ptr<RTC::Codecs::DependencyDescriptor>& dependencyDescriptor,
+		  std::unique_ptr<RTC::Codecs::DependencyDescriptor::TemplateDependencyStructure>&
+		    templateDependencyStructure) const
+		{
+			uint8_t extenLen;
+			uint8_t* extenValue = GetExtension(this->dependencyDescriptorExtensionId, extenLen);
+
+			auto* value =
+			  Codecs::DependencyDescriptor::Parse(extenValue, extenLen, templateDependencyStructure);
+
+			if (!value)
+			{
+				return false;
+			}
+
+			dependencyDescriptor.reset(value);
+
+			return true;
+		}
+
 		bool HasExtension(uint8_t id) const
 		{
 			if (id == 0u)
@@ -601,6 +621,11 @@ namespace RTC
 			}
 		}
 
+		uint8_t* GetDependencyDescriptionExtension(uint8_t& len) const
+		{
+			return GetExtension(this->dependencyDescriptorExtensionId, len);
+		}
+
 		bool SetExtensionLength(uint8_t id, uint8_t len);
 
 		uint8_t* GetPayload() const
@@ -663,6 +688,10 @@ namespace RTC
 
 		bool ProcessPayload(RTC::Codecs::EncodingContext* context, bool& marker);
 
+		std::unique_ptr<Codecs::PayloadDescriptor::Encoder> GetPayloadEncoder();
+
+		void EncodePayload(Codecs::PayloadDescriptor::Encoder* encoder);
+
 		void RestorePayload();
 
 		void ShiftPayload(size_t payloadOffset, size_t shift, bool expand = true);
@@ -676,7 +705,6 @@ namespace RTC
 		void ParseExtensions();
 
 	private:
-		// Passed by argument.
 		Header* header{ nullptr };
 		uint8_t* csrcList{ nullptr };
 		HeaderExtension* headerExtension{ nullptr };
@@ -694,6 +722,7 @@ namespace RTC
 		uint8_t ssrcAudioLevelExtensionId{ 0u };
 		uint8_t videoOrientationExtensionId{ 0u };
 		uint8_t playoutDelayExtensionId{ 0u };
+		uint8_t dependencyDescriptorExtensionId{ 0u };
 		uint8_t* payload{ nullptr };
 		size_t payloadLength{ 0u };
 		uint8_t payloadPadding{ 0u };

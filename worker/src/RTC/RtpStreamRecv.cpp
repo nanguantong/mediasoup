@@ -191,7 +191,7 @@ namespace RTC
 	RtpStreamRecv::RtpStreamRecv(
 	  RTC::RtpStreamRecv::Listener* listener,
 	  RTC::RtpStream::Params& params,
-	  unsigned int sendNackDelayMs,
+	  uint32_t sendNackDelayMs,
 	  bool useRtpInactivityCheck)
 	  : RTC::RtpStream::RtpStream(listener, params, 10), sendNackDelayMs(sendNackDelayMs),
 	    useRtpInactivityCheck(useRtpInactivityCheck),
@@ -279,7 +279,7 @@ namespace RTC
 		// Process the packet at codec level.
 		if (packet->GetPayloadType() == GetPayloadType())
 		{
-			RTC::Codecs::Tools::ProcessRtpPacket(packet, GetMimeType());
+			RTC::Codecs::Tools::ProcessRtpPacket(packet, GetMimeType(), this->templateDependencyStructure);
 		}
 
 		// Pass the packet to the NackGenerator.
@@ -410,7 +410,7 @@ namespace RTC
 		// Process the packet at codec level.
 		if (packet->GetPayloadType() == GetPayloadType())
 		{
-			RTC::Codecs::Tools::ProcessRtpPacket(packet, GetMimeType());
+			RTC::Codecs::Tools::ProcessRtpPacket(packet, GetMimeType(), this->templateDependencyStructure);
 		}
 
 		// Mark the packet as retransmitted.

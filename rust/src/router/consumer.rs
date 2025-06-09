@@ -394,11 +394,11 @@ pub struct ConsumerStat {
 impl ConsumerStat {
     pub(crate) fn from_fbs(stats: &rtp_stream::Stats) -> Self {
         let rtp_stream::StatsData::SendStats(ref stats) = stats.data else {
-            panic!("Wrong message from worker");
+            panic!("Wrong message from worker: {stats:?}");
         };
 
         let rtp_stream::StatsData::BaseStats(ref base) = stats.base.data else {
-            panic!("Wrong message from worker");
+            panic!("Wrong message from worker: {stats:?}");
         };
 
         Self {
@@ -434,6 +434,8 @@ pub enum ConsumerStats {
     JustConsumer((ConsumerStat,)),
     /// RTC statistics with producer
     WithProducer((ConsumerStat, ProducerStat)),
+    /// RTC statistics with multiple consumers (pipe).
+    MultipleConsumers(Vec<ConsumerStat>),
 }
 
 impl ConsumerStats {
@@ -442,6 +444,7 @@ impl ConsumerStats {
         match self {
             ConsumerStats::JustConsumer((consumer_stat,)) => consumer_stat,
             ConsumerStats::WithProducer((consumer_stat, _)) => consumer_stat,
+            ConsumerStats::MultipleConsumers(consumer_stats) => &consumer_stats[0],
         }
     }
 }
@@ -593,8 +596,7 @@ enum Notification {
     ProducerClose,
     ProducerPause,
     ProducerResume,
-    // TODO.
-    // Rtp,
+    Rtp(Vec<u8>),
     Score(ConsumerScore),
     LayersChange(Option<ConsumerLayers>),
     Trace(ConsumerTraceEventData),
@@ -608,6 +610,17 @@ impl Notification {
             notification::Event::ConsumerProducerClose => Ok(Notification::ProducerClose),
             notification::Event::ConsumerProducerPause => Ok(Notification::ProducerPause),
             notification::Event::ConsumerProducerResume => Ok(Notification::ProducerResume),
+            notification::Event::ConsumerRtp => {
+                let Ok(Some(notification::BodyRef::ConsumerRtpNotification(body))) =
+                    notification.body()
+                else {
+                    panic!("Wrong message from worker: {notification:?}");
+                };
+
+                let rtp_notification_fbs = consumer::RtpNotification::try_from(body).unwrap();
+
+                Ok(Notification::Rtp(rtp_notification_fbs.data))
+            }
             notification::Event::ConsumerScore => {
                 let Ok(Some(notification::BodyRef::ConsumerScoreNotification(body))) =
                     notification.body()
@@ -841,14 +854,11 @@ impl Consumer {
                                 handlers.resume.call_simple();
                             }
                         }
-                        /*
-                         * TODO.
-                        Notification::Rtp => {
+                        Notification::Rtp(data) => {
                             handlers.rtp.call(|callback| {
-                                callback(notification);
+                                callback(&data);
                             });
                         }
-                        */
                         Notification::Score(consumer_score) => {
                             *score.lock() = consumer_score.clone();
                             handlers.score.call_simple(&consumer_score);
@@ -1023,22 +1033,35 @@ impl Consumer {
             .await?;
 
         if let response::Body::ConsumerGetStatsResponse(data) = response {
-            match data.stats.len() {
-                0 => panic!("Empty stats response from worker"),
-                1 => {
-                    let consumer_stat = ConsumerStat::from_fbs(&data.stats[0]);
+            match self.r#type() {
+                ConsumerType::Simple | ConsumerType::Simulcast | ConsumerType::Svc => {
+                    match data.stats.len() {
+                        0 => panic!("Empty stats response from worker"),
+                        1 => {
+                            let consumer_stat = ConsumerStat::from_fbs(&data.stats[0]);
 
-                    Ok(ConsumerStats::JustConsumer((consumer_stat,)))
+                            Ok(ConsumerStats::JustConsumer((consumer_stat,)))
+                        }
+                        2 => {
+                            let consumer_stat = ConsumerStat::from_fbs(&data.stats[0]);
+                            let producer_stat = ProducerStat::from_fbs(&data.stats[1]);
+
+                            Ok(ConsumerStats::WithProducer((consumer_stat, producer_stat)))
+                        }
+                        _ => panic!("More than two stats response from worker"),
+                    }
                 }
-                _ => {
-                    let consumer_stat = ConsumerStat::from_fbs(&data.stats[0]);
-                    let producer_stat = ProducerStat::from_fbs(&data.stats[1]);
+                ConsumerType::Pipe => {
+                    let mut stats = Vec::<ConsumerStat>::with_capacity(data.stats.len());
+                    for stat in data.stats {
+                        stats.push(ConsumerStat::from_fbs(&stat));
+                    }
 
-                    Ok(ConsumerStats::WithProducer((consumer_stat, producer_stat)))
+                    Ok(ConsumerStats::MultipleConsumers(stats))
                 }
             }
         } else {
-            panic!("Wrong message from worker");
+            panic!("Wrong message from worker: {response:?}");
         }
     }
 

@@ -20,19 +20,23 @@ const WORKER_RELEASE_BIN = IS_WINDOWS
 	: 'mediasoup-worker';
 const WORKER_RELEASE_BIN_PATH = `${WORKER_RELEASE_DIR}/${WORKER_RELEASE_BIN}`;
 const WORKER_PREBUILD_DIR = 'worker/prebuild';
-const WORKER_PREBUILD_TAR = getWorkerPrebuildTarName();
-const WORKER_PREBUILD_TAR_PATH = `${WORKER_PREBUILD_DIR}/${WORKER_PREBUILD_TAR}`;
 const GH_OWNER = 'versatica';
 const GH_REPO = 'mediasoup';
 
 // Paths for ESLint to check. Converted to string for convenience.
-const ESLINT_PATHS = ['node/src', 'npm-scripts.mjs', 'worker/scripts'].join(
-	' '
-);
+const ESLINT_PATHS = [
+	'eslint.config.mjs',
+	'jest.config.mjs',
+	'node/src',
+	'npm-scripts.mjs',
+	'worker/scripts',
+].join(' ');
+
 // Paths for ESLint to ignore. Converted to string argument for convenience.
 const ESLINT_IGNORE_PATTERN_ARGS = ['node/src/fbs']
 	.map(entry => `--ignore-pattern ${entry}`)
 	.join(' ');
+
 // Paths for Prettier to check/write. Converted to string for convenience.
 // NOTE: Prettier ignores paths in .gitignore so we don't need to care about
 // node/src/fbs.
@@ -41,10 +45,12 @@ const PRETTIER_PATHS = [
 	'CONTRIBUTING.md',
 	'README.md',
 	'doc',
+	'eslint.config.mjs',
+	'jest.config.mjs',
 	'node/src',
-	'node/tsconfig.json',
 	'npm-scripts.mjs',
 	'package.json',
+	'tsconfig.json',
 	'worker/scripts',
 ].join(' ');
 
@@ -63,7 +69,7 @@ if (process.env.PYTHONPATH) {
 	process.env.PYTHONPATH = PIP_INVOKE_DIR;
 }
 
-run();
+void run();
 
 async function run() {
 	logInfo(args ? `[args:"${args}"]` : '');
@@ -132,21 +138,25 @@ async function run() {
 		}
 
 		case 'typescript:build': {
-			installNodeDeps();
 			buildTypescript({ force: true });
 
 			break;
 		}
 
 		case 'typescript:watch': {
-			deleteNodeLib();
-			executeCmd(`tsc --project node --watch ${args}`);
+			watchTypescript();
 
 			break;
 		}
 
 		case 'worker:build': {
 			buildWorker();
+
+			break;
+		}
+
+		case 'worker:prebuild-name': {
+			getWorkerPrebuildTarName();
 
 			break;
 		}
@@ -196,7 +206,6 @@ async function run() {
 		}
 
 		case 'test:node': {
-			buildTypescript({ force: false });
 			testNode();
 
 			break;
@@ -209,7 +218,6 @@ async function run() {
 		}
 
 		case 'coverage:node': {
-			buildTypescript({ force: false });
 			executeCmd(`jest --coverage ${args}`);
 			executeCmd('open-cli coverage/lcov-report/index.html');
 
@@ -281,17 +289,23 @@ function getPython() {
 }
 
 function getWorkerPrebuildTarName() {
-	let name = `mediasoup-worker-${PKG.version}-${os.platform()}-${os.arch()}`;
+	let workerPrebuildTarName = `mediasoup-worker-${PKG.version}-${os.platform()}-${os.arch()}`;
 
 	// In Linux we want to know about kernel version since kernel >= 6 supports
 	// io-uring.
 	if (os.platform() === 'linux') {
 		const kernelMajorVersion = Number(os.release().split('.')[0]);
 
-		name += `-kernel${kernelMajorVersion}`;
+		workerPrebuildTarName += `-kernel${kernelMajorVersion}`;
 	}
 
-	return `${name}.tgz`;
+	workerPrebuildTarName = `${workerPrebuildTarName}.tgz`;
+
+	logInfo(
+		`getWorkerPrebuildTarName() [workerPrebuildTarName:${workerPrebuildTarName}]`
+	);
+
+	return workerPrebuildTarName;
 }
 
 function installInvoke() {
@@ -304,8 +318,7 @@ function installInvoke() {
 	// Install pip invoke into custom location, so we don't depend on system-wide
 	// installation.
 	executeCmd(
-		`"${PYTHON}" -m pip install --upgrade --no-user --target "${PIP_INVOKE_DIR}" invoke`,
-		/* exitOnError */ true
+		`"${PYTHON}" -m pip install --upgrade --no-user --target "${PIP_INVOKE_DIR}" invoke`
 	);
 }
 
@@ -319,7 +332,7 @@ function deleteNodeLib() {
 	fs.rmSync('node/lib', { recursive: true, force: true });
 }
 
-function buildTypescript({ force = false } = { force: false }) {
+function buildTypescript({ force }) {
 	if (!force && fs.existsSync('node/lib')) {
 		return;
 	}
@@ -327,7 +340,16 @@ function buildTypescript({ force = false } = { force: false }) {
 	logInfo('buildTypescript()');
 
 	deleteNodeLib();
-	executeCmd('tsc --project node');
+
+	executeCmd(`tsc ${args}`);
+}
+
+function watchTypescript() {
+	logInfo('watchTypescript()');
+
+	deleteNodeLib();
+
+	executeCmd(`tsc --watch ${args}`);
 }
 
 function buildWorker() {
@@ -345,8 +367,10 @@ function cleanWorkerArtifacts() {
 
 	// Clean build artifacts except `mediasoup-worker`.
 	executeCmd(`"${PYTHON}" -m invoke -r worker clean-build`);
+
 	// Clean downloaded dependencies.
 	executeCmd(`"${PYTHON}" -m invoke -r worker clean-subprojects`);
+
 	// Clean PIP/Meson/Ninja.
 	executeCmd(`"${PYTHON}" -m invoke -r worker clean-pip`);
 }
@@ -356,10 +380,10 @@ function lintNode() {
 
 	// Ensure there are no rules that are unnecessary or conflict with Prettier
 	// rules.
-	executeCmd('eslint-config-prettier .eslintrc.js');
+	executeCmd('eslint-config-prettier eslint.config.mjs');
 
 	executeCmd(
-		`eslint -c .eslintrc.js --ext=ts,js,mjs --max-warnings 0 ${ESLINT_IGNORE_PATTERN_ARGS} ${ESLINT_PATHS}`
+		`eslint -c eslint.config.mjs --max-warnings 0 ${ESLINT_IGNORE_PATTERN_ARGS} ${ESLINT_PATHS}`
 	);
 
 	executeCmd(`prettier --check ${PRETTIER_PATHS}`);
@@ -457,6 +481,7 @@ function installNodeDeps() {
 
 	// Install/update Node deps.
 	executeCmd('npm ci --ignore-scripts');
+
 	// Update package-lock.json.
 	executeCmd('npm install --package-lock-only --ignore-scripts');
 }
@@ -487,6 +512,9 @@ async function prebuildWorker() {
 
 	ensureDir(WORKER_PREBUILD_DIR);
 
+	const workerPrebuildTar = getWorkerPrebuildTarName();
+	const workerPrebuildTarPath = `${WORKER_PREBUILD_DIR}/${workerPrebuildTar}`;
+
 	return new Promise((resolve, reject) => {
 		// Generate a gzip file which just contains mediasoup-worker binary without
 		// any folder.
@@ -498,7 +526,7 @@ async function prebuildWorker() {
 				},
 				[WORKER_RELEASE_BIN]
 			)
-			.pipe(fs.createWriteStream(WORKER_PREBUILD_TAR_PATH))
+			.pipe(fs.createWriteStream(workerPrebuildTarPath))
 			.on('finish', resolve)
 			.on('error', reject);
 	});
@@ -513,16 +541,19 @@ async function downloadPrebuiltWorker() {
 			.replace(/^git\+/, '')
 			.replace(/\.git$/, '')}/releases/download`;
 
-	const tarUrl = `${releaseBase}/${PKG.version}/${WORKER_PREBUILD_TAR}`;
+	const workerPrebuildTar = getWorkerPrebuildTarName();
+	const workerPrebuildTarUrl = `${releaseBase}/${PKG.version}/${workerPrebuildTar}`;
 
-	logInfo(`downloadPrebuiltWorker() [tarUrl:${tarUrl}]`);
+	logInfo(
+		`downloadPrebuiltWorker() [workerPrebuildTarUrl:${workerPrebuildTarUrl}]`
+	);
 
 	ensureDir(WORKER_PREBUILD_DIR);
 
 	let res;
 
 	try {
-		res = await fetch(tarUrl);
+		res = await fetch(workerPrebuildTarUrl);
 
 		if (res.status === 404) {
 			logInfo(
@@ -660,19 +691,15 @@ async function getVersionChanges() {
 	);
 }
 
-function executeCmd(command, exitOnError = true) {
+function executeCmd(command) {
 	logInfo(`executeCmd(): ${command}`);
 
 	try {
 		execSync(command, { stdio: ['ignore', process.stdout, process.stderr] });
 	} catch (error) {
-		if (exitOnError) {
-			logError(`executeCmd() failed, exiting: ${error}`);
+		logError(`executeCmd() failed, exiting: ${error}`);
 
-			exitWithError();
-		} else {
-			logInfo(`executeCmd() failed, ignoring: ${error}`);
-		}
+		exitWithError();
 	}
 }
 

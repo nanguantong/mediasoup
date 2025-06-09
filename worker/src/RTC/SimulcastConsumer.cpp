@@ -5,6 +5,7 @@
 #include "DepLibUV.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
+#include "Utils.hpp"
 #include "RTC/Codecs/Tools.hpp"
 
 namespace RTC
@@ -59,7 +60,7 @@ namespace RTC
 
 			if (this->preferredSpatialLayer > encoding.spatialLayers - 1)
 			{
-				this->preferredSpatialLayer = encoding.spatialLayers - 1;
+				this->preferredSpatialLayer = static_cast<int16_t>(encoding.spatialLayers - 1);
 			}
 
 			if (preferredLayers->temporalLayer().has_value())
@@ -68,20 +69,20 @@ namespace RTC
 
 				if (this->preferredTemporalLayer > encoding.temporalLayers - 1)
 				{
-					this->preferredTemporalLayer = encoding.temporalLayers - 1;
+					this->preferredTemporalLayer = static_cast<int16_t>(encoding.temporalLayers - 1);
 				}
 			}
 			else
 			{
-				this->preferredTemporalLayer = encoding.temporalLayers - 1;
+				this->preferredTemporalLayer = static_cast<int16_t>(encoding.temporalLayers - 1);
 			}
 		}
 		else
 		{
 			// Initially set preferredSpatialLayer and preferredTemporalLayer to the
 			// maximum value.
-			this->preferredSpatialLayer  = encoding.spatialLayers - 1;
-			this->preferredTemporalLayer = encoding.temporalLayers - 1;
+			this->preferredSpatialLayer  = static_cast<int16_t>(encoding.spatialLayers - 1);
+			this->preferredTemporalLayer = static_cast<int16_t>(encoding.temporalLayers - 1);
 		}
 
 		// Reserve space for the Producer RTP streams by filling all the possible
@@ -97,6 +98,14 @@ namespace RTC
 			MS_THROW_TYPE_ERROR(
 			  "%s codec not supported for simulcast", mediaCodec->mimeType.ToString().c_str());
 		}
+
+		// Let's chosee an initial output seq number between 1000 and 32768 to avoid
+		// libsrtp bug:
+		// https://github.com/versatica/mediasoup/issues/1437
+		const uint16_t initialOutputSeq =
+		  Utils::Crypto::GetRandomUInt(1000u, std::numeric_limits<uint16_t>::max() / 2);
+
+		this->rtpSeqManager.reset(new RTC::SeqManager<uint16_t>(initialOutputSeq));
 
 		RTC::Codecs::EncodingContext::Params params;
 
@@ -236,7 +245,7 @@ namespace RTC
 
 				if (this->preferredSpatialLayer > this->rtpStream->GetSpatialLayers() - 1)
 				{
-					this->preferredSpatialLayer = this->rtpStream->GetSpatialLayers() - 1;
+					this->preferredSpatialLayer = static_cast<int16_t>(this->rtpStream->GetSpatialLayers() - 1);
 				}
 
 				// preferredTemporaLayer is optional.
@@ -246,12 +255,14 @@ namespace RTC
 
 					if (this->preferredTemporalLayer > this->rtpStream->GetTemporalLayers() - 1)
 					{
-						this->preferredTemporalLayer = this->rtpStream->GetTemporalLayers() - 1;
+						this->preferredTemporalLayer =
+						  static_cast<int16_t>(this->rtpStream->GetTemporalLayers() - 1);
 					}
 				}
 				else
 				{
-					this->preferredTemporalLayer = this->rtpStream->GetTemporalLayers() - 1;
+					this->preferredTemporalLayer =
+					  static_cast<int16_t>(this->rtpStream->GetTemporalLayers() - 1);
 				}
 
 				MS_DEBUG_DEV(
@@ -727,17 +738,7 @@ namespace RTC
 			packet->logger.Dropped(RtcLogger::RtpPacket::DropReason::CONSUMER_INACTIVE);
 #endif
 
-			return;
-		}
-
-		// Packets with only padding are not forwarded.
-		if (packet->GetPayloadLength() == 0)
-		{
-			this->rtpSeqManager.Drop(packet->GetSequenceNumber());
-
-#ifdef MS_RTC_LOGGER_RTP
-			packet->logger.Dropped(RtcLogger::RtpPacket::DropReason::EMPTY_PAYLOAD);
-#endif
+			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
 
 			return;
 		}
@@ -747,6 +748,8 @@ namespace RTC
 #ifdef MS_RTC_LOGGER_RTP
 			packet->logger.Dropped(RtcLogger::RtpPacket::DropReason::INVALID_TARGET_LAYER);
 #endif
+
+			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
 
 			return;
 		}
@@ -780,6 +783,8 @@ namespace RTC
 				packet->logger.Dropped(RtcLogger::RtpPacket::DropReason::NOT_A_KEYFRAME);
 #endif
 
+				this->rtpSeqManager->Drop(packet->GetSequenceNumber());
+
 				return;
 			}
 
@@ -806,6 +811,20 @@ namespace RTC
 #ifdef MS_RTC_LOGGER_RTP
 			packet->logger.Dropped(RtcLogger::RtpPacket::DropReason::NOT_A_KEYFRAME);
 #endif
+
+			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
+			return;
+		}
+
+		// If the packet belongs to current spatial layer being sent and packet does
+		// not have payload other than padding, then drop it.
+		if (spatialLayer == this->currentSpatialLayer && packet->GetPayloadLength() == 0)
+		{
+#ifdef MS_RTC_LOGGER_RTP
+			packet->logger.Dropped(RtcLogger::RtpPacket::DropReason::EMPTY_PAYLOAD);
+#endif
+
+			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
 
 			return;
 		}
@@ -925,6 +944,8 @@ namespace RTC
 					packet->logger.Dropped(RtcLogger::RtpPacket::DropReason::TOO_HIGH_TIMESTAMP_EXTRA_NEEDED);
 #endif
 
+					this->rtpSeqManager->Drop(packet->GetSequenceNumber());
+
 					return;
 				}
 
@@ -950,7 +971,7 @@ namespace RTC
 			// 'packet->GetSequenceNumber() -2' may increase SeqManager::base and
 			// increase the output sequence number.
 			// https://github.com/versatica/mediasoup/issues/408
-			this->rtpSeqManager.Sync(packet->GetSequenceNumber() - (this->lastSentPacketHasMarker ? 1 : 2));
+			this->rtpSeqManager->Sync(packet->GetSequenceNumber() - (this->lastSentPacketHasMarker ? 1 : 2));
 
 			this->encodingContext->SyncRequired();
 
@@ -969,6 +990,8 @@ namespace RTC
 				packet->logger.Dropped(
 				  RtcLogger::RtpPacket::DropReason::PACKET_PREVIOUS_TO_SPATIAL_LAYER_SWITCH);
 #endif
+
+				this->rtpSeqManager->Drop(packet->GetSequenceNumber());
 
 				return;
 			}
@@ -1012,11 +1035,11 @@ namespace RTC
 			// Rewrite payload if needed. Drop packet if necessary.
 			if (!packet->ProcessPayload(this->encodingContext.get(), marker))
 			{
-				this->rtpSeqManager.Drop(packet->GetSequenceNumber());
-
 #ifdef MS_RTC_LOGGER_RTP
 				packet->logger.Dropped(RtcLogger::RtpPacket::DropReason::DROPPED_BY_CODEC);
 #endif
+
+				this->rtpSeqManager->Drop(packet->GetSequenceNumber());
 
 				return;
 			}
@@ -1031,7 +1054,7 @@ namespace RTC
 		uint16_t seq;
 		const uint32_t timestamp = packet->GetTimestamp() - this->tsOffset;
 
-		this->rtpSeqManager.Input(packet->GetSequenceNumber(), seq);
+		this->rtpSeqManager->Input(packet->GetSequenceNumber(), seq);
 
 		// Save original packet fields.
 		auto origSsrc      = packet->GetSsrc();
@@ -1065,7 +1088,7 @@ namespace RTC
 		// Process the packet.
 		if (this->rtpStream->ReceivePacket(packet, sharedPacket))
 		{
-			if (this->rtpSeqManager.GetMaxOutput() == packet->GetSequenceNumber())
+			if (this->rtpSeqManager->GetMaxOutput() == packet->GetSequenceNumber())
 			{
 				this->lastSentPacketHasMarker = packet->HasMarker();
 			}
@@ -1542,7 +1565,7 @@ namespace RTC
 			}
 			else if (newTargetSpatialLayer < this->preferredSpatialLayer)
 			{
-				newTargetTemporalLayer = this->rtpStream->GetTemporalLayers() - 1;
+				newTargetTemporalLayer = static_cast<int16_t>(this->rtpStream->GetTemporalLayers() - 1);
 			}
 			else
 			{
@@ -1564,7 +1587,9 @@ namespace RTC
 		MS_TRACE();
 
 		// If we don't have yet a RTP timestamp reference, set it now.
-		if (newTargetSpatialLayer != -1 && this->tsReferenceSpatialLayer == -1)
+		if (
+		  newTargetSpatialLayer != -1 && (this->tsReferenceSpatialLayer == -1 ||
+		                                  !GetProducerTsReferenceRtpStream()->GetSenderReportNtpMs()))
 		{
 			MS_DEBUG_TAG(
 			  simulcast, "using spatial layer %" PRIi16 " as RTP timestamp reference", newTargetSpatialLayer);
@@ -1636,10 +1661,7 @@ namespace RTC
 		return (
 			this->tsReferenceSpatialLayer == -1 ||
 			spatialLayer == this->tsReferenceSpatialLayer ||
-			(
-				GetProducerTsReferenceRtpStream()->GetSenderReportNtpMs() &&
-				this->producerRtpStreams.at(spatialLayer)->GetSenderReportNtpMs()
-			)
+			this->producerRtpStreams.at(spatialLayer)->GetSenderReportNtpMs()
 		);
 		// clang-format on
 	}

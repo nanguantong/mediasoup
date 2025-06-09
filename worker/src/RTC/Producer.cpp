@@ -7,6 +7,7 @@
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
 #include "RTC/Codecs/Tools.hpp"
+#include "RTC/Consts.hpp"
 #include "RTC/RTCP/Feedback.hpp"
 #include "RTC/RTCP/XrReceiverReferenceTime.hpp"
 #include <absl/container/inlined_vector.h>
@@ -196,6 +197,13 @@ namespace RTC
 			if (this->rtpHeaderExtensionIds.playoutDelay == 0u && exten.type == RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY)
 			{
 				this->rtpHeaderExtensionIds.playoutDelay = exten.id;
+			}
+
+			if (
+			  this->rtpHeaderExtensionIds.dependencyDescriptor == 0u &&
+			  exten.type == RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR)
+			{
+				this->rtpHeaderExtensionIds.dependencyDescriptor = exten.id;
 			}
 		}
 
@@ -524,7 +532,7 @@ namespace RTC
 				// Increase receive transmission.
 				this->listener->OnProducerReceiveData(this, len);
 
-				if (len > RTC::MtuSize + 100)
+				if (len > RTC::Consts::MtuSize + 100)
 				{
 					MS_WARN_TAG(rtp, "given RTP packet exceeds maximum size [len:%i]", len);
 
@@ -535,7 +543,7 @@ namespace RTC
 				// receiving buffer now.
 				if (!Producer::buffer)
 				{
-					Producer::buffer = new uint8_t[RTC::MtuSize + 100];
+					Producer::buffer = new uint8_t[RTC::Consts::MtuSize + 100];
 				}
 
 				// Copy the received packet into this buffer so it can be expanded later.
@@ -1196,6 +1204,7 @@ namespace RTC
 			// NOTE: Remove this once framemarking draft becomes RFC.
 			packet->SetFrameMarking07ExtensionId(this->rtpHeaderExtensionIds.frameMarking07);
 			packet->SetFrameMarkingExtensionId(this->rtpHeaderExtensionIds.frameMarking);
+			packet->SetDependencyDescriptorExtensionId(this->rtpHeaderExtensionIds.dependencyDescriptor);
 		}
 	}
 
@@ -1246,7 +1255,7 @@ namespace RTC
 
 			// Add urn:ietf:params:rtp-hdrext:sdes:mid.
 			{
-				extenLen = RTC::MidMaxLength;
+				extenLen = RTC::Consts::MidRtpExtensionMaxLength;
 
 				extensions.emplace_back(
 				  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::MID), extenLen, bufferPtr);
@@ -1380,6 +1389,21 @@ namespace RTC
 					bufferPtr += extenLen;
 				}
 
+				// Proxy https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension.
+				extenValue = packet->GetExtension(this->rtpHeaderExtensionIds.dependencyDescriptor, extenLen);
+
+				if (extenValue)
+				{
+					std::memcpy(bufferPtr, extenValue, extenLen);
+
+					extensions.emplace_back(
+					  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR),
+					  extenLen,
+					  bufferPtr);
+
+					bufferPtr += extenLen;
+				}
+
 				// Proxy urn:ietf:params:rtp-hdrext:toffset.
 				extenValue = packet->GetExtension(this->rtpHeaderExtensionIds.toffset, extenLen);
 
@@ -1395,8 +1419,8 @@ namespace RTC
 				}
 			}
 
-			// Set the new extensions into the packet using One-Byte format.
-			packet->SetExtensions(1, extensions);
+			// Set the new extensions into the packet.
+			packet->SetExtensions(packet->HasTwoBytesExtensions() ? 2 : 1, extensions);
 
 			// Assign mediasoup RTP header extension ids (just those that mediasoup may
 			// be interested in after passing it to the Router).
@@ -1416,6 +1440,8 @@ namespace RTC
 			  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION));
 			packet->SetPlayoutDelayExtensionId(
 			  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY));
+			packet->SetDependencyDescriptorExtensionId(
+			  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR));
 		}
 
 		return true;

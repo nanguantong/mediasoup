@@ -2,8 +2,11 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/RtpPacket.hpp"
+#ifdef MS_RTC_LOGGER_RTP
 #include "DepLibUV.hpp"
+#endif
 #include "Logger.hpp"
+#include "RTC/Consts.hpp"
 #include <cstring>  // std::memcpy(), std::memmove(), std::memset()
 #include <iterator> // std::ostream_iterator
 #include <sstream>  // std::ostringstream
@@ -392,16 +395,17 @@ namespace RTC
 		MS_ASSERT(type == 1u || type == 2u, "type must be 1 or 2");
 
 		// Reset extension ids.
-		this->midExtensionId               = 0u;
-		this->ridExtensionId               = 0u;
-		this->rridExtensionId              = 0u;
-		this->absSendTimeExtensionId       = 0u;
-		this->transportWideCc01ExtensionId = 0u;
-		this->frameMarking07ExtensionId    = 0u;
-		this->frameMarkingExtensionId      = 0u;
-		this->ssrcAudioLevelExtensionId    = 0u;
-		this->videoOrientationExtensionId  = 0u;
-		this->playoutDelayExtensionId      = 0u;
+		this->midExtensionId                  = 0u;
+		this->ridExtensionId                  = 0u;
+		this->rridExtensionId                 = 0u;
+		this->absSendTimeExtensionId          = 0u;
+		this->transportWideCc01ExtensionId    = 0u;
+		this->frameMarking07ExtensionId       = 0u;
+		this->frameMarkingExtensionId         = 0u;
+		this->ssrcAudioLevelExtensionId       = 0u;
+		this->videoOrientationExtensionId     = 0u;
+		this->playoutDelayExtensionId         = 0u;
+		this->dependencyDescriptorExtensionId = 0u;
 
 		// Clear the One-Byte and Two-Bytes extension elements maps.
 		std::fill(std::begin(this->oneByteExtensions), std::end(this->oneByteExtensions), nullptr);
@@ -457,9 +461,8 @@ namespace RTC
 			}
 		}
 
-		auto paddedExtensionsTotalSize =
-		  static_cast<size_t>(Utils::Byte::PadTo4Bytes(static_cast<uint16_t>(extensionsTotalSize)));
-		const size_t padding = paddedExtensionsTotalSize - extensionsTotalSize;
+		auto paddedExtensionsTotalSize = Utils::Byte::PadTo4Bytes(extensionsTotalSize);
+		const size_t padding           = paddedExtensionsTotalSize - extensionsTotalSize;
 
 		extensionsTotalSize = paddedExtensionsTotalSize;
 
@@ -580,13 +583,13 @@ namespace RTC
 
 		const size_t midLen = mid.length();
 
-		// Here we assume that there is MidMaxLength available bytes, even if now
-		// they are padding bytes.
-		if (midLen > RTC::MidMaxLength)
+		// Here we assume that there is MidRtpExtensionMaxLength available bytes,
+		// even if now they are padding bytes.
+		if (midLen > RTC::Consts::MidRtpExtensionMaxLength)
 		{
 			MS_ERROR(
 			  "no enough space for MID value [MidMaxLength:%" PRIu8 ", mid:'%s']",
-			  RTC::MidMaxLength,
+			  RTC::Consts::MidRtpExtensionMaxLength,
 			  mid.c_str());
 
 			return;
@@ -692,7 +695,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		auto* buffer = new uint8_t[MtuSize + 100];
+		auto* buffer = new uint8_t[RTC::Consts::MtuSize + 100];
 		auto* ptr    = const_cast<uint8_t*>(buffer);
 
 		size_t numBytes{ 0 };
@@ -754,16 +757,17 @@ namespace RTC
 		  newHeader, newHeaderExtension, newPayload, this->payloadLength, this->payloadPadding, this->size);
 
 		// Keep already set extension ids.
-		packet->midExtensionId               = this->midExtensionId;
-		packet->ridExtensionId               = this->ridExtensionId;
-		packet->rridExtensionId              = this->rridExtensionId;
-		packet->absSendTimeExtensionId       = this->absSendTimeExtensionId;
-		packet->transportWideCc01ExtensionId = this->transportWideCc01ExtensionId;
-		packet->frameMarking07ExtensionId    = this->frameMarking07ExtensionId; // Remove once RFC.
-		packet->frameMarkingExtensionId      = this->frameMarkingExtensionId;
-		packet->ssrcAudioLevelExtensionId    = this->ssrcAudioLevelExtensionId;
-		packet->videoOrientationExtensionId  = this->videoOrientationExtensionId;
-		packet->playoutDelayExtensionId      = this->playoutDelayExtensionId;
+		packet->midExtensionId                  = this->midExtensionId;
+		packet->ridExtensionId                  = this->ridExtensionId;
+		packet->rridExtensionId                 = this->rridExtensionId;
+		packet->absSendTimeExtensionId          = this->absSendTimeExtensionId;
+		packet->transportWideCc01ExtensionId    = this->transportWideCc01ExtensionId;
+		packet->frameMarking07ExtensionId       = this->frameMarking07ExtensionId; // Remove once RFC.
+		packet->frameMarkingExtensionId         = this->frameMarkingExtensionId;
+		packet->ssrcAudioLevelExtensionId       = this->ssrcAudioLevelExtensionId;
+		packet->videoOrientationExtensionId     = this->videoOrientationExtensionId;
+		packet->playoutDelayExtensionId         = this->playoutDelayExtensionId;
+		packet->dependencyDescriptorExtensionId = this->dependencyDescriptorExtensionId;
 		// Assign the payload descriptor handler.
 		packet->payloadDescriptorHandler = this->payloadDescriptorHandler;
 		// Store allocated buffer.
@@ -864,7 +868,31 @@ namespace RTC
 			return true;
 		}
 
-		return this->payloadDescriptorHandler->Process(context, this->payload, marker);
+		return this->payloadDescriptorHandler->Process(context, this, marker);
+	}
+
+	std::unique_ptr<Codecs::PayloadDescriptor::Encoder> RtpPacket::GetPayloadEncoder()
+	{
+		MS_TRACE();
+
+		if (!this->payloadDescriptorHandler)
+		{
+			return nullptr;
+		}
+
+		return this->payloadDescriptorHandler->GetEncoder();
+	}
+
+	void RtpPacket::EncodePayload(Codecs::PayloadDescriptor::Encoder* encoder)
+	{
+		MS_TRACE();
+
+		if (!this->payloadDescriptorHandler)
+		{
+			return;
+		}
+
+		this->payloadDescriptorHandler->Encode(this, encoder);
 	}
 
 	void RtpPacket::RestorePayload()
@@ -876,7 +904,7 @@ namespace RTC
 			return;
 		}
 
-		this->payloadDescriptorHandler->Restore(this->payload);
+		this->payloadDescriptorHandler->Restore(this);
 	}
 
 	/**

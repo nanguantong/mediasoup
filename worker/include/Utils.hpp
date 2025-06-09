@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstring> // std::memcmp(), std::memcpy()
 #include <string>
+#include <type_traits> // std::enable_if()
 #include <vector>
 #ifdef _WIN32
 #include <ws2ipdef.h>
@@ -190,30 +191,16 @@ namespace Utils
 			data[i]     = static_cast<uint8_t>(value >> 56);
 		}
 
-		static uint16_t PadTo4Bytes(uint16_t size)
+		template<typename T>
+		typename std::enable_if<std::is_unsigned<T>::value, bool>::type static IsPaddedTo4Bytes(T size)
 		{
-			// If size is not multiple of 32 bits then pad it.
-			if (size & 0x03)
-			{
-				return (size & 0xFFFC) + 4;
-			}
-			else
-			{
-				return size;
-			}
+			return (size & 0x03) == 0u;
 		}
 
-		static uint32_t PadTo4Bytes(uint32_t size)
+		template<typename T>
+		typename std::enable_if<std::is_unsigned<T>::value, T>::type static PadTo4Bytes(T size)
 		{
-			// If size is not multiple of 32 bits then pad it.
-			if (size & 0x03)
-			{
-				return (size & 0xFFFFFFFC) + 4;
-			}
-			else
-			{
-				return size;
-			}
+			return (size + 3) & ~static_cast<T>(0x03);
 		}
 	};
 
@@ -275,18 +262,9 @@ namespace Utils
 			return { buffer, len };
 		}
 
-		static uint32_t GetCRC32(const uint8_t* data, size_t size)
-		{
-			uint32_t crc{ 0xFFFFFFFF };
-			const uint8_t* p = data;
+		static uint32_t GetCRC32(const uint8_t* data, size_t size);
 
-			while (size--)
-			{
-				crc = Crypto::Crc32Table[(crc ^ *p++) & 0xFF] ^ (crc >> 8);
-			}
-
-			return crc ^ ~0U;
-		}
+		static uint32_t GetCRC32c(const uint8_t* data, size_t size);
 
 		static const uint8_t* GetHmacSha1(const std::string& key, const uint8_t* data, size_t len);
 
@@ -296,6 +274,7 @@ namespace Utils
 		thread_local static EVP_MAC_CTX* hmacSha1Ctx;
 		thread_local static uint8_t hmacSha1Buffer[];
 		static const uint32_t Crc32Table[256];
+		static const uint32_t Crc32cTable[256];
 	};
 
 	class String
@@ -375,6 +354,29 @@ namespace Utils
 			return static_cast<uint32_t>(((ms << 18) + 500) / 1000) & 0x00FFFFFF;
 		}
 	};
+
+	class BitStream
+	{
+	public:
+		BitStream(uint8_t* data, size_t len);
+		~BitStream() = default;
+
+		uint8_t GetBit();
+		uint32_t GetBits(size_t count);
+		uint32_t GetLeftBits() const;
+		void SkipBits(size_t count);
+		void Write(uint32_t offset, uint32_t n, uint32_t v);
+
+	private:
+		void PutBit(uint32_t offset, uint8_t bit);
+		void PutBits(uint32_t offset, uint32_t count, uint32_t bits);
+
+	private:
+		uint8_t* data;
+		uint32_t len{ 0 };
+		uint32_t offset{ 0 };
+	};
+
 } // namespace Utils
 
 #endif

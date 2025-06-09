@@ -40,28 +40,35 @@ public:
 	~TestPayloadDescriptorHandler() override = default;
 	void Dump() const override
 	{
-		return;
-	};
-	bool Process(Codecs::EncodingContext* /*context*/, uint8_t* /*data*/, bool& /*marker*/) override
+	}
+	bool Process(Codecs::EncodingContext* /*context*/, RTC::RtpPacket* /*packet*/, bool& /*marker*/) override
 	{
 		return true;
-	};
-	void Restore(uint8_t* /*data*/) override
+	}
+
+	std::unique_ptr<RTC::Codecs::PayloadDescriptor::Encoder> GetEncoder() const override
 	{
-		return;
-	};
+		return nullptr;
+	}
+
+	void Encode(RtpPacket* /*packet*/, RTC::Codecs::PayloadDescriptor::Encoder* /*encoder*/) override
+	{
+	}
+	void Restore(RtpPacket* /*packet*/) override
+	{
+	}
 	uint8_t GetSpatialLayer() const override
 	{
 		return 0;
-	};
+	}
 	uint8_t GetTemporalLayer() const override
 	{
 		return 0;
-	};
+	}
 	bool IsKeyFrame() const override
 	{
 		return this->isKeyFrame;
-	};
+	}
 
 private:
 	bool isKeyFrame{ false };
