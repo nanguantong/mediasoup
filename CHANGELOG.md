@@ -2,6 +2,9 @@
 
 ### NEXT
 
+- libuv: Update to v1.51.0 ([PR #1543](https://github.com/versatica/mediasoup/pull/1543)).
+- libsrtp: Update to v3.0.0-beta version in our fork ([PR #1544](https://github.com/versatica/mediasoup/pull/1544)).
+
 ### 3.16.0
 
 - Node: Make `worker.close()` close the worker process by sending a `WORKER_CLOSE` request through the channel instead of by sending a SIGINT signal ([PR #1534](https://github.com/versatica/mediasoup/pull/1534)).
