@@ -2,6 +2,10 @@
 
 ### NEXT
 
+### 3.16.5
+
+- `Consumer` classes: Really fix target layer retransmission buffer ([PR #1558](https://github.com/versatica/mediasoup/pull/1558)).
+
 ### 3.16.4
 
 - `Consumer` classes: Disable target layer retransmission buffer until [issue #1554] (https://github.com/versatica/mediasoup/issues/1554) is really fixed.
