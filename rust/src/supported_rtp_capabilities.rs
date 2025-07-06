@@ -26,7 +26,7 @@ pub fn get_supported_rtp_capabilities() -> RtpCapabilities {
                 clock_rate: NonZeroU32::new(48000).unwrap(),
                 channels: NonZeroU8::new(2).unwrap(),
                 parameters: RtpCodecParametersParameters::default(),
-                rtcp_feedback: vec![RtcpFeedback::TransportCc],
+                rtcp_feedback: vec![RtcpFeedback::Nack, RtcpFeedback::TransportCc],
             },
             RtpCodecCapability::Audio {
                 mime_type: MimeTypeAudio::MultiChannelOpus,
@@ -39,7 +39,7 @@ pub fn get_supported_rtp_capabilities() -> RtpCapabilities {
                     ("num_streams", 2_u32.into()),
                     ("coupled_streams", 2_u32.into()),
                 ]),
-                rtcp_feedback: vec![RtcpFeedback::TransportCc],
+                rtcp_feedback: vec![RtcpFeedback::Nack, RtcpFeedback::TransportCc],
             },
             RtpCodecCapability::Audio {
                 mime_type: MimeTypeAudio::MultiChannelOpus,
@@ -52,7 +52,7 @@ pub fn get_supported_rtp_capabilities() -> RtpCapabilities {
                     ("num_streams", 4_u32.into()),
                     ("coupled_streams", 2_u32.into()),
                 ]),
-                rtcp_feedback: vec![RtcpFeedback::TransportCc],
+                rtcp_feedback: vec![RtcpFeedback::Nack, RtcpFeedback::TransportCc],
             },
             RtpCodecCapability::Audio {
                 mime_type: MimeTypeAudio::MultiChannelOpus,
@@ -65,7 +65,7 @@ pub fn get_supported_rtp_capabilities() -> RtpCapabilities {
                     ("num_streams", 5_u32.into()),
                     ("coupled_streams", 3_u32.into()),
                 ]),
-                rtcp_feedback: vec![RtcpFeedback::TransportCc],
+                rtcp_feedback: vec![RtcpFeedback::Nack, RtcpFeedback::TransportCc],
             },
             RtpCodecCapability::Audio {
                 mime_type: MimeTypeAudio::Pcmu,
@@ -246,6 +246,22 @@ pub fn get_supported_rtp_capabilities() -> RtpCapabilities {
                 ],
             },
             RtpCodecCapability::Video {
+                mime_type: MimeTypeVideo::H264Svc,
+                preferred_payload_type: None,
+                clock_rate: NonZeroU32::new(90000).unwrap(),
+                parameters: RtpCodecParametersParameters::from([(
+                    "level-asymmetry-allowed",
+                    1_u32.into(),
+                )]),
+                rtcp_feedback: vec![
+                    RtcpFeedback::Nack,
+                    RtcpFeedback::NackPli,
+                    RtcpFeedback::CcmFir,
+                    RtcpFeedback::GoogRemb,
+                    RtcpFeedback::TransportCc,
+                ],
+            },
+            RtpCodecCapability::Video {
                 mime_type: MimeTypeVideo::H265,
                 preferred_payload_type: None,
                 clock_rate: NonZeroU32::new(90000).unwrap(),
@@ -253,6 +269,19 @@ pub fn get_supported_rtp_capabilities() -> RtpCapabilities {
                     "level-asymmetry-allowed",
                     1_u32.into(),
                 )]),
+                rtcp_feedback: vec![
+                    RtcpFeedback::Nack,
+                    RtcpFeedback::NackPli,
+                    RtcpFeedback::CcmFir,
+                    RtcpFeedback::GoogRemb,
+                    RtcpFeedback::TransportCc,
+                ],
+            },
+            RtpCodecCapability::Video {
+                mime_type: MimeTypeVideo::AV1,
+                preferred_payload_type: None,
+                clock_rate: NonZeroU32::new(90000).unwrap(),
+                parameters: RtpCodecParametersParameters::default(),
                 rtcp_feedback: vec![
                     RtcpFeedback::Nack,
                     RtcpFeedback::NackPli,
@@ -336,6 +365,13 @@ pub fn get_supported_rtp_capabilities() -> RtpCapabilities {
                 direction: RtpHeaderExtensionDirection::SendRecv,
             },
             RtpHeaderExtension {
+                kind: MediaKind::Video,
+                uri: RtpHeaderExtensionUri::DependencyDescriptor,
+                preferred_id: 8,
+                preferred_encrypt: false,
+                direction: RtpHeaderExtensionDirection::RecvOnly,
+            },
+            RtpHeaderExtension {
                 kind: MediaKind::Audio,
                 uri: RtpHeaderExtensionUri::AudioLevel,
                 preferred_id: 10,
@@ -357,6 +393,13 @@ pub fn get_supported_rtp_capabilities() -> RtpCapabilities {
                 direction: RtpHeaderExtensionDirection::SendRecv,
             },
             RtpHeaderExtension {
+                kind: MediaKind::Audio,
+                uri: RtpHeaderExtensionUri::AbsCaptureTime,
+                preferred_id: 13,
+                preferred_encrypt: false,
+                direction: RtpHeaderExtensionDirection::SendRecv,
+            },
+            RtpHeaderExtension {
                 kind: MediaKind::Video,
                 uri: RtpHeaderExtensionUri::AbsCaptureTime,
                 preferred_id: 13,
@@ -365,8 +408,15 @@ pub fn get_supported_rtp_capabilities() -> RtpCapabilities {
             },
             RtpHeaderExtension {
                 kind: MediaKind::Audio,
-                uri: RtpHeaderExtensionUri::AbsCaptureTime,
-                preferred_id: 13,
+                uri: RtpHeaderExtensionUri::PlayoutDelay,
+                preferred_id: 14,
+                preferred_encrypt: false,
+                direction: RtpHeaderExtensionDirection::SendRecv,
+            },
+            RtpHeaderExtension {
+                kind: MediaKind::Video,
+                uri: RtpHeaderExtensionUri::PlayoutDelay,
+                preferred_id: 14,
                 preferred_encrypt: false,
                 direction: RtpHeaderExtensionDirection::SendRecv,
             },

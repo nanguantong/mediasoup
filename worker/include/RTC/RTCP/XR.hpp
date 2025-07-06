@@ -72,7 +72,7 @@ namespace RTC
 			CommonHeader* header{ nullptr };
 
 		private:
-			uint8_t raw[Packet::CommonHeaderSize] = { 0 };
+			uint8_t raw[CommonHeaderSize] = { 0 };
 		};
 
 		class ExtendedReportPacket : public Packet
@@ -101,6 +101,15 @@ namespace RTC
 			void AddReport(ExtendedReportBlock* report)
 			{
 				this->reports.push_back(report);
+			}
+			void RemoveReport(ExtendedReportBlock* report)
+			{
+				auto it = std::find(this->reports.begin(), this->reports.end(), report);
+
+				if (it != this->reports.end())
+				{
+					this->reports.erase(it);
+				}
 			}
 			uint32_t GetSsrc() const
 			{

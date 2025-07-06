@@ -18,7 +18,7 @@ macro_rules! uuid_based_wrapper_type {
             Eq,
             PartialEq,
         )]
-        pub struct $struct_name(uuid::Uuid);
+        pub struct $struct_name(::uuid::Uuid);
 
         impl std::fmt::Display for $struct_name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -26,7 +26,15 @@ macro_rules! uuid_based_wrapper_type {
             }
         }
 
-        impl From<$struct_name> for uuid::Uuid {
+        impl ::std::str::FromStr for $struct_name {
+            type Err = ::uuid::Error;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                ::uuid::Uuid::from_str(s).map(Self)
+            }
+        }
+
+        impl From<$struct_name> for ::uuid::Uuid {
             fn from(id: $struct_name) -> Self {
                 id.0
             }
@@ -34,11 +42,11 @@ macro_rules! uuid_based_wrapper_type {
 
         impl $struct_name {
             pub(super) fn new() -> Self {
-                $struct_name(uuid::Uuid::new_v4())
+                $struct_name(::uuid::Uuid::new_v4())
             }
         }
 
-        impl From<$struct_name> for crate::worker::SubscriptionTarget {
+        impl From<$struct_name> for $crate::worker::SubscriptionTarget {
             fn from(id: $struct_name) -> Self {
                 Self::Uuid(id.0)
             }

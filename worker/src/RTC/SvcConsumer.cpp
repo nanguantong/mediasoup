@@ -6,80 +6,74 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
-#include "Channel/ChannelNotifier.hpp"
 #include "RTC/Codecs/Tools.hpp"
+#ifdef MS_RTC_LOGGER_RTP
+#include "RTC/RtcLogger.hpp"
+#endif
 
 namespace RTC
 {
 	/* Static. */
 
-	static constexpr uint64_t BweDowngradeConservativeMs{ 10000u }; // In ms.
-	static constexpr uint64_t BweDowngradeMinActiveMs{ 8000u };     // In ms.
+	static constexpr uint64_t BweDowngradeConservativeMs{ 10000u };
+	static constexpr uint64_t BweDowngradeMinActiveMs{ 8000u };
+	static constexpr size_t TargetLayerRetransmissionBufferSize{ 20u };
 
 	/* Instance methods. */
 
 	SvcConsumer::SvcConsumer(
-	  const std::string& id, const std::string& producerId, RTC::Consumer::Listener* listener, json& data)
-	  : RTC::Consumer::Consumer(id, producerId, listener, data, RTC::RtpParameters::Type::SVC)
+	  RTC::Shared* shared,
+	  const std::string& id,
+	  const std::string& producerId,
+	  RTC::Consumer::Listener* listener,
+	  const FBS::Transport::ConsumeRequest* data)
+	  : RTC::Consumer::Consumer(shared, id, producerId, listener, data, RTC::RtpParameters::Type::SVC)
 	{
 		MS_TRACE();
 
 		// Ensure there is a single encoding.
 		if (this->consumableRtpEncodings.size() != 1u)
+		{
 			MS_THROW_TYPE_ERROR("invalid consumableRtpEncodings with size != 1");
+		}
 
 		auto& encoding = this->rtpParameters.encodings[0];
 
 		// Ensure there are multiple spatial or temporal layers.
 		if (encoding.spatialLayers < 2u && encoding.temporalLayers < 2u)
+		{
 			MS_THROW_TYPE_ERROR("invalid number of layers");
-
-		auto jsonPreferredLayersIt = data.find("preferredLayers");
+		}
 
 		// Set preferredLayers (if given).
-		if (jsonPreferredLayersIt != data.end() && jsonPreferredLayersIt->is_object())
+		if (flatbuffers::IsFieldPresent(data, FBS::Transport::ConsumeRequest::VT_PREFERREDLAYERS))
 		{
-			auto jsonSpatialLayerIt  = jsonPreferredLayersIt->find("spatialLayer");
-			auto jsonTemporalLayerIt = jsonPreferredLayersIt->find("temporalLayer");
-
-			// clang-format off
-			if (
-				jsonSpatialLayerIt == jsonPreferredLayersIt->end() ||
-				!Utils::Json::IsPositiveInteger(*jsonSpatialLayerIt)
-			)
-			// clang-format on
-			{
-				MS_THROW_TYPE_ERROR("missing preferredLayers.spatialLayer");
-			}
-
-			this->preferredSpatialLayer = jsonSpatialLayerIt->get<int16_t>();
+			this->preferredSpatialLayer = data->preferredLayers()->spatialLayer();
 
 			if (this->preferredSpatialLayer > encoding.spatialLayers - 1)
-				this->preferredSpatialLayer = encoding.spatialLayers - 1;
-
-			// clang-format off
-			if (
-				jsonTemporalLayerIt != jsonPreferredLayersIt->end() &&
-				Utils::Json::IsPositiveInteger(*jsonTemporalLayerIt)
-			)
-			// clang-format on
 			{
-				this->preferredTemporalLayer = jsonTemporalLayerIt->get<int16_t>();
+				this->preferredSpatialLayer = static_cast<int16_t>(encoding.spatialLayers - 1);
+			}
 
+			if (flatbuffers::IsFieldPresent(
+			      data->preferredLayers(), FBS::Consumer::ConsumerLayers::VT_TEMPORALLAYER))
+			{
 				if (this->preferredTemporalLayer > encoding.temporalLayers - 1)
-					this->preferredTemporalLayer = encoding.temporalLayers - 1;
+				{
+					this->preferredTemporalLayer = static_cast<int16_t>(encoding.temporalLayers - 1);
+				}
 			}
 			else
 			{
-				this->preferredTemporalLayer = encoding.temporalLayers - 1;
+				this->preferredTemporalLayer = static_cast<int16_t>(encoding.temporalLayers - 1);
 			}
 		}
 		else
 		{
 			// Initially set preferredSpatialLayer and preferredTemporalLayer to the
 			// maximum value.
-			this->preferredSpatialLayer  = encoding.spatialLayers - 1;
-			this->preferredTemporalLayer = encoding.temporalLayers - 1;
+			this->preferredSpatialLayer  = static_cast<int16_t>(encoding.spatialLayers - 1);
+			this->preferredTemporalLayer = static_cast<int16_t>(encoding.temporalLayers - 1);
 		}
 
 		// Create the encoding context.
@@ -89,6 +83,14 @@ namespace RTC
 		{
 			MS_THROW_TYPE_ERROR("%s codec not supported for svc", mediaCodec->mimeType.ToString().c_str());
 		}
+
+		// Let's chosee an initial output seq number between 1000 and 32768 to avoid
+		// libsrtp bug:
+		// https://github.com/versatica/mediasoup/issues/1437
+		const uint16_t initialOutputSeq =
+		  Utils::Crypto::GetRandomUInt(1000u, std::numeric_limits<uint16_t>::max() / 2);
+
+		this->rtpSeqManager.reset(new RTC::SeqManager<uint16_t>(initialOutputSeq));
 
 		RTC::Codecs::EncodingContext::Params params;
 
@@ -102,128 +104,143 @@ namespace RTC
 
 		// Create RtpStreamSend instance for sending a single stream to the remote.
 		CreateRtpStream();
+
+		// NOTE: This may throw.
+		this->shared->channelMessageRegistrator->RegisterHandler(
+		  this->id,
+		  /*channelRequestHandler*/ this,
+		  /*channelNotificationHandler*/ nullptr);
 	}
 
 	SvcConsumer::~SvcConsumer()
 	{
 		MS_TRACE();
 
+		this->shared->channelMessageRegistrator->UnregisterHandler(this->id);
+
 		delete this->rtpStream;
+		this->targetLayerRetransmissionBuffer.clear();
 	}
 
-	void SvcConsumer::FillJson(json& jsonObject) const
+	flatbuffers::Offset<FBS::Consumer::DumpResponse> SvcConsumer::FillBuffer(
+	  flatbuffers::FlatBufferBuilder& builder) const
 	{
 		MS_TRACE();
 
 		// Call the parent method.
-		RTC::Consumer::FillJson(jsonObject);
-
+		auto base = RTC::Consumer::FillBuffer(builder);
 		// Add rtpStream.
-		this->rtpStream->FillJson(jsonObject["rtpStream"]);
+		std::vector<flatbuffers::Offset<FBS::RtpStream::Dump>> rtpStreams;
+		rtpStreams.emplace_back(this->rtpStream->FillBuffer(builder));
 
-		// Add preferredSpatialLayer.
-		jsonObject["preferredSpatialLayer"] = this->preferredSpatialLayer;
+		auto dump = FBS::Consumer::CreateConsumerDumpDirect(
+		  builder,
+		  base,
+		  &rtpStreams,
+		  this->preferredSpatialLayer,
+		  this->encodingContext->GetTargetSpatialLayer(),
+		  this->encodingContext->GetCurrentSpatialLayer(),
+		  this->preferredTemporalLayer,
+		  this->encodingContext->GetTargetTemporalLayer(),
+		  this->encodingContext->GetCurrentTemporalLayer());
 
-		// Add targetSpatialLayer.
-		jsonObject["targetSpatialLayer"] = this->encodingContext->GetTargetSpatialLayer();
-
-		// Add currentSpatialLayer.
-		jsonObject["currentSpatialLayer"] = this->encodingContext->GetCurrentSpatialLayer();
-
-		// Add preferredTemporalLayer.
-		jsonObject["preferredTemporalLayer"] = this->preferredTemporalLayer;
-
-		// Add targetTemporalLayer.
-		jsonObject["targetTemporalLayer"] = this->encodingContext->GetTargetTemporalLayer();
-
-		// Add currentTemporalLayer.
-		jsonObject["currentTemporalLayer"] = this->encodingContext->GetCurrentTemporalLayer();
+		return FBS::Consumer::CreateDumpResponse(builder, dump);
 	}
 
-	void SvcConsumer::FillJsonStats(json& jsonArray) const
+	flatbuffers::Offset<FBS::Consumer::GetStatsResponse> SvcConsumer::FillBufferStats(
+	  flatbuffers::FlatBufferBuilder& builder)
 	{
 		MS_TRACE();
 
+		std::vector<flatbuffers::Offset<FBS::RtpStream::Stats>> rtpStreams;
+
 		// Add stats of our send stream.
-		jsonArray.emplace_back(json::value_t::object);
-		this->rtpStream->FillJsonStats(jsonArray[0]);
+		rtpStreams.emplace_back(this->rtpStream->FillBufferStats(builder));
 
 		// Add stats of our recv stream.
 		if (this->producerRtpStream)
 		{
-			jsonArray.emplace_back(json::value_t::object);
-			this->producerRtpStream->FillJsonStats(jsonArray[1]);
+			rtpStreams.emplace_back(producerRtpStream->FillBufferStats(builder));
 		}
+
+		return FBS::Consumer::CreateGetStatsResponseDirect(builder, &rtpStreams);
 	}
 
-	void SvcConsumer::FillJsonScore(json& jsonObject) const
+	flatbuffers::Offset<FBS::Consumer::ConsumerScore> SvcConsumer::FillBufferScore(
+	  flatbuffers::FlatBufferBuilder& builder) const
 	{
 		MS_TRACE();
 
 		MS_ASSERT(this->producerRtpStreamScores, "producerRtpStreamScores not set");
 
-		jsonObject["score"] = this->rtpStream->GetScore();
+		uint8_t producerScore{ 0 };
 
 		if (this->producerRtpStream)
-			jsonObject["producerScore"] = this->producerRtpStream->GetScore();
+		{
+			producerScore = this->producerRtpStream->GetScore();
+		}
 		else
-			jsonObject["producerScore"] = 0;
+		{
+			producerScore = 0;
+		}
 
-		jsonObject["producerScores"] = *this->producerRtpStreamScores;
+		return FBS::Consumer::CreateConsumerScoreDirect(
+		  builder, this->rtpStream->GetScore(), producerScore, this->producerRtpStreamScores);
 	}
 
 	void SvcConsumer::HandleRequest(Channel::ChannelRequest* request)
 	{
 		MS_TRACE();
 
-		switch (request->methodId)
+		switch (request->method)
 		{
-			case Channel::ChannelRequest::MethodId::CONSUMER_REQUEST_KEY_FRAME:
+			case Channel::ChannelRequest::Method::CONSUMER_DUMP:
+			{
+				auto dumpOffset = FillBuffer(request->GetBufferBuilder());
+
+				request->Accept(FBS::Response::Body::Consumer_DumpResponse, dumpOffset);
+
+				break;
+			}
+
+			case Channel::ChannelRequest::Method::CONSUMER_REQUEST_KEY_FRAME:
 			{
 				if (IsActive())
+				{
 					RequestKeyFrame();
+				}
 
 				request->Accept();
 
 				break;
 			}
 
-			case Channel::ChannelRequest::MethodId::CONSUMER_SET_PREFERRED_LAYERS:
+			case Channel::ChannelRequest::Method::CONSUMER_SET_PREFERRED_LAYERS:
 			{
 				auto previousPreferredSpatialLayer  = this->preferredSpatialLayer;
 				auto previousPreferredTemporalLayer = this->preferredTemporalLayer;
 
-				auto jsonSpatialLayerIt  = request->data.find("spatialLayer");
-				auto jsonTemporalLayerIt = request->data.find("temporalLayer");
+				const auto* body = request->data->body_as<FBS::Consumer::SetPreferredLayersRequest>();
+				const auto* preferredLayers = body->preferredLayers();
 
 				// Spatial layer.
-				// clang-format off
-				if (
-					jsonSpatialLayerIt == request->data.end() ||
-					!Utils::Json::IsPositiveInteger(*jsonSpatialLayerIt)
-				)
-				// clang-format on
-				{
-					MS_THROW_TYPE_ERROR("missing spatialLayer");
-				}
-
-				this->preferredSpatialLayer = jsonSpatialLayerIt->get<int16_t>();
+				this->preferredSpatialLayer = preferredLayers->spatialLayer();
 
 				if (this->preferredSpatialLayer > this->rtpStream->GetSpatialLayers() - 1)
-					this->preferredSpatialLayer = this->rtpStream->GetSpatialLayers() - 1;
+				{
+					this->preferredSpatialLayer = static_cast<int16_t>(this->rtpStream->GetSpatialLayers() - 1);
+				}
 
 				// preferredTemporaLayer is optional.
-				// clang-format off
-				if (
-					jsonTemporalLayerIt != request->data.end() &&
-					Utils::Json::IsPositiveInteger(*jsonTemporalLayerIt)
-				)
-				// clang-format on
+				if (preferredLayers->temporalLayer().has_value())
 				{
-					this->preferredTemporalLayer = jsonTemporalLayerIt->get<int16_t>();
+					this->preferredTemporalLayer = preferredLayers->temporalLayer().value();
 
 					if (this->preferredTemporalLayer > this->rtpStream->GetTemporalLayers() - 1)
-						this->preferredTemporalLayer = this->rtpStream->GetTemporalLayers() - 1;
+					{
+						this->preferredTemporalLayer =
+						  static_cast<int16_t>(this->rtpStream->GetTemporalLayers() - 1);
+					}
 				}
 				else
 				{
@@ -236,12 +253,13 @@ namespace RTC
 				  this->preferredTemporalLayer,
 				  this->id.c_str());
 
-				json data = json::object();
+				const flatbuffers::Optional<int16_t> preferredTemporalLayer{ this->preferredTemporalLayer };
+				auto preferredLayersOffset = FBS::Consumer::CreateConsumerLayers(
+				  request->GetBufferBuilder(), this->preferredSpatialLayer, preferredTemporalLayer);
+				auto responseOffset = FBS::Consumer::CreateSetPreferredLayersResponse(
+				  request->GetBufferBuilder(), preferredLayersOffset);
 
-				data["spatialLayer"]  = this->preferredSpatialLayer;
-				data["temporalLayer"] = this->preferredTemporalLayer;
-
-				request->Accept(data);
+				request->Accept(FBS::Response::Body::Consumer_SetPreferredLayersResponse, responseOffset);
 
 				// clang-format off
 				if (
@@ -267,14 +285,14 @@ namespace RTC
 		}
 	}
 
-	void SvcConsumer::ProducerRtpStream(RTC::RtpStream* rtpStream, uint32_t /*mappedSsrc*/)
+	void SvcConsumer::ProducerRtpStream(RTC::RtpStreamRecv* rtpStream, uint32_t /*mappedSsrc*/)
 	{
 		MS_TRACE();
 
 		this->producerRtpStream = rtpStream;
 	}
 
-	void SvcConsumer::ProducerNewRtpStream(RTC::RtpStream* rtpStream, uint32_t /*mappedSsrc*/)
+	void SvcConsumer::ProducerNewRtpStream(RTC::RtpStreamRecv* rtpStream, uint32_t /*mappedSsrc*/)
 	{
 		MS_TRACE();
 
@@ -284,11 +302,13 @@ namespace RTC
 		EmitScore();
 
 		if (IsActive())
+		{
 			MayChangeLayers();
+		}
 	}
 
 	void SvcConsumer::ProducerRtpStreamScore(
-	  RTC::RtpStream* /*rtpStream*/, uint8_t score, uint8_t previousScore)
+	  RTC::RtpStreamRecv* /*rtpStream*/, uint8_t score, uint8_t previousScore)
 	{
 		MS_TRACE();
 
@@ -310,7 +330,7 @@ namespace RTC
 		}
 	}
 
-	void SvcConsumer::ProducerRtcpSenderReport(RTC::RtpStream* /*rtpStream*/, bool /*first*/)
+	void SvcConsumer::ProducerRtcpSenderReport(RTC::RtpStreamRecv* /*rtpStream*/, bool /*first*/)
 	{
 		MS_TRACE();
 
@@ -324,7 +344,9 @@ namespace RTC
 		MS_ASSERT(this->externallyManagedBitrate, "bitrate is not externally managed");
 
 		if (!IsActive())
+		{
 			return 0u;
+		}
 
 		return this->priority;
 	}
@@ -337,7 +359,9 @@ namespace RTC
 		MS_ASSERT(IsActive(), "should be active");
 
 		if (this->producerRtpStream->GetScore() == 0u)
+		{
 			return 0u;
+		}
 
 		// If already in the preferred layers, do nothing.
 		// clang-format off
@@ -359,11 +383,17 @@ namespace RTC
 			auto lossPercentage = this->rtpStream->GetLossPercentage();
 
 			if (lossPercentage < 2)
+			{
 				virtualBitrate = 1.08 * bitrate;
+			}
 			else if (lossPercentage > 10)
+			{
 				virtualBitrate = (1 - 0.5 * (lossPercentage / 100)) * bitrate;
+			}
 			else
+			{
 				virtualBitrate = bitrate;
+			}
 		}
 		else
 		{
@@ -392,7 +422,9 @@ namespace RTC
 
 			// Ignore spatial layers lower than the one we already have.
 			if (spatialLayer < this->provisionalTargetSpatialLayer)
+			{
 				continue;
+			}
 
 			temporalLayer = 0;
 
@@ -414,6 +446,32 @@ namespace RTC
 				requiredBitrate =
 				  this->producerRtpStream->GetLayerBitrate(nowMs, spatialLayer, temporalLayer);
 
+				// When using K-SVC we must subtract the bitrate of the current used layer
+				// if the new layer is the temporal layer 0 of an higher spatial layer.
+				//
+				// clang-format off
+				if (
+					this->encodingContext->IsKSvc() &&
+					requiredBitrate &&
+					temporalLayer == 0 &&
+					this->provisionalTargetSpatialLayer > -1 &&
+					spatialLayer > this->provisionalTargetSpatialLayer
+				)
+				// clang-format on
+				{
+					auto provisionalRequiredBitrate = this->producerRtpStream->GetSpatialLayerBitrate(
+					  nowMs, this->provisionalTargetSpatialLayer);
+
+					if (requiredBitrate > provisionalRequiredBitrate)
+					{
+						requiredBitrate -= provisionalRequiredBitrate;
+					}
+					else
+					{
+						requiredBitrate = 1u; // Don't set 0 since it would be ignored.
+					}
+				}
+
 				MS_DEBUG_DEV(
 				  "testing layers %" PRIi16 ":%" PRIi16 " [virtual bitrate:%" PRIu32
 				  ", required bitrate:%" PRIu32 "]",
@@ -424,25 +482,35 @@ namespace RTC
 
 				// If active layer, end iterations here. Otherwise move to next spatial layer.
 				if (requiredBitrate)
+				{
 					goto done;
+				}
 				else
+				{
 					break;
+				}
 			}
 
 			// If this is the preferred or higher spatial layer, take it and exit.
 			if (spatialLayer >= this->preferredSpatialLayer)
+			{
 				break;
+			}
 		}
 
 	done:
 
 		// No higher active layers found.
 		if (!requiredBitrate)
+		{
 			return 0u;
+		}
 
 		// No luck.
 		if (requiredBitrate > virtualBitrate)
+		{
 			return 0u;
+		}
 
 		// Set provisional layers.
 		this->provisionalTargetSpatialLayer  = spatialLayer;
@@ -457,11 +525,17 @@ namespace RTC
 		  requiredBitrate);
 
 		if (requiredBitrate <= bitrate)
+		{
 			return requiredBitrate;
+		}
 		else if (requiredBitrate <= virtualBitrate)
+		{
 			return bitrate;
+		}
 		else
+		{
 			return requiredBitrate; // NOTE: This cannot happen.
+		}
 	}
 
 	void SvcConsumer::ApplyLayers()
@@ -479,7 +553,9 @@ namespace RTC
 		this->provisionalTargetTemporalLayer = -1;
 
 		if (!IsActive())
+		{
 			return;
+		}
 
 		// clang-format off
 		if (
@@ -517,27 +593,68 @@ namespace RTC
 		MS_ASSERT(this->externallyManagedBitrate, "bitrate is not externally managed");
 
 		if (!IsActive())
+		{
 			return 0u;
+		}
 
-		auto nowMs              = DepLibUV::GetTimeMs();
-		uint32_t desiredBitrate = this->producerRtpStream->GetBitrate(nowMs);
+		auto nowMs = DepLibUV::GetTimeMs();
+		uint32_t desiredBitrate{ 0u };
+
+		// When using K-SVC each spatial layer is independent of the others.
+		if (this->encodingContext->IsKSvc())
+		{
+			// Let's iterate all spatial layers of the Producer (from highest to lowest) and
+			// obtain their bitrate. Choose the highest one.
+			// NOTE: When the Producer enables a higher spatial layer, initially the bitrate
+			// oft could be less than the bitrate of a lower one. That's why we iterate all
+			// spatial layers here anyway.
+			for (auto spatialLayer{ this->producerRtpStream->GetSpatialLayers() - 1 }; spatialLayer >= 0;
+			     --spatialLayer)
+			{
+				auto spatialLayerBitrate =
+				  this->producerRtpStream->GetSpatialLayerBitrate(nowMs, spatialLayer);
+
+				if (spatialLayerBitrate > desiredBitrate)
+				{
+					desiredBitrate = spatialLayerBitrate;
+				}
+			}
+		}
+		else
+		{
+			desiredBitrate = this->producerRtpStream->GetBitrate(nowMs);
+		}
 
 		// If consumer.rtpParameters.encodings[0].maxBitrate was given and it's
 		// greater than computed one, then use it.
 		auto maxBitrate = this->rtpParameters.encodings[0].maxBitrate;
 
 		if (maxBitrate > desiredBitrate)
+		{
 			desiredBitrate = maxBitrate;
+		}
 
 		return desiredBitrate;
 	}
 
-	void SvcConsumer::SendRtpPacket(RTC::RtpPacket* packet)
+	void SvcConsumer::SendRtpPacket(RTC::RtpPacket* packet, RTC::SharedRtpPacket& sharedPacket)
 	{
 		MS_TRACE();
 
+#ifdef MS_RTC_LOGGER_RTP
+		packet->logger.consumerId = this->id;
+#endif
+
 		if (!IsActive())
+		{
+#ifdef MS_RTC_LOGGER_RTP
+			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::CONSUMER_INACTIVE);
+#endif
+
+			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
+
 			return;
+		}
 
 		// clang-format off
 		if (
@@ -546,6 +663,30 @@ namespace RTC
 		)
 		// clang-format on
 		{
+#ifdef MS_RTC_LOGGER_RTP
+			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::INVALID_TARGET_LAYER);
+#endif
+
+			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
+
+			return;
+		}
+
+		// If we need to sync and this is not a key frame, ignore the packet.
+		if (this->syncRequired && !packet->IsKeyFrame())
+		{
+#ifdef MS_RTC_LOGGER_RTP
+			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::NOT_A_KEYFRAME);
+#endif
+
+			// NOTE: No need to drop the packet in the RTP sequence manager since here
+			// we are blocking all packets but the key frame that would trigger sync
+			// below.
+
+			// Store the packet for the scenario in which this packet is part of the
+			// key frame and it arrived before the first packet of the key frame.
+			StorePacketInTargetLayerRetransmissionBuffer(packet, sharedPacket);
+
 			return;
 		}
 
@@ -553,27 +694,55 @@ namespace RTC
 
 		// NOTE: This may happen if this Consumer supports just some codecs of those
 		// in the corresponding Producer.
-		if (this->supportedCodecPayloadTypes.find(payloadType) == this->supportedCodecPayloadTypes.end())
+		if (!this->supportedCodecPayloadTypes[payloadType])
 		{
-			MS_DEBUG_DEV("payload type not supported [payloadType:%" PRIu8 "]", payloadType);
+			MS_WARN_DEV("payload type not supported [payloadType:%" PRIu8 "]", payloadType);
+
+#ifdef MS_RTC_LOGGER_RTP
+			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::UNSUPPORTED_PAYLOAD_TYPE);
+#endif
+
+			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
 
 			return;
 		}
 
-		// If we need to sync and this is not a key frame, ignore the packet.
-		if (this->syncRequired && !packet->IsKeyFrame())
+		// Packets with only padding are not forwarded.
+		if (packet->GetPayloadLength() == 0)
+		{
+#ifdef MS_RTC_LOGGER_RTP
+			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::EMPTY_PAYLOAD);
+#endif
+
+			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
+
 			return;
+		}
 
 		// Whether this is the first packet after re-sync.
-		bool isSyncPacket = this->syncRequired;
+		const bool isSyncPacket = this->syncRequired;
+
+		// Whether packets stored in the target layer retransmission buffer must be
+		// sent once this packet is sent.
+		bool sendPacketsInTargetLayerRetransmissionBuffer{ false };
 
 		// Sync sequence number and timestamp if required.
 		if (isSyncPacket)
 		{
 			if (packet->IsKeyFrame())
-				MS_DEBUG_TAG(rtp, "sync key frame received");
+			{
+				MS_DEBUG_TAG(
+				  rtp,
+				  "sync key frame received [ssrc:%" PRIu32 ", seq:%" PRIu16 ", ts:%" PRIu32 "]",
+				  packet->GetSsrc(),
+				  packet->GetSequenceNumber(),
+				  packet->GetTimestamp());
 
-			this->rtpSeqManager.Sync(packet->GetSequenceNumber() - 1);
+				sendPacketsInTargetLayerRetransmissionBuffer = true;
+			}
+
+			this->rtpSeqManager->Sync(packet->GetSequenceNumber() - 1);
+			this->encodingContext->SyncRequired();
 
 			this->syncRequired = false;
 		}
@@ -581,9 +750,16 @@ namespace RTC
 		auto previousSpatialLayer  = this->encodingContext->GetCurrentSpatialLayer();
 		auto previousTemporalLayer = this->encodingContext->GetCurrentTemporalLayer();
 
-		if (!packet->ProcessPayload(this->encodingContext.get()))
+		bool marker{ false };
+		const bool origMarker = packet->HasMarker();
+
+		if (!packet->ProcessPayload(this->encodingContext.get(), marker))
 		{
-			this->rtpSeqManager.Drop(packet->GetSequenceNumber());
+#ifdef MS_RTC_LOGGER_RTP
+			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::DROPPED_BY_CODEC);
+#endif
+
+			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
 
 			return;
 		}
@@ -602,7 +778,7 @@ namespace RTC
 		// Update RTP seq number and timestamp based on NTP offset.
 		uint16_t seq;
 
-		this->rtpSeqManager.Input(packet->GetSequenceNumber(), seq);
+		this->rtpSeqManager->Input(packet->GetSequenceNumber(), seq);
 
 		// Save original packet fields.
 		auto origSsrc = packet->GetSsrc();
@@ -611,6 +787,16 @@ namespace RTC
 		// Rewrite packet.
 		packet->SetSsrc(this->rtpParameters.encodings[0].ssrc);
 		packet->SetSequenceNumber(seq);
+
+#ifdef MS_RTC_LOGGER_RTP
+		packet->logger.sendRtpTimestamp = packet->GetTimestamp();
+		packet->logger.sendSeqNumber    = seq;
+#endif
+
+		if (marker)
+		{
+			packet->SetMarker(true);
+		}
 
 		if (isSyncPacket)
 		{
@@ -624,8 +810,10 @@ namespace RTC
 			  origSeq);
 		}
 
-		// Process the packet.
-		if (this->rtpStream->ReceivePacket(packet))
+		const RTC::RtpStreamSend::ReceivePacketResult result =
+		  this->rtpStream->ReceivePacket(packet, sharedPacket);
+
+		if (result != RTC::RtpStreamSend::ReceivePacketResult::DISCARDED)
 		{
 			// Send the packet.
 			this->listener->OnConsumerSendRtpPacket(this, packet);
@@ -644,39 +832,104 @@ namespace RTC
 			  packet->GetTimestamp(),
 			  origSsrc,
 			  origSeq);
+
+#ifdef MS_RTC_LOGGER_RTP
+			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::SEND_RTP_STREAM_DISCARDED);
+#endif
 		}
 
 		// Restore packet fields.
 		packet->SetSsrc(origSsrc);
 		packet->SetSequenceNumber(origSeq);
+		packet->SetMarker(origMarker);
 
 		// Restore the original payload if needed.
 		packet->RestorePayload();
+
+		// If sharedPacket doesn't have a packet inside and it has been stored we
+		// need to clone the packet into it.
+		if (!sharedPacket.HasPacket() && result == RTC::RtpStreamSend::ReceivePacketResult::ACCEPTED_AND_STORED)
+		{
+			sharedPacket.Assign(packet);
+		}
+
+		// If sent packet was the first packet of a key frame, let's send buffered
+		// packets belonging to the same key frame that arrived earlier due to
+		// packet misorder.
+		if (sendPacketsInTargetLayerRetransmissionBuffer)
+		{
+			// NOTE: Only send buffered packets if the first packet containing the key
+			// frame was sent.
+			if (result != RTC::RtpStreamSend::ReceivePacketResult::DISCARDED)
+			{
+				for (auto& kv : this->targetLayerRetransmissionBuffer)
+				{
+					auto& bufferedSharedPacket = kv.second;
+					auto* bufferedPacket       = bufferedSharedPacket.GetPacket();
+
+					if (bufferedPacket->GetSequenceNumber() > origSeq)
+					{
+						MS_DEBUG_DEV(
+						  "sending packet buffered in the target layer retransmission buffer [ssrc:%" PRIu32
+						  ", seq:%" PRIu16 ", ts:%" PRIu32
+						  "] after sending first packet of the key frame [ssrc:%" PRIu32 ", seq:%" PRIu16
+						  ", ts:%" PRIu32 "]",
+						  bufferedPacket->GetSsrc(),
+						  bufferedPacket->GetSequenceNumber(),
+						  bufferedPacket->GetTimestamp(),
+						  packet->GetSsrc(),
+						  packet->GetSequenceNumber(),
+						  packet->GetTimestamp());
+
+						SendRtpPacket(bufferedPacket, bufferedSharedPacket);
+
+						// Be sure that the target layer retransmission buffer has not been
+						// emptied as a result of sending this packet. If so, exit the loop.
+						if (this->targetLayerRetransmissionBuffer.size() == 0)
+						{
+							MS_DEBUG_DEV(
+							  "target layer retransmission buffer emptied while iterating it, exiting the loop");
+
+							break;
+						}
+					}
+				}
+			}
+
+			this->targetLayerRetransmissionBuffer.clear();
+		}
 	}
 
-	void SvcConsumer::GetRtcp(
-	  RTC::RTCP::CompoundPacket* packet, RTC::RtpStreamSend* rtpStream, uint64_t nowMs)
+	bool SvcConsumer::GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs)
 	{
 		MS_TRACE();
 
-		MS_ASSERT(rtpStream == this->rtpStream, "RTP stream does not match");
-
 		if (static_cast<float>((nowMs - this->lastRtcpSentTime) * 1.15) < this->maxRtcpInterval)
-			return;
+		{
+			return true;
+		}
 
-		auto* report = this->rtpStream->GetRtcpSenderReport(nowMs);
+		auto* senderReport = this->rtpStream->GetRtcpSenderReport(nowMs);
 
-		if (!report)
-			return;
-
-		packet->AddSenderReport(report);
+		if (!senderReport)
+		{
+			return true;
+		}
 
 		// Build SDES chunk for this sender.
 		auto* sdesChunk = this->rtpStream->GetRtcpSdesChunk();
 
-		packet->AddSdesChunk(sdesChunk);
+		auto* delaySinceLastRrSsrcInfo = this->rtpStream->GetRtcpXrDelaySinceLastRrSsrcInfo(nowMs);
+
+		// RTCP Compound packet buffer cannot hold the data.
+		if (!packet->Add(senderReport, sdesChunk, delaySinceLastRrSsrcInfo))
+		{
+			return false;
+		}
 
 		this->lastRtcpSentTime = nowMs;
+
+		return true;
 	}
 
 	void SvcConsumer::NeedWorstRemoteFractionLost(uint32_t /*mappedSsrc*/, uint8_t& worstRemoteFractionLost)
@@ -684,13 +937,17 @@ namespace RTC
 		MS_TRACE();
 
 		if (!IsActive())
+		{
 			return;
+		}
 
 		auto fractionLost = this->rtpStream->GetFractionLost();
 
 		// If our fraction lost is worse than the given one, update it.
 		if (fractionLost > worstRemoteFractionLost)
+		{
 			worstRemoteFractionLost = fractionLost;
+		}
 	}
 
 	void SvcConsumer::ReceiveNack(RTC::RTCP::FeedbackRtpNackPacket* nackPacket)
@@ -698,7 +955,9 @@ namespace RTC
 		MS_TRACE();
 
 		if (!IsActive())
+		{
 			return;
+		}
 
 		// May emit 'trace' event.
 		EmitTraceEventNackType();
@@ -732,7 +991,9 @@ namespace RTC
 		this->rtpStream->ReceiveKeyFrameRequest(messageType);
 
 		if (IsActive())
+		{
 			RequestKeyFrame();
+		}
 	}
 
 	void SvcConsumer::ReceiveRtcpReceiverReport(RTC::RTCP::ReceiverReport* report)
@@ -742,12 +1003,21 @@ namespace RTC
 		this->rtpStream->ReceiveRtcpReceiverReport(report);
 	}
 
+	void SvcConsumer::ReceiveRtcpXrReceiverReferenceTime(RTC::RTCP::ReceiverReferenceTime* report)
+	{
+		MS_TRACE();
+
+		this->rtpStream->ReceiveRtcpXrReceiverReferenceTime(report);
+	}
+
 	uint32_t SvcConsumer::GetTransmissionRate(uint64_t nowMs)
 	{
 		MS_TRACE();
 
 		if (!IsActive())
+		{
 			return 0u;
+		}
 
 		return this->rtpStream->GetBitrate(nowMs);
 	}
@@ -766,7 +1036,9 @@ namespace RTC
 		this->syncRequired = true;
 
 		if (IsActive())
+		{
 			MayChangeLayers();
+		}
 	}
 
 	void SvcConsumer::UserOnTransportDisconnected()
@@ -776,6 +1048,7 @@ namespace RTC
 		this->lastBweDowngradeAtMs = 0u;
 
 		this->rtpStream->Pause();
+		this->targetLayerRetransmissionBuffer.clear();
 
 		UpdateTargetLayers(-1, -1);
 	}
@@ -787,11 +1060,14 @@ namespace RTC
 		this->lastBweDowngradeAtMs = 0u;
 
 		this->rtpStream->Pause();
+		this->targetLayerRetransmissionBuffer.clear();
 
 		UpdateTargetLayers(-1, -1);
 
 		if (this->externallyManagedBitrate)
+		{
 			this->listener->OnConsumerNeedZeroBitrate(this);
+		}
 	}
 
 	void SvcConsumer::UserOnResumed()
@@ -801,7 +1077,9 @@ namespace RTC
 		this->syncRequired = true;
 
 		if (IsActive())
+		{
 			MayChangeLayers();
+		}
 	}
 
 	void SvcConsumer::CreateRtpStream()
@@ -871,20 +1149,21 @@ namespace RTC
 			}
 		}
 
-		// Create a RtpStreamSend for sending a single media stream.
-		size_t bufferSize = params.useNack ? 600u : 0u;
-
-		this->rtpStream = new RTC::RtpStreamSend(this, params, bufferSize);
+		this->rtpStream = new RTC::RtpStreamSend(this, params, this->rtpParameters.mid);
 		this->rtpStreams.push_back(this->rtpStream);
 
 		// If the Consumer is paused, tell the RtpStreamSend.
 		if (IsPaused() || IsProducerPaused())
+		{
 			this->rtpStream->Pause();
+		}
 
 		const auto* rtxCodec = this->rtpParameters.GetRtxCodecForEncoding(encoding);
 
 		if (rtxCodec && encoding.hasRtx)
+		{
 			this->rtpStream->SetRtx(rtxCodec->payloadType, encoding.rtx.ssrc);
+		}
 	}
 
 	void SvcConsumer::RequestKeyFrame()
@@ -892,7 +1171,9 @@ namespace RTC
 		MS_TRACE();
 
 		if (this->kind != RTC::Media::Kind::VIDEO)
+		{
 			return;
+		}
 
 		auto mappedSsrc = this->consumableRtpEncodings[0].ssrc;
 
@@ -916,7 +1197,9 @@ namespace RTC
 			if (this->externallyManagedBitrate)
 			{
 				if (newTargetSpatialLayer != this->encodingContext->GetTargetSpatialLayer() || force)
+				{
 					this->listener->OnConsumerNeedBitrateChange(this);
+				}
 			}
 			else
 			{
@@ -938,10 +1221,14 @@ namespace RTC
 		int16_t spatialLayer{ 0 };
 
 		if (!this->producerRtpStream)
+		{
 			goto done;
+		}
 
 		if (this->producerRtpStream->GetScore() == 0u)
+		{
 			goto done;
+		}
 
 		for (; spatialLayer < this->producerRtpStream->GetSpatialLayers(); ++spatialLayer)
 		{
@@ -950,28 +1237,40 @@ namespace RTC
 			if (nowMs - this->lastBweDowngradeAtMs < BweDowngradeConservativeMs)
 			{
 				if (newTargetSpatialLayer > -1 && spatialLayer > this->encodingContext->GetCurrentSpatialLayer())
+				{
 					continue;
+				}
 			}
 
 			if (!this->producerRtpStream->GetSpatialLayerBitrate(nowMs, spatialLayer))
+			{
 				continue;
+			}
 
 			newTargetSpatialLayer = spatialLayer;
 
 			// If this is the preferred or higher spatial layer and has bitrate,
 			// take it and exit.
 			if (spatialLayer >= this->preferredSpatialLayer)
+			{
 				break;
+			}
 		}
 
 		if (newTargetSpatialLayer != -1)
 		{
 			if (newTargetSpatialLayer == this->preferredSpatialLayer)
+			{
 				newTargetTemporalLayer = this->preferredTemporalLayer;
+			}
 			else if (newTargetSpatialLayer < this->preferredSpatialLayer)
-				newTargetTemporalLayer = this->rtpStream->GetTemporalLayers() - 1;
+			{
+				newTargetTemporalLayer = static_cast<int16_t>(this->rtpStream->GetTemporalLayers() - 1);
+			}
 			else
+			{
 				newTargetTemporalLayer = 0;
+			}
 		}
 
 	done:
@@ -1036,18 +1335,56 @@ namespace RTC
 		}
 	}
 
-	inline void SvcConsumer::EmitScore() const
+	void SvcConsumer::StorePacketInTargetLayerRetransmissionBuffer(
+	  RTC::RtpPacket* packet, RTC::SharedRtpPacket& sharedPacket)
 	{
 		MS_TRACE();
 
-		json data = json::object();
+		MS_DEBUG_DEV(
+		  "storing packet in target layer retransmission buffer [ssrc:%" PRIu32 ", seq:%" PRIu16
+		  ", ts:%" PRIu32 "]",
+		  packet->GetSsrc(),
+		  packet->GetSequenceNumber(),
+		  packet->GetTimestamp());
 
-		FillJsonScore(data);
+		// Store original packet into the buffer. Only clone once and only if
+		// necessary.
+		if (!sharedPacket.HasPacket())
+		{
+			sharedPacket.Assign(packet);
+		}
+		// Assert that, if sharedPacket was already filled, both packet and
+		// sharedPacket are the very same RTP packet.
+		else
+		{
+			sharedPacket.AssertSamePacket(packet);
+		}
 
-		Channel::ChannelNotifier::Emit(this->id, "score", data);
+		this->targetLayerRetransmissionBuffer[packet->GetSequenceNumber()] = sharedPacket;
+
+		if (this->targetLayerRetransmissionBuffer.size() > TargetLayerRetransmissionBufferSize)
+		{
+			this->targetLayerRetransmissionBuffer.erase(this->targetLayerRetransmissionBuffer.begin());
+		}
 	}
 
-	inline void SvcConsumer::EmitLayersChange() const
+	void SvcConsumer::EmitScore() const
+	{
+		MS_TRACE();
+
+		auto scoreOffset = FillBufferScore(this->shared->channelNotifier->GetBufferBuilder());
+
+		auto notificationOffset = FBS::Consumer::CreateScoreNotification(
+		  this->shared->channelNotifier->GetBufferBuilder(), scoreOffset);
+
+		this->shared->channelNotifier->Emit(
+		  this->id,
+		  FBS::Notification::Event::CONSUMER_SCORE,
+		  FBS::Notification::Body::Consumer_ScoreNotification,
+		  notificationOffset);
+	}
+
+	void SvcConsumer::EmitLayersChange() const
 	{
 		MS_TRACE();
 
@@ -1057,22 +1394,27 @@ namespace RTC
 		  this->encodingContext->GetCurrentTemporalLayer(),
 		  this->id.c_str());
 
-		json data = json::object();
+		flatbuffers::Offset<FBS::Consumer::ConsumerLayers> layersOffset;
 
 		if (this->encodingContext->GetCurrentSpatialLayer() >= 0)
 		{
-			data["spatialLayer"]  = this->encodingContext->GetCurrentSpatialLayer();
-			data["temporalLayer"] = this->encodingContext->GetCurrentTemporalLayer();
-		}
-		else
-		{
-			data = nullptr;
+			layersOffset = FBS::Consumer::CreateConsumerLayers(
+			  this->shared->channelNotifier->GetBufferBuilder(),
+			  this->encodingContext->GetCurrentSpatialLayer(),
+			  this->encodingContext->GetCurrentTemporalLayer());
 		}
 
-		Channel::ChannelNotifier::Emit(this->id, "layerschange", data);
+		auto notificationOffset = FBS::Consumer::CreateLayersChangeNotification(
+		  this->shared->channelNotifier->GetBufferBuilder(), layersOffset);
+
+		this->shared->channelNotifier->Emit(
+		  this->id,
+		  FBS::Notification::Event::CONSUMER_LAYERS_CHANGE,
+		  FBS::Notification::Body::Consumer_LayersChangeNotification,
+		  notificationOffset);
 	}
 
-	inline void SvcConsumer::OnRtpStreamScore(
+	void SvcConsumer::OnRtpStreamScore(
 	  RTC::RtpStream* /*rtpStream*/, uint8_t /*score*/, uint8_t /*previousScore*/)
 	{
 		MS_TRACE();
@@ -1086,11 +1428,13 @@ namespace RTC
 			// NOTE: For now this is a bit useless since, when locally managed, we do
 			// not check the Consumer score at all.
 			if (!this->externallyManagedBitrate)
+			{
 				MayChangeLayers();
+			}
 		}
 	}
 
-	inline void SvcConsumer::OnRtpStreamRetransmitRtpPacket(
+	void SvcConsumer::OnRtpStreamRetransmitRtpPacket(
 	  RTC::RtpStreamSend* /*rtpStream*/, RTC::RtpPacket* packet)
 	{
 		MS_TRACE();

@@ -3,18 +3,18 @@ mod tests;
 
 use crate::data_structures::AppData;
 use crate::messages::{
-    RtpObserverAddProducerRequest, RtpObserverAddRemoveProducerRequestData,
-    RtpObserverCloseRequest, RtpObserverInternal, RtpObserverPauseRequest,
+    RtpObserverAddProducerRequest, RtpObserverCloseRequest, RtpObserverPauseRequest,
     RtpObserverRemoveProducerRequest, RtpObserverResumeRequest,
 };
 use crate::producer::{Producer, ProducerId};
 use crate::router::Router;
 use crate::rtp_observer::{RtpObserver, RtpObserverAddProducerOptions, RtpObserverId};
-use crate::worker::{Channel, RequestError, SubscriptionHandler};
+use crate::worker::{Channel, NotificationParseError, RequestError, SubscriptionHandler};
 use async_executor::Executor;
 use async_trait::async_trait;
 use event_listener_primitives::{Bag, BagOnce, HandlerId};
 use log::{debug, error};
+use mediasoup_sys::fbs::{audio_level_observer, notification};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::fmt;
@@ -60,6 +60,7 @@ pub struct AudioLevelObserverVolume {
 }
 
 #[derive(Default)]
+#[allow(clippy::type_complexity)]
 struct Handlers {
     volumes: Bag<Arc<dyn Fn(&[AudioLevelObserverVolume]) + Send + Sync>>,
     silence: Bag<Arc<dyn Fn() + Send + Sync>>,
@@ -85,6 +86,40 @@ enum Notification {
     Silence,
 }
 
+impl Notification {
+    pub(crate) fn from_fbs(
+        notification: notification::NotificationRef<'_>,
+    ) -> Result<Self, NotificationParseError> {
+        match notification.event().unwrap() {
+            notification::Event::AudiolevelobserverVolumes => {
+                let Ok(Some(notification::BodyRef::AudioLevelObserverVolumesNotification(body))) =
+                    notification.body()
+                else {
+                    panic!("Wrong message from worker: {notification:?}");
+                };
+
+                let volumes_fbs: Vec<_> = body
+                    .volumes()
+                    .unwrap()
+                    .iter()
+                    .map(|volume| audio_level_observer::Volume::try_from(volume.unwrap()).unwrap())
+                    .collect();
+                let volumes = volumes_fbs
+                    .iter()
+                    .map(|volume| VolumeNotification {
+                        producer_id: volume.producer_id.parse().unwrap(),
+                        volume: volume.volume,
+                    })
+                    .collect();
+
+                Ok(Notification::Volumes(volumes))
+            }
+            notification::Event::AudiolevelobserverSilence => Ok(Notification::Silence),
+            _ => Err(NotificationParseError::InvalidEvent),
+        }
+    }
+}
+
 struct Inner {
     id: RtpObserverId,
     executor: Arc<Executor<'static>>,
@@ -97,7 +132,7 @@ struct Inner {
     closed: AtomicBool,
     // Drop subscription to audio level observer-specific notifications when observer itself is
     // dropped
-    subscription_handler: Mutex<Option<SubscriptionHandler>>,
+    _subscription_handler: Mutex<Option<SubscriptionHandler>>,
     _on_router_close_handler: Mutex<HandlerId>,
 }
 
@@ -116,34 +151,24 @@ impl Inner {
 
             self.handlers.close.call_simple();
 
-            let subscription_handler = self.subscription_handler.lock().take();
-
             if close_request {
                 let channel = self.channel.clone();
+                let router_id = self.router.id();
                 let request = RtpObserverCloseRequest {
-                    internal: RtpObserverInternal {
-                        router_id: self.router.id(),
-                        rtp_observer_id: self.id,
-                    },
+                    rtp_observer_id: self.id,
                 };
 
                 self.executor
                     .spawn(async move {
-                        if let Err(error) = channel.request(request).await {
-                            error!("audio level observer closing failed on drop: {}", error);
+                        match channel.request(router_id, request).await {
+                            Err(RequestError::ChannelClosed) => {
+                                debug!("audio level observer closing failed on drop: Channel already closed");
+                            }
+                            Err(error) => {
+                                error!("audio level observer closing failed on drop: {}", error);
+                            }
+                            Ok(_) => {}
                         }
-
-                        // Drop from a different thread to avoid deadlock with recursive dropping
-                        // from within another subscription drop.
-                        drop(subscription_handler);
-                    })
-                    .detach();
-            } else {
-                self.executor
-                    .spawn(async move {
-                        // Drop from a different thread to avoid deadlock with recursive dropping
-                        // from within another subscription drop.
-                        drop(subscription_handler);
                     })
                     .detach();
             }
@@ -181,6 +206,10 @@ impl RtpObserver for AudioLevelObserver {
         self.inner.id
     }
 
+    fn router(&self) -> &Router {
+        &self.inner.router
+    }
+
     fn paused(&self) -> bool {
         self.inner.paused.load(Ordering::SeqCst)
     }
@@ -198,9 +227,7 @@ impl RtpObserver for AudioLevelObserver {
 
         self.inner
             .channel
-            .request(RtpObserverPauseRequest {
-                internal: self.get_internal(),
-            })
+            .request(self.id(), RtpObserverPauseRequest {})
             .await?;
 
         let was_paused = self.inner.paused.swap(true, Ordering::SeqCst);
@@ -217,9 +244,7 @@ impl RtpObserver for AudioLevelObserver {
 
         self.inner
             .channel
-            .request(RtpObserverResumeRequest {
-                internal: self.get_internal(),
-            })
+            .request(self.id(), RtpObserverResumeRequest {})
             .await?;
 
         let was_paused = self.inner.paused.swap(false, Ordering::SeqCst);
@@ -243,10 +268,7 @@ impl RtpObserver for AudioLevelObserver {
         };
         self.inner
             .channel
-            .request(RtpObserverAddProducerRequest {
-                internal: self.get_internal(),
-                data: RtpObserverAddRemoveProducerRequestData { producer_id },
-            })
+            .request(self.id(), RtpObserverAddProducerRequest { producer_id })
             .await?;
 
         self.inner.handlers.add_producer.call_simple(&producer);
@@ -263,10 +285,7 @@ impl RtpObserver for AudioLevelObserver {
         };
         self.inner
             .channel
-            .request(RtpObserverRemoveProducerRequest {
-                internal: self.get_internal(),
-                data: RtpObserverAddRemoveProducerRequestData { producer_id },
-            })
+            .request(self.id(), RtpObserverRemoveProducerRequest { producer_id })
             .await?;
 
         self.inner.handlers.remove_producer.call_simple(&producer);
@@ -327,7 +346,7 @@ impl AudioLevelObserver {
             let handlers = Arc::clone(&handlers);
 
             channel.subscribe_to_notifications(id.into(), move |notification| {
-                match serde_json::from_slice::<Notification>(notification) {
+                match Notification::from_fbs(notification) {
                     Ok(notification) => match notification {
                         Notification::Volumes(volumes) => {
                             let volumes = volumes
@@ -366,7 +385,8 @@ impl AudioLevelObserver {
             let inner_weak = Arc::clone(&inner_weak);
 
             move || {
-                if let Some(inner) = inner_weak.lock().as_ref().and_then(Weak::upgrade) {
+                let maybe_inner = inner_weak.lock().as_ref().and_then(Weak::upgrade);
+                if let Some(inner) = maybe_inner {
                     inner.handlers.router_close.call_simple();
                     inner.close(false);
                 }
@@ -381,7 +401,7 @@ impl AudioLevelObserver {
             app_data,
             router,
             closed: AtomicBool::new(false),
-            subscription_handler: Mutex::new(subscription_handler),
+            _subscription_handler: Mutex::new(subscription_handler),
             _on_router_close_handler: Mutex::new(on_router_close_handler),
         });
 
@@ -411,13 +431,6 @@ impl AudioLevelObserver {
     pub fn downgrade(&self) -> WeakAudioLevelObserver {
         WeakAudioLevelObserver {
             inner: Arc::downgrade(&self.inner),
-        }
-    }
-
-    fn get_internal(&self) -> RtpObserverInternal {
-        RtpObserverInternal {
-            router_id: self.inner.router.id(),
-            rtp_observer_id: self.inner.id,
         }
     }
 }

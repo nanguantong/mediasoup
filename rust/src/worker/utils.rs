@@ -2,17 +2,12 @@ mod channel_read_fn;
 mod channel_write_fn;
 
 use crate::worker::channel::BufferMessagesGuard;
-use crate::worker::{Channel, PayloadChannel, WorkerId};
-pub(super) use channel_read_fn::{
-    prepare_channel_read_fn, prepare_payload_channel_read_fn, PreparedChannelRead,
-    PreparedPayloadChannelRead,
-};
-pub(super) use channel_write_fn::{
-    prepare_channel_write_fn, prepare_payload_channel_write_fn, PreparedChannelWrite,
-    PreparedPayloadChannelWrite,
-};
+use crate::worker::{Channel, SubscriptionTarget, WorkerId};
+pub(super) use channel_read_fn::{prepare_channel_read_fn, PreparedChannelRead};
+pub(super) use channel_write_fn::{prepare_channel_write_fn, PreparedChannelWrite};
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -38,7 +33,6 @@ pub enum ExitError {
 
 pub(super) struct WorkerRunResult {
     pub(super) channel: Channel,
-    pub(super) payload_channel: PayloadChannel,
     pub(super) buffer_worker_messages_guard: BufferMessagesGuard,
 }
 
@@ -46,18 +40,19 @@ pub(super) fn run_worker_with_channels<OE>(
     id: WorkerId,
     thread_initializer: Option<Arc<dyn Fn() + Send + Sync>>,
     args: Vec<String>,
+    worker_closed: Arc<AtomicBool>,
     on_exit: OE,
 ) -> WorkerRunResult
 where
     OE: FnOnce(Result<(), ExitError>) + Send + 'static,
 {
-    let (channel, prepared_channel_read, prepared_channel_write) = Channel::new();
-    let (payload_channel, prepared_payload_channel_read, prepared_payload_channel_write) =
-        PayloadChannel::new();
-    let buffer_worker_messages_guard = channel.buffer_messages_for(std::process::id().into());
+    let (channel, prepared_channel_read, prepared_channel_write) =
+        Channel::new(Arc::clone(&worker_closed));
+    let buffer_worker_messages_guard =
+        channel.buffer_messages_for(SubscriptionTarget::String(std::process::id().to_string()));
 
     std::thread::Builder::new()
-        .name(format!("mediasoup-worker-{}", id))
+        .name(format!("mediasoup-worker-{id}"))
         .spawn(move || {
             if let Some(thread_initializer) = thread_initializer {
                 thread_initializer();
@@ -78,16 +73,6 @@ where
                     prepared_channel_read.deconstruct();
                 let (channel_write_fn, channel_write_ctx, _channel_read_callback) =
                     prepared_channel_write.deconstruct();
-                let (
-                    payload_channel_read_fn,
-                    payload_channel_read_ctx,
-                    _payload_channel_write_callback,
-                ) = prepared_payload_channel_read.deconstruct();
-                let (
-                    payload_channel_write_fn,
-                    payload_channel_write_ctx,
-                    _payload_channel_read_callback,
-                ) = prepared_payload_channel_write.deconstruct();
 
                 mediasoup_sys::mediasoup_worker_run(
                     argc,
@@ -95,16 +80,10 @@ where
                     version.as_ptr(),
                     0,
                     0,
-                    0,
-                    0,
                     channel_read_fn,
                     channel_read_ctx,
                     channel_write_fn,
                     channel_write_ctx,
-                    payload_channel_read_fn,
-                    payload_channel_read_ctx,
-                    payload_channel_write_fn,
-                    payload_channel_write_ctx,
                 )
             };
 
@@ -119,7 +98,6 @@ where
 
     WorkerRunResult {
         channel,
-        payload_channel,
         buffer_worker_messages_guard,
     }
 }

@@ -1,4 +1,4 @@
-use crate::data_structures::TransportListenIp;
+use crate::data_structures::{ListenInfo, Protocol};
 use crate::producer::ProducerOptions;
 use crate::router::{Router, RouterOptions};
 use crate::rtp_parameters::{
@@ -6,11 +6,14 @@ use crate::rtp_parameters::{
     RtpParameters,
 };
 use crate::transport::Transport;
-use crate::webrtc_transport::{TransportListenIps, WebRtcTransport, WebRtcTransportOptions};
+use crate::webrtc_transport::{
+    WebRtcTransport, WebRtcTransportListenInfos, WebRtcTransportOptions,
+};
 use crate::worker::WorkerSettings;
 use crate::worker_manager::WorkerManager;
 use futures_lite::future;
 use std::env;
+use std::net::{IpAddr, Ipv4Addr};
 use std::num::{NonZeroU32, NonZeroU8};
 
 fn media_codecs() -> Vec<RtpCodecCapability> {
@@ -64,9 +67,15 @@ async fn init() -> (Router, WebRtcTransport) {
         .expect("Failed to create router");
 
     let transport_options =
-        WebRtcTransportOptions::new(TransportListenIps::new(TransportListenIp {
-            ip: "127.0.0.1".parse().unwrap(),
-            announced_ip: None,
+        WebRtcTransportOptions::new(WebRtcTransportListenInfos::new(ListenInfo {
+            protocol: Protocol::Udp,
+            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            announced_address: None,
+            port: None,
+            port_range: None,
+            flags: None,
+            send_buffer_size: None,
+            recv_buffer_size: None,
         }));
 
     let transport_1 = router
@@ -104,6 +113,6 @@ fn transport_close_event() {
             .expect("Failed to receive transport_close event");
         close_rx.await.expect("Failed to receive close event");
 
-        assert_eq!(audio_producer.closed(), true);
+        assert!(audio_producer.closed());
     });
 }

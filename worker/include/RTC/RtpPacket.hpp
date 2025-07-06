@@ -3,25 +3,19 @@
 
 #include "common.hpp"
 #include "Utils.hpp"
+#include "FBS/rtpPacket.h"
 #include "RTC/Codecs/PayloadDescriptorHandler.hpp"
+#ifdef MS_RTC_LOGGER_RTP
+#include "RTC/RtcLogger.hpp"
+#endif
+#include <flatbuffers/flatbuffers.h>
 #include <absl/container/flat_hash_map.h>
 #include <array>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
-using json = nlohmann::json;
-
 namespace RTC
 {
-	// Max RTP length.
-	constexpr size_t RtpBufferSize{ 65536u };
-	// Max MTU size.
-	constexpr size_t MtuSize{ 1500u };
-	// MID header extension max length (just used when setting/updating MID
-	// extension).
-	constexpr uint8_t MidMaxLength{ 8u };
-
 	class RtpPacket
 	{
 	public:
@@ -120,7 +114,7 @@ namespace RTC
 		{
 			// NOTE: RtcpPacket::IsRtcp() must always be called before this method.
 
-			auto header = const_cast<Header*>(reinterpret_cast<const Header*>(data));
+			auto* header = const_cast<Header*>(reinterpret_cast<const Header*>(data));
 
 			// clang-format off
 			return (
@@ -148,12 +142,11 @@ namespace RTC
 		~RtpPacket();
 
 		void Dump() const;
-
-		void FillJson(json& jsonObject) const;
+		flatbuffers::Offset<FBS::RtpPacket::Dump> FillBuffer(flatbuffers::FlatBufferBuilder& builder) const;
 
 		const uint8_t* GetData() const
 		{
-			return (const uint8_t*)this->header;
+			return reinterpret_cast<const uint8_t*>(this->header);
 		}
 
 		size_t GetSize() const
@@ -218,7 +211,7 @@ namespace RTC
 
 		bool HasHeaderExtension() const
 		{
-			return (this->headerExtension ? true : false);
+			return (this->headerExtension != nullptr);
 		}
 
 		// After calling this method, all the extension ids are reset to 0.
@@ -227,7 +220,9 @@ namespace RTC
 		uint16_t GetHeaderExtensionId() const
 		{
 			if (!this->headerExtension)
+			{
 				return 0u;
+			}
 
 			return uint16_t{ ntohs(this->headerExtension->id) };
 		}
@@ -235,7 +230,9 @@ namespace RTC
 		size_t GetHeaderExtensionLength() const
 		{
 			if (!this->headerExtension)
+			{
 				return 0u;
+			}
 
 			return static_cast<size_t>(ntohs(this->headerExtension->length) * 4);
 		}
@@ -243,7 +240,9 @@ namespace RTC
 		uint8_t* GetHeaderExtensionValue() const
 		{
 			if (!this->headerExtension)
+			{
 				return nullptr;
+			}
 
 			return this->headerExtension->value;
 		}
@@ -304,20 +303,32 @@ namespace RTC
 			this->videoOrientationExtensionId = id;
 		}
 
+		void SetPlayoutDelayExtensionId(uint8_t id)
+		{
+			this->playoutDelayExtensionId = id;
+		}
+
+		void SetDependencyDescriptorExtensionId(uint8_t id)
+		{
+			this->dependencyDescriptorExtensionId = id;
+		}
+
 		bool ReadMid(std::string& mid) const
 		{
 			uint8_t extenLen;
 			uint8_t* extenValue = GetExtension(this->midExtensionId, extenLen);
 
 			if (!extenValue || extenLen == 0u)
+			{
 				return false;
+			}
 
 			mid.assign(reinterpret_cast<const char*>(extenValue), static_cast<size_t>(extenLen));
 
 			return true;
 		}
 
-		bool UpdateMid(const std::string& mid);
+		void UpdateMid(const std::string& mid);
 
 		bool ReadRid(std::string& rid) const
 		{
@@ -350,20 +361,24 @@ namespace RTC
 			uint8_t* extenValue = GetExtension(this->absSendTimeExtensionId, extenLen);
 
 			if (!extenValue || extenLen != 3u)
+			{
 				return false;
+			}
 
 			absSendtime = Utils::Byte::Get3Bytes(extenValue, 0);
 
 			return true;
 		}
 
-		bool UpdateAbsSendTime(uint64_t ms)
+		bool UpdateAbsSendTime(uint64_t ms) const
 		{
 			uint8_t extenLen;
 			uint8_t* extenValue = GetExtension(this->absSendTimeExtensionId, extenLen);
 
 			if (!extenValue || extenLen != 3u)
+			{
 				return false;
+			}
 
 			auto absSendTime = Utils::Time::TimeMsToAbsSendTime(ms);
 
@@ -378,20 +393,24 @@ namespace RTC
 			uint8_t* extenValue = GetExtension(this->transportWideCc01ExtensionId, extenLen);
 
 			if (!extenValue || extenLen != 2u)
+			{
 				return false;
+			}
 
 			wideSeqNumber = Utils::Byte::Get2Bytes(extenValue, 0);
 
 			return true;
 		}
 
-		bool UpdateTransportWideCc01(uint16_t wideSeqNumber)
+		bool UpdateTransportWideCc01(uint16_t wideSeqNumber) const
 		{
 			uint8_t extenLen;
 			uint8_t* extenValue = GetExtension(this->transportWideCc01ExtensionId, extenLen);
 
 			if (!extenValue || extenLen != 2u)
+			{
 				return false;
+			}
 
 			Utils::Byte::Set2Bytes(extenValue, 0, wideSeqNumber);
 
@@ -405,10 +424,14 @@ namespace RTC
 
 			// NOTE: Remove this once framemarking draft becomes RFC.
 			if (!extenValue)
+			{
 				extenValue = GetExtension(this->frameMarking07ExtensionId, extenLen);
+			}
 
 			if (!extenValue || extenLen > 3u)
+			{
 				return false;
+			}
 
 			*frameMarking = reinterpret_cast<RtpPacket::FrameMarking*>(extenValue);
 			length        = extenLen;
@@ -422,10 +445,12 @@ namespace RTC
 			uint8_t* extenValue = GetExtension(this->ssrcAudioLevelExtensionId, extenLen);
 
 			if (!extenValue || extenLen != 1u)
+			{
 				return false;
+			}
 
 			volume = Utils::Byte::Get1Byte(extenValue, 0);
-			voice  = (volume & (1 << 7)) ? true : false;
+			voice  = (volume & (1 << 7)) != 0;
 			volume &= ~(1 << 7);
 
 			return true;
@@ -437,15 +462,17 @@ namespace RTC
 			uint8_t* extenValue = GetExtension(this->videoOrientationExtensionId, extenLen);
 
 			if (!extenValue || extenLen != 1u)
+			{
 				return false;
+			}
 
-			uint8_t cvoByte       = Utils::Byte::Get1Byte(extenValue, 0);
-			uint8_t cameraValue   = ((cvoByte & 0b00001000) >> 3);
-			uint8_t flipValue     = ((cvoByte & 0b00000100) >> 2);
-			uint8_t rotationValue = (cvoByte & 0b00000011);
+			const uint8_t cvoByte       = Utils::Byte::Get1Byte(extenValue, 0);
+			const uint8_t cameraValue   = ((cvoByte & 0b00001000) >> 3);
+			const uint8_t flipValue     = ((cvoByte & 0b00000100) >> 2);
+			const uint8_t rotationValue = (cvoByte & 0b00000011);
 
-			camera = cameraValue ? true : false;
-			flip   = flipValue ? true : false;
+			camera = cameraValue != 0;
+			flip   = flipValue != 0;
 
 			// Using counter clockwise values.
 			switch (rotationValue)
@@ -466,6 +493,43 @@ namespace RTC
 			return true;
 		}
 
+		bool ReadPlayoutDelay(uint16_t& minDelay, uint16_t& maxDelay) const
+		{
+			uint8_t extenLen;
+			uint8_t* extenValue = GetExtension(this->playoutDelayExtensionId, extenLen);
+
+			if (extenLen != 3)
+			{
+				return false;
+			}
+
+			uint32_t v = Utils::Byte::Get3Bytes(extenValue, 0);
+			minDelay   = v >> 12u;
+			maxDelay   = v & 0xFFFu;
+			return true;
+		}
+
+		bool ReadDependencyDescriptor(
+		  std::unique_ptr<RTC::Codecs::DependencyDescriptor>& dependencyDescriptor,
+		  std::unique_ptr<RTC::Codecs::DependencyDescriptor::TemplateDependencyStructure>&
+		    templateDependencyStructure) const
+		{
+			uint8_t extenLen;
+			uint8_t* extenValue = GetExtension(this->dependencyDescriptorExtensionId, extenLen);
+
+			auto* value =
+			  Codecs::DependencyDescriptor::Parse(extenValue, extenLen, templateDependencyStructure);
+
+			if (!value)
+			{
+				return false;
+			}
+
+			dependencyDescriptor.reset(value);
+
+			return true;
+		}
+
 		bool HasExtension(uint8_t id) const
 		{
 			if (id == 0u)
@@ -475,7 +539,9 @@ namespace RTC
 			else if (HasOneByteExtensions())
 			{
 				if (id > 14)
+				{
 					return false;
+				}
 
 				// `-1` because we have 14 elements total 0..13 and `id` is in the range 1..14.
 				return this->oneByteExtensions[id - 1] != nullptr;
@@ -485,15 +551,14 @@ namespace RTC
 				auto it = this->mapTwoBytesExtensions.find(id);
 
 				if (it == this->mapTwoBytesExtensions.end())
+				{
 					return false;
+				}
 
 				auto* extension = it->second;
 
 				// In Two-Byte extensions value length may be zero. If so, return false.
-				if (extension->len == 0u)
-					return false;
-
-				return true;
+				return extension->len != 0u;
 			}
 			else
 			{
@@ -512,13 +577,17 @@ namespace RTC
 			else if (HasOneByteExtensions())
 			{
 				if (id > 14)
+				{
 					return nullptr;
+				}
 
 				// `-1` because we have 14 elements total 0..13 and `id` is in the range 1..14.
 				auto* extension = this->oneByteExtensions[id - 1];
 
 				if (!extension)
+				{
 					return nullptr;
+				}
 
 				// In One-Byte extensions value length 0 means 1.
 				len = extension->len + 1;
@@ -530,7 +599,9 @@ namespace RTC
 				auto it = this->mapTwoBytesExtensions.find(id);
 
 				if (it == this->mapTwoBytesExtensions.end())
+				{
 					return nullptr;
+				}
 
 				auto* extension = it->second;
 
@@ -538,7 +609,9 @@ namespace RTC
 
 				// In Two-Byte extensions value length may be zero. If so, return nullptr.
 				if (extension->len == 0u)
+				{
 					return nullptr;
+				}
 
 				return extension->value;
 			}
@@ -546,6 +619,11 @@ namespace RTC
 			{
 				return nullptr;
 			}
+		}
+
+		uint8_t* GetDependencyDescriptionExtension(uint8_t& len) const
+		{
+			return GetExtension(this->dependencyDescriptorExtensionId, len);
 		}
 
 		bool SetExtensionLength(uint8_t id, uint8_t len);
@@ -570,7 +648,9 @@ namespace RTC
 		uint8_t GetSpatialLayer() const
 		{
 			if (!this->payloadDescriptorHandler)
+			{
 				return 0u;
+			}
 
 			return this->payloadDescriptorHandler->GetSpatialLayer();
 		}
@@ -578,7 +658,9 @@ namespace RTC
 		uint8_t GetTemporalLayer() const
 		{
 			if (!this->payloadDescriptorHandler)
+			{
 				return 0u;
+			}
 
 			return this->payloadDescriptorHandler->GetTemporalLayer();
 		}
@@ -586,12 +668,14 @@ namespace RTC
 		bool IsKeyFrame() const
 		{
 			if (!this->payloadDescriptorHandler)
+			{
 				return false;
+			}
 
 			return this->payloadDescriptorHandler->IsKeyFrame();
 		}
 
-		RtpPacket* Clone(const uint8_t* buffer) const;
+		RtpPacket* Clone() const;
 
 		void RtxEncode(uint8_t payloadType, uint32_t ssrc, uint16_t seq);
 
@@ -602,23 +686,31 @@ namespace RTC
 			this->payloadDescriptorHandler.reset(payloadDescriptorHandler);
 		}
 
-		bool ProcessPayload(RTC::Codecs::EncodingContext* context);
+		bool ProcessPayload(RTC::Codecs::EncodingContext* context, bool& marker);
+
+		std::unique_ptr<Codecs::PayloadDescriptor::Encoder> GetPayloadEncoder();
+
+		void EncodePayload(Codecs::PayloadDescriptor::Encoder* encoder);
 
 		void RestorePayload();
 
 		void ShiftPayload(size_t payloadOffset, size_t shift, bool expand = true);
 
+#ifdef MS_RTC_LOGGER_RTP
+	public:
+		RtcLogger::RtpPacket logger;
+#endif
+
 	private:
 		void ParseExtensions();
 
 	private:
-		// Passed by argument.
 		Header* header{ nullptr };
 		uint8_t* csrcList{ nullptr };
 		HeaderExtension* headerExtension{ nullptr };
 		// There might be up to 14 one-byte header extensions
 		// (https://datatracker.ietf.org/doc/html/rfc5285#section-4.2), use std::array.
-		std::array<OneByteExtension*, 14> oneByteExtensions;
+		std::array<OneByteExtension*, 14> oneByteExtensions{};
 		absl::flat_hash_map<uint8_t, TwoBytesExtension*> mapTwoBytesExtensions;
 		uint8_t midExtensionId{ 0u };
 		uint8_t ridExtensionId{ 0u };
@@ -629,12 +721,17 @@ namespace RTC
 		uint8_t frameMarkingExtensionId{ 0u }; // 字节长度<=3
 		uint8_t ssrcAudioLevelExtensionId{ 0u }; // 1个字节长度, voice(1bit)+volume(7bit)
 		uint8_t videoOrientationExtensionId{ 0u }; // 1个字节长度
+		uint8_t playoutDelayExtensionId{ 0u };
+		uint8_t dependencyDescriptorExtensionId{ 0u };
 		uint8_t* payload{ nullptr };
 		size_t payloadLength{ 0u };
 		uint8_t payloadPadding{ 0u };
 		size_t size{ 0u }; // Full size of the packet in bytes.
 		// Codecs
-		std::unique_ptr<Codecs::PayloadDescriptorHandler> payloadDescriptorHandler;
+		std::shared_ptr<Codecs::PayloadDescriptorHandler> payloadDescriptorHandler;
+		// Buffer where this packet is allocated, can be `nullptr` if packet was
+		// parsed from externally provided buffer.
+		uint8_t* buffer{ nullptr };
 	};
 } // namespace RTC
 

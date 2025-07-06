@@ -1,7 +1,8 @@
 use futures_lite::future;
 use mediasoup::data_structures::AppData;
 use mediasoup::worker::{
-    WorkerDtlsFiles, WorkerLogLevel, WorkerLogTag, WorkerSettings, WorkerUpdateSettings,
+    ChannelMessageHandlers, WorkerDtlsFiles, WorkerLogLevel, WorkerLogTag, WorkerSettings,
+    WorkerUpdateSettings,
 };
 use mediasoup::worker_manager::WorkerManager;
 use std::{env, io};
@@ -41,11 +42,13 @@ fn create_worker_succeeds() {
 
                 settings.log_level = WorkerLogLevel::Debug;
                 settings.log_tags = vec![WorkerLogTag::Info];
-                settings.rtc_ports_range = 0..=9999;
+                settings.rtc_port_range = 0..=9999;
                 settings.dtls_files = Some(WorkerDtlsFiles {
                     certificate: "tests/integration/data/dtls-cert.pem".into(),
                     private_key: "tests/integration/data/dtls-key.pem".into(),
                 });
+                settings.libwebrtc_field_trials =
+                    Some("WebRTC-Bwe-AlrLimitedBackoff/Disabled/".to_string());
                 settings.app_data = AppData::new(CustomAppData { bar: 456 });
 
                 settings
@@ -53,7 +56,7 @@ fn create_worker_succeeds() {
             .await
             .expect("Failed to create worker with custom settings");
 
-        assert_eq!(worker.closed(), false);
+        assert!(!worker.closed());
         assert_eq!(
             worker.app_data().downcast_ref::<CustomAppData>(),
             Some(&CustomAppData { bar: 456 }),
@@ -73,7 +76,11 @@ fn create_worker_wrong_settings() {
                 .create_worker({
                     let mut settings = WorkerSettings::default();
 
-                    settings.rtc_ports_range = 1000..=999;
+                    // Intentionally incorrect range
+                    #[allow(clippy::reversed_empty_ranges)]
+                    {
+                        settings.rtc_port_range = 1000..=999;
+                    }
 
                     settings
                 })
@@ -138,6 +145,14 @@ fn dump_succeeds() {
         let dump = worker.dump().await.expect("Failed to dump worker");
 
         assert_eq!(dump.router_ids, vec![]);
+        assert_eq!(dump.webrtc_server_ids, vec![]);
+        assert_eq!(
+            dump.channel_message_handlers,
+            ChannelMessageHandlers {
+                channel_request_handlers: vec![],
+                channel_notification_handlers: vec![]
+            }
+        );
     });
 }
 

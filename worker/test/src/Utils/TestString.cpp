@@ -1,11 +1,11 @@
 #include "common.hpp"
 #include "Utils.hpp"
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memcmp()
 
 using namespace Utils;
 
-SCENARIO("String::ToLowerCase()")
+SCENARIO("String::ToLowerCase()", "[utils][string]")
 {
 	std::string str;
 
@@ -18,7 +18,7 @@ SCENARIO("String::ToLowerCase()")
 	REQUIRE(str == "foo!œ");
 }
 
-SCENARIO("String::Base64Encode() and String::Base64Decode()")
+SCENARIO("String::Base64Encode() and String::Base64Decode()", "[utils][string]")
 {
 	std::string data;
 	std::string encoded;

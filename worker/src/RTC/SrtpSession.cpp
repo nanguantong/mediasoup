@@ -3,9 +3,13 @@
 
 #include "RTC/SrtpSession.hpp"
 #include "DepLibSRTP.hpp"
+#ifdef MS_LIBURING_SUPPORTED
+#include "DepLibUring.hpp"
+#endif
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
-#include <cstring> // std::memset(), std::memcpy()
+#include <cstring> // std::memset()
+#include <stdexcept>
 
 namespace RTC
 {
@@ -19,12 +23,68 @@ namespace RTC
 	void SrtpSession::ClassInit()
 	{
 		// Set libsrtp event handler.
-		srtp_err_status_t err =
+		const srtp_err_status_t err =
 		  srtp_install_event_handler(static_cast<srtp_event_handler_func_t*>(OnSrtpEvent));
 
 		if (DepLibSRTP::IsError(err))
 		{
 			MS_THROW_ERROR("srtp_install_event_handler() failed: %s", DepLibSRTP::GetErrorString(err));
+		}
+	}
+
+	FBS::SrtpParameters::SrtpCryptoSuite SrtpSession::CryptoSuiteToFbs(CryptoSuite cryptoSuite)
+	{
+		switch (cryptoSuite)
+		{
+			case SrtpSession::CryptoSuite::AEAD_AES_256_GCM:
+			{
+				return FBS::SrtpParameters::SrtpCryptoSuite::AEAD_AES_256_GCM;
+			}
+
+			case SrtpSession::CryptoSuite::AEAD_AES_128_GCM:
+			{
+				return FBS::SrtpParameters::SrtpCryptoSuite::AEAD_AES_128_GCM;
+			}
+
+			case SrtpSession::CryptoSuite::AES_CM_128_HMAC_SHA1_80:
+			{
+				return FBS::SrtpParameters::SrtpCryptoSuite::AES_CM_128_HMAC_SHA1_80;
+			}
+
+			case SrtpSession::CryptoSuite::AES_CM_128_HMAC_SHA1_32:
+			{
+				return FBS::SrtpParameters::SrtpCryptoSuite::AES_CM_128_HMAC_SHA1_32;
+			}
+
+				NO_DEFAULT_GCC();
+		}
+	}
+
+	SrtpSession::CryptoSuite SrtpSession::CryptoSuiteFromFbs(FBS::SrtpParameters::SrtpCryptoSuite cryptoSuite)
+	{
+		switch (cryptoSuite)
+		{
+			case FBS::SrtpParameters::SrtpCryptoSuite::AEAD_AES_256_GCM:
+			{
+				return SrtpSession::CryptoSuite::AEAD_AES_256_GCM;
+			}
+
+			case FBS::SrtpParameters::SrtpCryptoSuite::AEAD_AES_128_GCM:
+			{
+				return SrtpSession::CryptoSuite::AEAD_AES_128_GCM;
+			}
+
+			case FBS::SrtpParameters::SrtpCryptoSuite::AES_CM_128_HMAC_SHA1_80:
+			{
+				return SrtpSession::CryptoSuite::AES_CM_128_HMAC_SHA1_80;
+			}
+
+			case FBS::SrtpParameters::SrtpCryptoSuite::AES_CM_128_HMAC_SHA1_32:
+			{
+				return SrtpSession::CryptoSuite::AES_CM_128_HMAC_SHA1_32;
+			}
+
+				NO_DEFAULT_GCC();
 		}
 	}
 
@@ -35,20 +95,32 @@ namespace RTC
 		switch (data->event)
 		{
 			case event_ssrc_collision:
+			{
 				MS_WARN_TAG(srtp, "SSRC collision occurred");
+
 				break;
+			}
 
 			case event_key_soft_limit:
+			{
 				MS_WARN_TAG(srtp, "stream reached the soft key usage limit and will expire soon");
+
 				break;
+			}
 
 			case event_key_hard_limit:
+			{
 				MS_WARN_TAG(srtp, "stream reached the hard key usage limit and has expired");
+
 				break;
+			}
 
 			case event_packet_index_limit:
+			{
 				MS_WARN_TAG(srtp, "stream reached the hard packet limit (2^48 packets)");
+
 				break;
+			}
 		}
 	}
 
@@ -65,6 +137,22 @@ namespace RTC
 
 		switch (cryptoSuite)
 		{
+			case CryptoSuite::AEAD_AES_256_GCM:
+			{
+				srtp_crypto_policy_set_aes_gcm_256_16_auth(&policy.rtp);
+				srtp_crypto_policy_set_aes_gcm_256_16_auth(&policy.rtcp);
+
+				break;
+			}
+
+			case CryptoSuite::AEAD_AES_128_GCM:
+			{
+				srtp_crypto_policy_set_aes_gcm_128_16_auth(&policy.rtp);
+				srtp_crypto_policy_set_aes_gcm_128_16_auth(&policy.rtcp);
+
+				break;
+			}
+
 			case CryptoSuite::AES_CM_128_HMAC_SHA1_80:
 			{
 				srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80(&policy.rtp);
@@ -82,22 +170,6 @@ namespace RTC
 				break;
 			}
 
-			case CryptoSuite::AEAD_AES_256_GCM:
-			{
-				srtp_crypto_policy_set_aes_gcm_256_16_auth(&policy.rtp);
-				srtp_crypto_policy_set_aes_gcm_256_16_auth(&policy.rtcp);
-
-				break;
-			}
-
-			case CryptoSuite::AEAD_AES_128_GCM:
-			{
-				srtp_crypto_policy_set_aes_gcm_128_16_auth(&policy.rtp);
-				srtp_crypto_policy_set_aes_gcm_128_16_auth(&policy.rtcp);
-
-				break;
-			}
-
 			default:
 			{
 				MS_ABORT("unknown SRTP crypto suite");
@@ -105,18 +177,23 @@ namespace RTC
 		}
 
 		MS_ASSERT(
-		  (int)keyLen == policy.rtp.cipher_key_len,
-		  "given keyLen does not match policy.rtp.cipher_keyLen");
+		  keyLen == policy.rtp.cipher_key_len, "given keyLen does not match policy.rtp.cipher_keyLen");
 
 		switch (type)
 		{
 			case Type::INBOUND:
+			{
 				policy.ssrc.type = ssrc_any_inbound;
+
 				break;
+			}
 
 			case Type::OUTBOUND:
+			{
 				policy.ssrc.type = ssrc_any_outbound;
+
 				break;
+			}
 		}
 
 		policy.ssrc.value = 0;
@@ -127,10 +204,12 @@ namespace RTC
 		policy.next            = nullptr;
 
 		// Set the SRTP session.
-		srtp_err_status_t err = srtp_create(&this->session, &policy);
+		const srtp_err_status_t err = srtp_create(&this->session, &policy);
 
 		if (DepLibSRTP::IsError(err))
+		{
 			MS_THROW_ERROR("srtp_create() failed: %s", DepLibSRTP::GetErrorString(err));
+		}
 	}
 
 	SrtpSession::~SrtpSession()
@@ -139,28 +218,67 @@ namespace RTC
 
 		if (this->session != nullptr)
 		{
-			srtp_err_status_t err = srtp_dealloc(this->session);
+			const srtp_err_status_t err = srtp_dealloc(this->session);
 
 			if (DepLibSRTP::IsError(err))
-				MS_ABORT("srtp_dealloc() failed: %s", DepLibSRTP::GetErrorString(err));
+			{
+				try
+				{
+					MS_ABORT("srtp_dealloc() failed: %s", DepLibSRTP::GetErrorString(err));
+				}
+				catch (const std::exception& error)
+				{
+					// NOTE: This is to avoid a warning:
+					// '~SrtpSession' has a non-throwing exception specification but can
+					// still throw [-Wexceptions]
+				}
+			}
 		}
 	}
 
-	bool SrtpSession::EncryptRtp(const uint8_t** data, int* len)
+	bool SrtpSession::EncryptRtp(const uint8_t** data, size_t* len)
 	{
 		MS_TRACE();
 
 		// Ensure that the resulting SRTP packet fits into the encrypt buffer.
-		if (static_cast<size_t>(*len) + SRTP_MAX_TRAILER_LEN > EncryptBufferSize)
+		if (*len + SRTP_MAX_TRAILER_LEN > EncryptBufferSize)
 		{
-			MS_WARN_TAG(srtp, "cannot encrypt RTP packet, size too big (%i bytes)", *len);
+			MS_WARN_TAG(srtp, "cannot encrypt RTP packet, size too big (%zu bytes)", *len);
 
 			return false;
 		}
 
-		std::memcpy(EncryptBuffer, *data, *len);
+		uint8_t* encryptBuffer = EncryptBuffer;
+		size_t encryptLen      = EncryptBufferSize;
 
-		srtp_err_status_t err = srtp_protect(this->session, static_cast<void*>(EncryptBuffer), len);
+#ifdef MS_LIBURING_SUPPORTED
+		if (DepLibUring::IsEnabled())
+		{
+			if (!DepLibUring::IsActive())
+			{
+				goto protect;
+			}
+
+			// Use a preallocated buffer, if available.
+			auto* sendBuffer = DepLibUring::GetSendBuffer();
+
+			if (sendBuffer)
+			{
+				encryptBuffer = sendBuffer;
+				encryptLen    = DepLibUring::SendBufferSize;
+			}
+		}
+
+	protect:
+#endif
+
+		const srtp_err_status_t err = srtp_protect(
+		  /*srtp_t ctx*/ this->session,
+		  /*const uint8_t* rtp*/ *data,
+		  /*size_t rtp_len*/ *len,
+		  /*uint8_t* srtp*/ encryptBuffer,
+		  /*size_t* srtp_len*/ std::addressof(encryptLen),
+		  /*size_t mki_index*/ 0);
 
 		if (DepLibSRTP::IsError(err))
 		{
@@ -169,17 +287,25 @@ namespace RTC
 			return false;
 		}
 
-		// Update the given data pointer.
-		*data = (const uint8_t*)EncryptBuffer;
+		// Update the given data pointer and len.
+		*data = const_cast<const uint8_t*>(encryptBuffer);
+		*len  = encryptLen;
 
 		return true;
 	}
 
-	bool SrtpSession::DecryptSrtp(uint8_t* data, int* len)
+	bool SrtpSession::DecryptSrtp(uint8_t* data, size_t* len)
 	{
 		MS_TRACE();
 
-		srtp_err_status_t err = srtp_unprotect(this->session, static_cast<void*>(data), len);
+		size_t decryptLen = *len;
+
+		const srtp_err_status_t err = srtp_unprotect(
+		  /*srtp_t ctx*/ this->session,
+		  /*const uint8_t* srtp*/ data,
+		  /*size_t srtp_len*/ *len,
+		  /*uint8_t* rtp*/ data,
+		  /*size_t* rtp_len*/ std::addressof(decryptLen));
 
 		if (DepLibSRTP::IsError(err))
 		{
@@ -188,24 +314,34 @@ namespace RTC
 			return false;
 		}
 
+		// Update the given len.
+		*len = decryptLen;
+
 		return true;
 	}
 
-	bool SrtpSession::EncryptRtcp(const uint8_t** data, int* len)
+	bool SrtpSession::EncryptRtcp(const uint8_t** data, size_t* len)
 	{
 		MS_TRACE();
 
 		// Ensure that the resulting SRTCP packet fits into the encrypt buffer.
-		if (static_cast<size_t>(*len) + SRTP_MAX_TRAILER_LEN > EncryptBufferSize)
+		if (*len + SRTP_MAX_TRAILER_LEN > EncryptBufferSize)
 		{
-			MS_WARN_TAG(srtp, "cannot encrypt RTCP packet, size too big (%i bytes)", *len);
+			MS_WARN_TAG(srtp, "cannot encrypt RTCP packet, size too big (%zu bytes)", *len);
 
 			return false;
 		}
 
-		std::memcpy(EncryptBuffer, *data, *len);
+		uint8_t* encryptBuffer = EncryptBuffer;
+		size_t encryptLen      = EncryptBufferSize;
 
-		srtp_err_status_t err = srtp_protect_rtcp(this->session, static_cast<void*>(EncryptBuffer), len);
+		const srtp_err_status_t err = srtp_protect_rtcp(
+		  /*srtp_t ctx*/ this->session,
+		  /*const uint8_t* rtcp*/ *data,
+		  /*size_t rtcp_len*/ *len,
+		  /*uint8_t* srtcp*/ encryptBuffer,
+		  /*size_t* srtcp_len*/ std::addressof(encryptLen),
+		  /*size_t mki_index*/ 0);
 
 		if (DepLibSRTP::IsError(err))
 		{
@@ -214,17 +350,25 @@ namespace RTC
 			return false;
 		}
 
-		// Update the given data pointer.
+		// Update the given data pointer and len.
 		*data = (const uint8_t*)EncryptBuffer;
+		*len  = encryptLen;
 
 		return true;
 	}
 
-	bool SrtpSession::DecryptSrtcp(uint8_t* data, int* len)
+	bool SrtpSession::DecryptSrtcp(uint8_t* data, size_t* len)
 	{
 		MS_TRACE();
 
-		srtp_err_status_t err = srtp_unprotect_rtcp(this->session, static_cast<void*>(data), len);
+		size_t decryptLen = *len;
+
+		const srtp_err_status_t err = srtp_unprotect_rtcp(
+		  /*srtp_t ctx*/ this->session,
+		  /*const uint8_t* srtcp*/ data,
+		  /*size_t srtcp_len*/ *len,
+		  /*uint8_t* rtcp*/ data,
+		  /*size_t* rtcp_len*/ std::addressof(decryptLen));
 
 		if (DepLibSRTP::IsError(err))
 		{
@@ -232,6 +376,9 @@ namespace RTC
 
 			return false;
 		}
+
+		// Update the given len.
+		*len = decryptLen;
 
 		return true;
 	}
