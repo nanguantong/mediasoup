@@ -123,20 +123,20 @@ namespace RTC
 		RTC::Shared* shared{ nullptr };
 		Listener* listener{ nullptr };
 		// Allocated by this.
-		// Table of transportId / Transport pairs.
+		// nanuns add: Table of transportId / Transport pairs.
 		absl::flat_hash_map<std::string, RTC::Transport*> mapTransports;
-		// Table of rtpObserverId / RtpObserver pairs.
+		// nanuns add: Table of rtpObserverId / RtpObserver pairs.
 		absl::flat_hash_map<std::string, RTC::RtpObserver*> mapRtpObservers;
 		// Others.
 		absl::flat_hash_map<RTC::Producer*, absl::flat_hash_set<RTC::Consumer*>> mapProducerConsumers;
 		absl::flat_hash_map<RTC::Consumer*, RTC::Producer*> mapConsumerProducer;
 		absl::flat_hash_map<RTC::Producer*, absl::flat_hash_set<RTC::RtpObserver*>> mapProducerRtpObservers;
-		// Table of producerId / Producer pairs.
+		// nanuns add: Table of producerId / Producer pairs.
 		absl::flat_hash_map<std::string, RTC::Producer*> mapProducers;
 		absl::flat_hash_map<RTC::DataProducer*, absl::flat_hash_set<RTC::DataConsumer*>>
 		  mapDataProducerDataConsumers;
 		absl::flat_hash_map<RTC::DataConsumer*, RTC::DataProducer*> mapDataConsumerDataProducer;
-		// Table of dataProducerId / DataProducer pairs.
+		// nanuns add: Table of dataProducerId / DataProducer pairs.
 		absl::flat_hash_map<std::string, RTC::DataProducer*> mapDataProducers;
 	};
 } // namespace RTC

@@ -970,7 +970,7 @@ namespace RTC
 			// Clear the One-Byte extension elements map.
 			std::fill(std::begin(this->oneByteExtensions), std::end(this->oneByteExtensions), nullptr);
 
-			// 跳过id和len的4个字节
+			// nanuns add: 跳过id和len的4个字节
 			uint8_t* extensionStart = reinterpret_cast<uint8_t*>(this->headerExtension) + 4;
 			uint8_t* extensionEnd   = extensionStart + GetHeaderExtensionLength();
 			uint8_t* ptr            = extensionStart;
@@ -1023,7 +1023,7 @@ namespace RTC
 			// Clear the Two-Bytes extension elements map.
 			this->mapTwoBytesExtensions.clear();
 
-			// 跳过id和len的4个字节
+			// nanuns add: 跳过id和len的4个字节
 			uint8_t* extensionStart = reinterpret_cast<uint8_t*>(this->headerExtension) + 4;
 			uint8_t* extensionEnd   = extensionStart + GetHeaderExtensionLength();
 			uint8_t* ptr            = extensionStart;

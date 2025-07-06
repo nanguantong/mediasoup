@@ -437,7 +437,7 @@ namespace RTC
 		  this->paused);
 	}
 
-	// 填充所有的 RtpStreamRecv stats
+	// nanuns add: 填充所有的 RtpStreamRecv stats
 	flatbuffers::Offset<FBS::Producer::GetStatsResponse> Producer::FillBufferStats(
 	  flatbuffers::FlatBufferBuilder& builder)
 	{
@@ -503,7 +503,7 @@ namespace RTC
 
 				MS_DEBUG_DEV("Producer paused [producerId:%s]", this->id.c_str());
 
-				// 通知 router 暂停
+				// nanuns add: 通知 router 暂停
 				this->listener->OnProducerPaused(this);
 
 				request->Accept();
@@ -1593,6 +1593,7 @@ namespace RTC
 	}
 
 	/**
+	 * nanuns add: 
 	 * score:
 	 * [{
 	 *   "encodingIdx":,   // mandatory, uint32_t
@@ -1633,6 +1634,7 @@ namespace RTC
 	}
 
 	/**
+	 * nanuns add: 
 	 * trace:
 	 * {
 	 *   "type":,         // mandatory, string, "keyframe" / "rtp"
@@ -1682,6 +1684,7 @@ namespace RTC
 	}
 
 	/**
+	 * nanuns add: 
 	 * trace:
 	 * {
 	 *   "type":,         // mandatory, string, "pli"
@@ -1716,6 +1719,7 @@ namespace RTC
 	}
 
 	/**
+	 * nanuns add: 
 	 * trace:
 	 * {
 	 *   "type":,         // mandatory, string, "fir"
@@ -1750,6 +1754,7 @@ namespace RTC
 	}
 
 	/**
+	 * nanuns add: 
 	 * trace:
 	 * {
 	 *   "type":,         // mandatory, string, "nack"

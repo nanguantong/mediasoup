@@ -59,8 +59,8 @@ namespace RTC
 			uint8_t len : 4;
 			uint8_t id : 4;
 #elif defined(MS_BIG_ENDIAN)
-			uint8_t id : 4;  // (0, 14]
-			uint8_t len : 4; // (0, 16]
+			uint8_t id : 4;  // nanuns add: (0, 14]
+			uint8_t len : 4; // nanuns add: (0, 16]
 #endif
 			uint8_t value[1];
 		};

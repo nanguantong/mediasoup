@@ -56,7 +56,7 @@ private:
 	SignalHandle* signalHandle{ nullptr };
 	RTC::Shared* shared{ nullptr };
 	absl::flat_hash_map<std::string, RTC::WebRtcServer*> mapWebRtcServers;
-	// <routerId, RTC::Router*>
+	// nanuns add: <routerId, RTC::Router*>
 	absl::flat_hash_map<std::string, RTC::Router*> mapRouters;
 	// Others.
 	bool closed{ false };
