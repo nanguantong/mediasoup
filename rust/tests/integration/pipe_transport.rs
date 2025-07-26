@@ -2,7 +2,6 @@ use futures_lite::future;
 use mediasoup::consumer::{ConsumerOptions, ConsumerScore, ConsumerType};
 use mediasoup::data_consumer::{DataConsumerOptions, DataConsumerType};
 use mediasoup::data_producer::{DataProducerOptions, DataProducerType};
-use mediasoup::data_structures::{AppData, ListenInfo, Protocol};
 use mediasoup::pipe_transport::{PipeTransportOptions, PipeTransportRemoteParameters};
 use mediasoup::prelude::*;
 use mediasoup::producer::ProducerOptions;
@@ -10,20 +9,21 @@ use mediasoup::router::{
     PipeDataProducerToRouterPair, PipeProducerToRouterPair, PipeToRouterOptions, Router,
     RouterOptions,
 };
-use mediasoup::rtp_parameters::{
-    MediaKind, MimeTypeAudio, MimeTypeVideo, RtcpFeedback, RtcpParameters, RtpCapabilities,
-    RtpCodecCapability, RtpCodecParameters, RtpCodecParametersParameters, RtpEncodingParameters,
-    RtpHeaderExtension, RtpHeaderExtensionDirection, RtpHeaderExtensionParameters,
-    RtpHeaderExtensionUri, RtpParameters,
-};
-use mediasoup::sctp_parameters::SctpStreamParameters;
-use mediasoup::srtp_parameters::{SrtpCryptoSuite, SrtpParameters};
 use mediasoup::transport::ProduceError;
 use mediasoup::webrtc_transport::{
     WebRtcTransport, WebRtcTransportListenInfos, WebRtcTransportOptions,
 };
 use mediasoup::worker::{RequestError, Worker, WorkerSettings};
 use mediasoup::worker_manager::WorkerManager;
+use mediasoup_types::data_structures::{AppData, ListenInfo, Protocol};
+use mediasoup_types::rtp_parameters::{
+    MediaKind, MimeTypeAudio, MimeTypeVideo, RtcpFeedback, RtcpParameters, RtpCapabilities,
+    RtpCodecCapability, RtpCodecParameters, RtpCodecParametersParameters, RtpEncodingParameters,
+    RtpHeaderExtension, RtpHeaderExtensionDirection, RtpHeaderExtensionParameters,
+    RtpHeaderExtensionUri, RtpParameters,
+};
+use mediasoup_types::sctp_parameters::SctpStreamParameters;
+use mediasoup_types::srtp_parameters::{SrtpCryptoSuite, SrtpParameters};
 use parking_lot::Mutex;
 use portpicker::pick_unused_port;
 use std::env;
@@ -483,17 +483,6 @@ fn pipe_to_router_succeeds_with_video() {
         assert_eq!(
             pipe_consumer.rtp_parameters().header_extensions,
             vec![
-                // NOTE: Remove this once framemarking draft becomes RFC.
-                RtpHeaderExtensionParameters {
-                    uri: RtpHeaderExtensionUri::FrameMarkingDraft07,
-                    id: 6,
-                    encrypt: false,
-                },
-                RtpHeaderExtensionParameters {
-                    uri: RtpHeaderExtensionUri::FrameMarking,
-                    id: 7,
-                    encrypt: false,
-                },
                 RtpHeaderExtensionParameters {
                     uri: RtpHeaderExtensionUri::VideoOrientation,
                     id: 11,
@@ -545,17 +534,6 @@ fn pipe_to_router_succeeds_with_video() {
         assert_eq!(
             pipe_consumer.rtp_parameters().header_extensions,
             vec![
-                // NOTE: Remove this once framemarking draft becomes RFC.
-                RtpHeaderExtensionParameters {
-                    uri: RtpHeaderExtensionUri::FrameMarkingDraft07,
-                    id: 6,
-                    encrypt: false,
-                },
-                RtpHeaderExtensionParameters {
-                    uri: RtpHeaderExtensionUri::FrameMarking,
-                    id: 7,
-                    encrypt: false,
-                },
                 RtpHeaderExtensionParameters {
                     uri: RtpHeaderExtensionUri::VideoOrientation,
                     id: 11,
@@ -747,17 +725,6 @@ fn create_with_enable_rtx_succeeds() {
         assert_eq!(
             pipe_consumer.rtp_parameters().header_extensions,
             vec![
-                // NOTE: Remove this once framemarking draft becomes RFC.
-                RtpHeaderExtensionParameters {
-                    uri: RtpHeaderExtensionUri::FrameMarkingDraft07,
-                    id: 6,
-                    encrypt: false,
-                },
-                RtpHeaderExtensionParameters {
-                    uri: RtpHeaderExtensionUri::FrameMarking,
-                    id: 7,
-                    encrypt: false,
-                },
                 RtpHeaderExtensionParameters {
                     uri: RtpHeaderExtensionUri::VideoOrientation,
                     id: 11,

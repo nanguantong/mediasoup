@@ -2,6 +2,25 @@
 
 ### NEXT
 
+- Worker: Update Meson subprojects ([PR #1582](https://github.com/versatica/mediasoup/pull/1582)).
+
+### 3.16.8
+
+- Node: Fix `PipeConsumerOptions` TypeScript type (make `ConsumerAppData` TS argument optional) ([PR #1581](https://github.com/versatica/mediasoup/pull/1581)).
+
+### 3.16.7
+
+- `Router`: Add `updateMediaCodecs()` method to dynamically change Router's RTP capabilities ([PR #1571](https://github.com/versatica/mediasoup/pull/1571)).
+- `RtpStream`: Update `maxPacketTs` if RTP timestamp moved backwards despite in-order RTP sequence number ([PR #1574](https://github.com/versatica/mediasoup/pull/1574), credits to @oppolixiang).
+- `RtpStream`: Ignore padding only RTP packets in RTP data counters ([PR #1580](https://github.com/versatica/mediasoup/pull/1580), thanks to @quanli168 for reporting the issue).
+
+### 3.16.6
+
+- Remove H265 codec and deprecated frame-marking RTP extension ([PR #1564](https://github.com/versatica/mediasoup/pull/1564)).
+- `SimulcastConsumer`: Fix selecting spatial layer higher than preferred one ([PR #1565](https://github.com/versatica/mediasoup/pull/1565)).
+- Remove H264-SVC codec ([PR #1568](https://github.com/versatica/mediasoup/pull/1568)).
+- `RateCalculator`: Fix crash due to buffer overflow and avoid time overflow ([PR #1570](https://github.com/versatica/mediasoup/pull/1570)).
+
 ### 3.16.5
 
 - `Consumer` classes: Really fix target layer retransmission buffer ([PR #1558](https://github.com/versatica/mediasoup/pull/1558)).
@@ -1308,7 +1327,7 @@ Migrate `npm-scripts.js` to `npm-scripts.mjs` (ES Module) ([PR #1093](https://gi
 
 ### 3.0.5
 
-- Add support for frame-marking RTP extensions and use it to enable temporal layers switching in H264 codec (#305).
+- Add support for frame-marking RTP extension and use it to enable temporal layers switching in H264 codec (#305).
 
 ### 3.0.4
 
