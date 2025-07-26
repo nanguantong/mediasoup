@@ -4,6 +4,7 @@
 #include "RTC/DtlsTransport.hpp"
 #include "RTC/IceCandidate.hpp"
 #include "RTC/IceServer.hpp"
+#include "RTC/Shared.hpp"
 #include "RTC/SrtpSession.hpp"
 #include "RTC/StunPacket.hpp"
 #include "RTC/TcpConnection.hpp"
@@ -22,22 +23,57 @@ namespace RTC
 	                        public RTC::IceServer::Listener,
 	                        public RTC::DtlsTransport::Listener
 	{
-	private:
-		struct ListenIp
+	public:
+		class WebRtcTransportListener
 		{
-			std::string ip;
-			std::string announcedIp;
+		public:
+			virtual ~WebRtcTransportListener() = default;
+
+		public:
+			virtual void OnWebRtcTransportCreated(RTC::WebRtcTransport* webRtcTransport) = 0;
+			virtual void OnWebRtcTransportClosed(RTC::WebRtcTransport* webRtcTransport)  = 0;
+			virtual void OnWebRtcTransportLocalIceUsernameFragmentAdded(
+			  RTC::WebRtcTransport* webRtcTransport, const std::string& usernameFragment) = 0;
+			virtual void OnWebRtcTransportLocalIceUsernameFragmentRemoved(
+			  RTC::WebRtcTransport* webRtcTransport, const std::string& usernameFragment) = 0;
+			virtual void OnWebRtcTransportTransportTupleAdded(
+			  RTC::WebRtcTransport* webRtcTransport, RTC::TransportTuple* tuple) = 0;
+			virtual void OnWebRtcTransportTransportTupleRemoved(
+			  RTC::WebRtcTransport* webRtcTransport, RTC::TransportTuple* tuple) = 0;
 		};
 
 	public:
-		WebRtcTransport(const std::string& id, RTC::Transport::Listener* listener, json& data);
+		WebRtcTransport(
+		  RTC::Shared* shared,
+		  const std::string& id,
+		  RTC::Transport::Listener* listener,
+		  const FBS::WebRtcTransport::WebRtcTransportOptions* options);
+		WebRtcTransport(
+		  RTC::Shared* shared,
+		  const std::string& id,
+		  RTC::Transport::Listener* listener,
+		  WebRtcTransportListener* webRtcTransportListener,
+		  const std::vector<RTC::IceCandidate>& iceCandidates,
+		  const FBS::WebRtcTransport::WebRtcTransportOptions* options);
 		~WebRtcTransport() override;
 
 	public:
-		void FillJson(json& jsonObject) const override;
-		void FillJsonStats(json& jsonArray) override;
+		flatbuffers::Offset<FBS::WebRtcTransport::GetStatsResponse> FillBufferStats(
+		  flatbuffers::FlatBufferBuilder& builder);
+		flatbuffers::Offset<FBS::WebRtcTransport::DumpResponse> FillBuffer(
+		  flatbuffers::FlatBufferBuilder& builder) const;
+		void ProcessStunPacketFromWebRtcServer(RTC::TransportTuple* tuple, RTC::StunPacket* packet);
+		void ProcessNonStunPacketFromWebRtcServer(
+		  RTC::TransportTuple* tuple, const uint8_t* data, size_t len);
+		void RemoveTuple(RTC::TransportTuple* tuple);
+
+		/* Methods inherited from Channel::ChannelSocket::RequestHandler. */
+	public:
 		void HandleRequest(Channel::ChannelRequest* request) override;
-		void HandleNotification(PayloadChannel::Notification* notification) override;
+
+		/* Methods inherited from Channel::ChannelSocket::NotificationHandler. */
+	public:
+		void HandleNotification(Channel::ChannelNotification* notification) override;
 
 	private:
 		bool IsConnected() const override;
@@ -50,9 +86,9 @@ namespace RTC
 		void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) override;
 		void SendMessage(
 		  RTC::DataConsumer* dataConsumer,
-		  uint32_t ppid,
 		  const uint8_t* msg,
 		  size_t len,
+		  uint32_t ppid,
 		  onQueuedCallback* cb = nullptr) override;
 		void SendSctpData(const uint8_t* data, size_t len) override;
 		void RecvStreamClosed(uint32_t ssrc) override;
@@ -83,6 +119,12 @@ namespace RTC
 		  const RTC::IceServer* iceServer,
 		  const RTC::StunPacket* packet,
 		  RTC::TransportTuple* tuple) override;
+		void OnIceServerLocalUsernameFragmentAdded(
+		  const RTC::IceServer* iceServer, const std::string& usernameFragment) override;
+		void OnIceServerLocalUsernameFragmentRemoved(
+		  const RTC::IceServer* iceServer, const std::string& usernameFragment) override;
+		void OnIceServerTupleAdded(const RTC::IceServer* iceServer, RTC::TransportTuple* tuple) override;
+		void OnIceServerTupleRemoved(const RTC::IceServer* iceServer, RTC::TransportTuple* tuple) override;
 		void OnIceServerSelectedTuple(const RTC::IceServer* iceServer, RTC::TransportTuple* tuple) override;
 		void OnIceServerConnected(const RTC::IceServer* iceServer) override;
 		void OnIceServerCompleted(const RTC::IceServer* iceServer) override;
@@ -107,16 +149,19 @@ namespace RTC
 		  const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) override;
 
 	private:
+		// Passed by argument.
+		WebRtcTransportListener* webRtcTransportListener{ nullptr };
 		// Allocated by this.
 		RTC::IceServer* iceServer{ nullptr };
-		// Map of UdpSocket/TcpServer and local announced IP (if any).
+		// Map of UdpSocket/TcpServer and local announced address (if any).
 		absl::flat_hash_map<RTC::UdpSocket*, std::string> udpSockets;
 		absl::flat_hash_map<RTC::TcpServer*, std::string> tcpServers;
 		RTC::DtlsTransport* dtlsTransport{ nullptr };
 		RTC::SrtpSession* srtpRecvSession{ nullptr };
 		RTC::SrtpSession* srtpSendSession{ nullptr };
 		// Others.
-		bool connectCalled{ false }; // Whether connect() was succesfully called.
+		// Whether connect() was succesfully called.
+		bool connectCalled{ false };
 		std::vector<RTC::IceCandidate> iceCandidates;
 		RTC::DtlsTransport::Role dtlsRole{ RTC::DtlsTransport::Role::AUTO };
 	};

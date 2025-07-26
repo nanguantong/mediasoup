@@ -1,8 +1,8 @@
 use futures_lite::future;
 use hash_hasher::HashedSet;
-use mediasoup::data_structures::{
-    AppData, SctpState, TransportListenIp, TransportProtocol, TransportTuple,
-};
+#[cfg(not(target_os = "windows"))]
+use mediasoup::data_structures::SocketFlags;
+use mediasoup::data_structures::{AppData, ListenInfo, Protocol, SctpState, TransportTuple};
 use mediasoup::plain_transport::{PlainTransportOptions, PlainTransportRemoteParameters};
 use mediasoup::prelude::*;
 use mediasoup::router::{Router, RouterOptions};
@@ -13,8 +13,9 @@ use mediasoup::sctp_parameters::SctpParameters;
 use mediasoup::srtp_parameters::{SrtpCryptoSuite, SrtpParameters};
 use mediasoup::worker::{RequestError, Worker, WorkerSettings};
 use mediasoup::worker_manager::WorkerManager;
+use portpicker::pick_unused_port;
 use std::env;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::num::{NonZeroU32, NonZeroU8};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -90,11 +91,16 @@ fn create_succeeds() {
         {
             let transport = router
                 .create_plain_transport({
-                    let mut plain_transport_options =
-                        PlainTransportOptions::new(TransportListenIp {
-                            ip: "127.0.0.1".parse().unwrap(),
-                            announced_ip: Some("4.4.4.4".parse().unwrap()),
-                        });
+                    let mut plain_transport_options = PlainTransportOptions::new(ListenInfo {
+                        protocol: Protocol::Udp,
+                        ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        announced_address: Some("4.4.4.4".to_string()),
+                        port: None,
+                        port_range: None,
+                        flags: None,
+                        send_buffer_size: None,
+                        recv_buffer_size: None,
+                    });
                     plain_transport_options.rtcp_mux = false;
 
                     plain_transport_options
@@ -125,11 +131,16 @@ fn create_succeeds() {
 
             let transport1 = router
                 .create_plain_transport({
-                    let mut plain_transport_options =
-                        PlainTransportOptions::new(TransportListenIp {
-                            ip: "127.0.0.1".parse().unwrap(),
-                            announced_ip: Some("9.9.9.1".parse().unwrap()),
-                        });
+                    let mut plain_transport_options = PlainTransportOptions::new(ListenInfo {
+                        protocol: Protocol::Udp,
+                        ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        announced_address: Some("9.9.9.1".to_string()),
+                        port: None,
+                        port_range: None,
+                        flags: None,
+                        send_buffer_size: None,
+                        recv_buffer_size: None,
+                    });
                     plain_transport_options.rtcp_mux = true;
                     plain_transport_options.enable_sctp = true;
                     plain_transport_options.app_data = AppData::new(CustomAppData { foo: "bar" });
@@ -140,7 +151,7 @@ fn create_succeeds() {
                 .expect("Failed to create Plain transport");
 
             assert_eq!(new_transports_count.load(Ordering::SeqCst), 1);
-            assert_eq!(transport1.closed(), false);
+            assert!(!transport1.closed());
             assert_eq!(
                 transport1
                     .app_data()
@@ -155,11 +166,13 @@ fn create_succeeds() {
                 TransportTuple::LocalOnly { .. },
             ));
             if let TransportTuple::LocalOnly {
-                local_ip, protocol, ..
+                local_address,
+                protocol,
+                ..
             } = transport1.tuple()
             {
-                assert_eq!(local_ip, "9.9.9.1".parse::<IpAddr>().unwrap());
-                assert_eq!(protocol, TransportProtocol::Udp);
+                assert_eq!(local_address, "9.9.9.1");
+                assert_eq!(protocol, Protocol::Udp);
             }
             assert_eq!(transport1.rtcp_tuple(), None);
             assert_eq!(
@@ -181,7 +194,7 @@ fn create_succeeds() {
                     .expect("Failed to dump Plain transport");
 
                 assert_eq!(transport_dump.id, transport1.id());
-                assert_eq!(transport_dump.direct, false);
+                assert!(!transport_dump.direct);
                 assert_eq!(transport_dump.producer_ids, vec![]);
                 assert_eq!(transport_dump.consumer_ids, vec![]);
                 assert_eq!(transport_dump.tuple, transport1.tuple());
@@ -192,40 +205,63 @@ fn create_succeeds() {
         }
 
         {
+            let rtcp_port = pick_unused_port().unwrap();
             let transport2 = router
                 .create_plain_transport({
-                    let mut plain_transport_options =
-                        PlainTransportOptions::new(TransportListenIp {
-                            ip: "127.0.0.1".parse().unwrap(),
-                            announced_ip: None,
-                        });
+                    let mut plain_transport_options = PlainTransportOptions::new(ListenInfo {
+                        protocol: Protocol::Udp,
+                        ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        announced_address: None,
+                        port: None,
+                        port_range: None,
+                        flags: None,
+                        send_buffer_size: None,
+                        recv_buffer_size: None,
+                    });
                     plain_transport_options.rtcp_mux = false;
+
+                    plain_transport_options.rtcp_listen_info = Some(ListenInfo {
+                        protocol: Protocol::Udp,
+                        ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        announced_address: None,
+                        port: Some(rtcp_port),
+                        port_range: None,
+                        flags: None,
+                        send_buffer_size: None,
+                        recv_buffer_size: None,
+                    });
 
                     plain_transport_options
                 })
                 .await
                 .expect("Failed to create Plain transport");
 
-            assert_eq!(transport2.closed(), false);
+            assert!(!transport2.closed());
             assert_eq!(transport2.app_data().downcast_ref::<()>().unwrap(), &(),);
             assert!(matches!(
                 transport2.tuple(),
                 TransportTuple::LocalOnly { .. },
             ));
             if let TransportTuple::LocalOnly {
-                local_ip, protocol, ..
+                local_address,
+                protocol,
+                ..
             } = transport2.tuple()
             {
-                assert_eq!(local_ip, "127.0.0.1".parse::<IpAddr>().unwrap());
-                assert_eq!(protocol, TransportProtocol::Udp);
+                assert_eq!(local_address, "127.0.0.1");
+                assert_eq!(protocol, Protocol::Udp);
             }
             assert!(transport2.rtcp_tuple().is_some());
             if let TransportTuple::LocalOnly {
-                local_ip, protocol, ..
+                local_address,
+                local_port,
+                protocol,
+                ..
             } = transport2.rtcp_tuple().unwrap()
             {
-                assert_eq!(local_ip, "127.0.0.1".parse::<IpAddr>().unwrap());
-                assert_eq!(protocol, TransportProtocol::Udp);
+                assert_eq!(local_address, "127.0.0.1");
+                assert_eq!(local_port, rtcp_port);
+                assert_eq!(protocol, Protocol::Udp);
             }
             assert_eq!(transport2.srtp_parameters(), None);
             assert_eq!(transport2.sctp_state(), None);
@@ -237,7 +273,7 @@ fn create_succeeds() {
                     .expect("Failed to dump Plain transport");
 
                 assert_eq!(transport_dump.id, transport2.id());
-                assert_eq!(transport_dump.direct, false);
+                assert!(!transport_dump.direct);
                 assert_eq!(transport_dump.tuple, transport2.tuple());
                 assert_eq!(transport_dump.rtcp_tuple, transport2.rtcp_tuple());
                 assert_eq!(transport_dump.sctp_state, transport2.sctp_state());
@@ -251,20 +287,25 @@ fn create_with_fixed_port_succeeds() {
     future::block_on(async move {
         let (_worker, router) = init().await;
 
+        let port = pick_unused_port().unwrap();
+
         let transport = router
             .create_plain_transport({
-                let mut plain_transport_options = PlainTransportOptions::new(TransportListenIp {
-                    ip: "127.0.0.1".parse().unwrap(),
-                    announced_ip: Some("4.4.4.4".parse().unwrap()),
-                });
-                plain_transport_options.port = Some(60_001);
-
-                plain_transport_options
+                PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
+                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    announced_address: Some("4.4.4.4".to_string()),
+                    port: Some(port),
+                    port_range: None,
+                    flags: None,
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
+                })
             })
             .await
             .expect("Failed to create Plain transport");
 
-        assert_eq!(transport.tuple().local_port(), 60_001);
+        assert_eq!(transport.tuple().local_port(), port);
     });
 }
 
@@ -275,9 +316,15 @@ fn weak() {
 
         let transport = router
             .create_plain_transport({
-                let mut plain_transport_options = PlainTransportOptions::new(TransportListenIp {
-                    ip: "127.0.0.1".parse().unwrap(),
-                    announced_ip: Some("4.4.4.4".parse().unwrap()),
+                let mut plain_transport_options = PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
+                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    announced_address: Some("4.4.4.4".to_string()),
+                    port: None,
+                    port_range: None,
+                    flags: None,
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
                 });
                 plain_transport_options.rtcp_mux = false;
 
@@ -301,11 +348,18 @@ fn create_enable_srtp_succeeds() {
     future::block_on(async move {
         let (_worker, router) = init().await;
 
+        // Use default cryptoSuite: 'AES_CM_128_HMAC_SHA1_80'.
         let transport1 = router
             .create_plain_transport({
-                let mut plain_transport_options = PlainTransportOptions::new(TransportListenIp {
-                    ip: "127.0.0.1".parse().unwrap(),
-                    announced_ip: Some("9.9.9.1".parse().unwrap()),
+                let mut plain_transport_options = PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
+                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    announced_address: Some("9.9.9.1".to_string()),
+                    port: None,
+                    port_range: None,
+                    flags: None,
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
                 });
                 plain_transport_options.enable_srtp = true;
 
@@ -341,8 +395,9 @@ fn create_enable_srtp_succeeds() {
                 port: Some(9999),
                 rtcp_port: None,
                 srtp_parameters: Some(SrtpParameters {
-                    crypto_suite: SrtpCryptoSuite::AesCm128HmacSha132,
-                    key_base64: "ZnQ3eWJraDg0d3ZoYzM5cXN1Y2pnaHU5NWxrZTVv".to_string(),
+                    crypto_suite: SrtpCryptoSuite::AeadAes256Gcm,
+                    key_base64: "YTdjcDBvY2JoMGY5YXNlNDc0eDJsdGgwaWRvNnJsamRrdG16aWVpZHphdHo="
+                        .to_string(),
                 }),
             })
             .await
@@ -350,8 +405,9 @@ fn create_enable_srtp_succeeds() {
 
         assert_eq!(
             transport1.srtp_parameters().unwrap().crypto_suite,
-            SrtpCryptoSuite::AesCm128HmacSha132,
+            SrtpCryptoSuite::AeadAes256Gcm,
         );
+        assert_eq!(transport1.srtp_parameters().unwrap().key_base64.len(), 60);
     });
 }
 
@@ -362,13 +418,123 @@ fn create_non_bindable_ip() {
 
         assert!(matches!(
             router
-                .create_plain_transport(PlainTransportOptions::new(TransportListenIp {
+                .create_plain_transport(PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
                     ip: "8.8.8.8".parse().unwrap(),
-                    announced_ip: None,
+                    announced_address: None,
+                    port: None,
+                    port_range: None,
+                    flags: None,
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
                 }))
                 .await,
             Err(RequestError::Response { .. }),
         ));
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn create_two_transports_binding_to_same_ip_port_with_udp_reuse_port_flag_succeed() {
+    future::block_on(async move {
+        let (_worker, router) = init().await;
+
+        let multicast_ip = "224.0.0.1".parse().unwrap();
+        let port = pick_unused_port().unwrap();
+
+        let transport1 = router
+            .create_plain_transport({
+                PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
+                    ip: multicast_ip,
+                    announced_address: None,
+                    port: Some(port),
+                    port_range: None,
+                    // NOTE: ipv6Only flag will be ignored since ip is IPv4.
+                    flags: Some(SocketFlags {
+                        ipv6_only: true,
+                        udp_reuse_port: true,
+                    }),
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
+                })
+            })
+            .await
+            .expect("Failed to create first Plain transport");
+
+        let transport2 = router
+            .create_plain_transport({
+                PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
+                    ip: multicast_ip,
+                    announced_address: None,
+                    port: Some(port),
+                    port_range: None,
+                    flags: Some(SocketFlags {
+                        ipv6_only: false,
+                        udp_reuse_port: true,
+                    }),
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
+                })
+            })
+            .await
+            .expect("Failed to create second Plain transport");
+
+        assert_eq!(transport1.tuple().local_port(), port);
+        assert_eq!(transport2.tuple().local_port(), port);
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn create_two_transports_binding_to_same_ip_port_without_udp_reuse_port_flag_fails() {
+    future::block_on(async move {
+        let (_worker, router) = init().await;
+
+        let multicast_ip = "224.0.0.1".parse().unwrap();
+        let port = pick_unused_port().unwrap();
+
+        let transport1 = router
+            .create_plain_transport({
+                PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
+                    ip: multicast_ip,
+                    announced_address: None,
+                    port: Some(port),
+                    port_range: None,
+                    flags: Some(SocketFlags {
+                        ipv6_only: false,
+                        udp_reuse_port: false,
+                    }),
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
+                })
+            })
+            .await
+            .expect("Failed to create first Plain transport");
+
+        assert!(matches!(
+            router
+                .create_plain_transport(PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
+                    ip: multicast_ip,
+                    announced_address: None,
+                    port: Some(port),
+                    port_range: None,
+                    flags: Some(SocketFlags {
+                        ipv6_only: false,
+                        udp_reuse_port: false,
+                    }),
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
+                }))
+                .await,
+            Err(RequestError::Response { .. }),
+        ));
+
+        assert_eq!(transport1.tuple().local_port(), port);
     });
 }
 
@@ -379,9 +545,15 @@ fn get_stats_succeeds() {
 
         let transport = router
             .create_plain_transport({
-                let mut plain_transport_options = PlainTransportOptions::new(TransportListenIp {
-                    ip: "127.0.0.1".parse().unwrap(),
-                    announced_ip: Some("4.4.4.4".parse().unwrap()),
+                let mut plain_transport_options = PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
+                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    announced_address: Some("4.4.4.4".to_string()),
+                    port: None,
+                    port_range: None,
+                    flags: None,
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
                 });
                 plain_transport_options.rtcp_mux = false;
 
@@ -413,16 +585,15 @@ fn get_stats_succeeds() {
         assert_eq!(stats[0].probation_send_bitrate, 0);
         assert_eq!(stats[0].rtp_packet_loss_received, None);
         assert_eq!(stats[0].rtp_packet_loss_sent, None);
-        assert!(matches!(
-            stats[0].tuple,
-            Some(TransportTuple::LocalOnly { .. }),
-        ));
+        assert!(matches!(stats[0].tuple, TransportTuple::LocalOnly { .. },));
         if let TransportTuple::LocalOnly {
-            local_ip, protocol, ..
-        } = stats[0].tuple.unwrap()
+            local_address,
+            protocol,
+            ..
+        } = &stats[0].tuple
         {
-            assert_eq!(local_ip, "4.4.4.4".parse::<IpAddr>().unwrap());
-            assert_eq!(protocol, TransportProtocol::Udp);
+            assert_eq!(local_address, "4.4.4.4");
+            assert_eq!(*protocol, Protocol::Udp);
         }
         assert_eq!(stats[0].rtcp_tuple, None);
     });
@@ -435,9 +606,15 @@ fn connect_succeeds() {
 
         let transport = router
             .create_plain_transport({
-                let mut plain_transport_options = PlainTransportOptions::new(TransportListenIp {
-                    ip: "127.0.0.1".parse().unwrap(),
-                    announced_ip: Some("4.4.4.4".parse().unwrap()),
+                let mut plain_transport_options = PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
+                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    announced_address: Some("4.4.4.4".to_string()),
+                    port: None,
+                    port_range: None,
+                    flags: None,
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
                 });
                 plain_transport_options.rtcp_mux = false;
 
@@ -482,7 +659,7 @@ fn connect_succeeds() {
         {
             assert_eq!(remote_ip, "1.2.3.4".parse::<IpAddr>().unwrap());
             assert_eq!(remote_port, 1234);
-            assert_eq!(protocol, TransportProtocol::Udp);
+            assert_eq!(protocol, Protocol::Udp);
         }
         assert!(transport.rtcp_tuple().is_some());
         if let TransportTuple::WithRemote {
@@ -494,7 +671,7 @@ fn connect_succeeds() {
         {
             assert_eq!(remote_ip, "1.2.3.4".parse::<IpAddr>().unwrap());
             assert_eq!(remote_port, 1235);
-            assert_eq!(protocol, TransportProtocol::Udp);
+            assert_eq!(protocol, Protocol::Udp);
         }
     });
 }
@@ -506,9 +683,15 @@ fn connect_wrong_arguments() {
 
         let transport = router
             .create_plain_transport({
-                let mut plain_transport_options = PlainTransportOptions::new(TransportListenIp {
-                    ip: "127.0.0.1".parse().unwrap(),
-                    announced_ip: Some("4.4.4.4".parse().unwrap()),
+                let mut plain_transport_options = PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
+                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    announced_address: Some("4.4.4.4".to_string()),
+                    port: None,
+                    port_range: None,
+                    flags: None,
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
                 });
                 plain_transport_options.rtcp_mux = false;
 
@@ -542,9 +725,15 @@ fn close_event() {
 
         let transport = router
             .create_plain_transport({
-                let mut plain_transport_options = PlainTransportOptions::new(TransportListenIp {
-                    ip: "127.0.0.1".parse().unwrap(),
-                    announced_ip: Some("4.4.4.4".parse().unwrap()),
+                let mut plain_transport_options = PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
+                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    announced_address: Some("4.4.4.4".to_string()),
+                    port: None,
+                    port_range: None,
+                    flags: None,
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
                 });
                 plain_transport_options.rtcp_mux = false;
 

@@ -36,8 +36,10 @@ namespace RTC
 		{ "vp8",             RtpCodecMimeType::Subtype::VP8             },
 		{ "vp9",             RtpCodecMimeType::Subtype::VP9             },
 		{ "h264",            RtpCodecMimeType::Subtype::H264            },
+		{ "h264-svc",        RtpCodecMimeType::Subtype::H264_SVC        },
 		{ "x-h264uc",        RtpCodecMimeType::Subtype::X_H264UC        },
 		{ "h265",            RtpCodecMimeType::Subtype::H265            },
+		{ "av1",             RtpCodecMimeType::Subtype::AV1             },
 		// Complementary codecs:
 		{ "cn",              RtpCodecMimeType::Subtype::CN              },
 		{ "telephone-event", RtpCodecMimeType::Subtype::TELEPHONE_EVENT },
@@ -63,8 +65,10 @@ namespace RTC
 		{ RtpCodecMimeType::Subtype::VP8,             "VP8"             },
 		{ RtpCodecMimeType::Subtype::VP9,             "VP9"             },
 		{ RtpCodecMimeType::Subtype::H264,            "H264"            },
+		{ RtpCodecMimeType::Subtype::H264_SVC,        "H264-SVC"        },
 		{ RtpCodecMimeType::Subtype::X_H264UC,        "X-H264UC"        },
 		{ RtpCodecMimeType::Subtype::H265,            "H265"            },
+		{ RtpCodecMimeType::Subtype::AV1,             "AV1"             },
 		// Complementary codecs:
 		{ RtpCodecMimeType::Subtype::CN,              "CN"              },
 		{ RtpCodecMimeType::Subtype::TELEPHONE_EVENT, "telephone-event" },
@@ -102,7 +106,9 @@ namespace RTC
 			auto it = RtpCodecMimeType::string2Type.find(type);
 
 			if (it == RtpCodecMimeType::string2Type.end())
+			{
 				MS_THROW_TYPE_ERROR("unknown codec MIME type '%s'", type.c_str());
+			}
 
 			this->type = it->second;
 		}
@@ -112,7 +118,9 @@ namespace RTC
 			auto it = RtpCodecMimeType::string2Subtype.find(subtype);
 
 			if (it == RtpCodecMimeType::string2Subtype.end())
+			{
 				MS_THROW_TYPE_ERROR("unknown codec MIME subtype '%s'", subtype.c_str());
+			}
 
 			this->subtype = it->second;
 		}
@@ -125,9 +133,6 @@ namespace RTC
 	void RtpCodecMimeType::UpdateMimeType()
 	{
 		MS_TRACE();
-
-		MS_ASSERT(this->type != Type::UNSET, "type unset");
-		MS_ASSERT(this->subtype != Subtype::UNSET, "subtype unset");
 
 		// Set mimeType.
 		this->mimeType = RtpCodecMimeType::type2String[this->type] + "/" +

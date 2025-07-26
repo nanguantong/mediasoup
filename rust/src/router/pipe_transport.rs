@@ -4,11 +4,8 @@ mod tests;
 use crate::consumer::{Consumer, ConsumerId, ConsumerOptions};
 use crate::data_consumer::{DataConsumer, DataConsumerId, DataConsumerOptions, DataConsumerType};
 use crate::data_producer::{DataProducer, DataProducerId, DataProducerOptions, DataProducerType};
-use crate::data_structures::{AppData, SctpState, TransportListenIp, TransportTuple};
-use crate::messages::{
-    PipeTransportData, TransportCloseRequest, TransportConnectPipeRequest,
-    TransportConnectRequestPipeData, TransportInternal,
-};
+use crate::data_structures::{AppData, ListenInfo, SctpState, TransportTuple};
+use crate::messages::{PipeTransportConnectRequest, PipeTransportData, TransportCloseRequest};
 use crate::producer::{Producer, ProducerId, ProducerOptions};
 use crate::router::transport::{TransportImpl, TransportType};
 use crate::router::Router;
@@ -19,14 +16,16 @@ use crate::transport::{
     RtpListener, SctpListener, Transport, TransportGeneric, TransportId, TransportTraceEventData,
     TransportTraceEventType,
 };
-use crate::worker::{Channel, PayloadChannel, RequestError, SubscriptionHandler};
+use crate::worker::{Channel, NotificationParseError, RequestError, SubscriptionHandler};
 use async_executor::Executor;
 use async_trait::async_trait;
 use event_listener_primitives::{Bag, BagOnce, HandlerId};
 use log::{debug, error};
+use mediasoup_sys::fbs::{notification, pipe_transport, response, transport};
 use nohash_hasher::IntMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::error::Error;
 use std::fmt;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -36,10 +35,8 @@ use std::sync::{Arc, Weak};
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct PipeTransportOptions {
-    /// Listening IP address.
-    pub listen_ip: TransportListenIp,
-    /// Fixed port to listen on instead of selecting automatically from Worker's port range.
-    pub port: Option<u16>,
+    /// Listening info.
+    pub listen_info: ListenInfo,
     /// Create a SCTP association.
     /// Default false.
     pub enable_sctp: bool,
@@ -67,10 +64,9 @@ pub struct PipeTransportOptions {
 impl PipeTransportOptions {
     /// Create Pipe transport options with given listen IP.
     #[must_use]
-    pub fn new(listen_ip: TransportListenIp) -> Self {
+    pub fn new(listen_info: ListenInfo) -> Self {
         Self {
-            listen_ip,
-            port: None,
+            listen_info,
             enable_sctp: false,
             num_sctp_streams: NumSctpStreams::default(),
             max_sctp_message_size: 268_435_456,
@@ -82,7 +78,7 @@ impl PipeTransportOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[doc(hidden)]
 #[non_exhaustive]
@@ -98,15 +94,92 @@ pub struct PipeTransportDump {
     pub data_consumer_ids: Vec<DataConsumerId>,
     pub recv_rtp_header_extensions: RecvRtpHeaderExtensions,
     pub rtp_listener: RtpListener,
-    pub max_message_size: usize,
+    pub max_message_size: u32,
     pub sctp_parameters: Option<SctpParameters>,
     pub sctp_state: Option<SctpState>,
     pub sctp_listener: Option<SctpListener>,
-    pub trace_event_types: String,
+    pub trace_event_types: Vec<TransportTraceEventType>,
     // PipeTransport specific.
-    pub tuple: Option<TransportTuple>,
+    pub tuple: TransportTuple,
     pub rtx: bool,
     pub srtp_parameters: Option<SrtpParameters>,
+}
+
+impl PipeTransportDump {
+    pub(crate) fn from_fbs(
+        dump: pipe_transport::DumpResponse,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        Ok(Self {
+            // Common to all Transports.
+            id: dump.base.id.parse()?,
+            direct: false,
+            producer_ids: dump
+                .base
+                .producer_ids
+                .iter()
+                .map(|producer_id| Ok(producer_id.parse()?))
+                .collect::<Result<_, Box<dyn Error + Send + Sync>>>()?,
+            consumer_ids: dump
+                .base
+                .consumer_ids
+                .iter()
+                .map(|consumer_id| Ok(consumer_id.parse()?))
+                .collect::<Result<_, Box<dyn Error + Send + Sync>>>()?,
+            map_ssrc_consumer_id: dump
+                .base
+                .map_ssrc_consumer_id
+                .iter()
+                .map(|key_value| Ok((key_value.key, key_value.value.parse()?)))
+                .collect::<Result<_, Box<dyn Error + Send + Sync>>>()?,
+            map_rtx_ssrc_consumer_id: dump
+                .base
+                .map_rtx_ssrc_consumer_id
+                .iter()
+                .map(|key_value| Ok((key_value.key, key_value.value.parse()?)))
+                .collect::<Result<_, Box<dyn Error + Send + Sync>>>()?,
+            data_producer_ids: dump
+                .base
+                .data_producer_ids
+                .iter()
+                .map(|data_producer_id| Ok(data_producer_id.parse()?))
+                .collect::<Result<_, Box<dyn Error + Send + Sync>>>()?,
+            data_consumer_ids: dump
+                .base
+                .data_consumer_ids
+                .iter()
+                .map(|data_consumer_id| Ok(data_consumer_id.parse()?))
+                .collect::<Result<_, Box<dyn Error + Send + Sync>>>()?,
+            recv_rtp_header_extensions: RecvRtpHeaderExtensions::from_fbs(
+                dump.base.recv_rtp_header_extensions.as_ref(),
+            ),
+            rtp_listener: RtpListener::from_fbs(dump.base.rtp_listener.as_ref())?,
+            max_message_size: dump.base.max_message_size,
+            sctp_parameters: dump
+                .base
+                .sctp_parameters
+                .as_ref()
+                .map(|parameters| SctpParameters::from_fbs(parameters.as_ref())),
+            sctp_state: dump
+                .base
+                .sctp_state
+                .map(|state| SctpState::from_fbs(&state)),
+            sctp_listener: dump.base.sctp_listener.as_ref().map(|listener| {
+                SctpListener::from_fbs(listener.as_ref()).expect("Error parsing SctpListner")
+            }),
+            trace_event_types: dump
+                .base
+                .trace_event_types
+                .iter()
+                .map(TransportTraceEventType::from_fbs)
+                .collect(),
+            // PipeTransport specific.
+            tuple: TransportTuple::from_fbs(dump.tuple.as_ref()),
+            rtx: dump.rtx,
+            srtp_parameters: dump
+                .srtp_parameters
+                .map(|parameters| SrtpParameters::from_fbs(parameters.as_ref())),
+        })
+    }
 }
 
 /// RTC statistics of the pipe transport.
@@ -120,32 +193,68 @@ pub struct PipeTransportStat {
     pub transport_id: TransportId,
     pub timestamp: u64,
     pub sctp_state: Option<SctpState>,
-    pub bytes_received: usize,
+    pub bytes_received: u64,
     pub recv_bitrate: u32,
-    pub bytes_sent: usize,
+    pub bytes_sent: u64,
     pub send_bitrate: u32,
-    pub rtp_bytes_received: usize,
+    pub rtp_bytes_received: u64,
     pub rtp_recv_bitrate: u32,
-    pub rtp_bytes_sent: usize,
+    pub rtp_bytes_sent: u64,
     pub rtp_send_bitrate: u32,
-    pub rtx_bytes_received: usize,
+    pub rtx_bytes_received: u64,
     pub rtx_recv_bitrate: u32,
-    pub rtx_bytes_sent: usize,
+    pub rtx_bytes_sent: u64,
     pub rtx_send_bitrate: u32,
-    pub probation_bytes_sent: usize,
+    pub probation_bytes_sent: u64,
     pub probation_send_bitrate: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub available_outgoing_bitrate: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub available_incoming_bitrate: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_incoming_bitrate: Option<u32>,
+    pub max_outgoing_bitrate: Option<u32>,
+    pub min_outgoing_bitrate: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rtp_packet_loss_received: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rtp_packet_loss_sent: Option<f64>,
     // PipeTransport specific.
-    pub tuple: Option<TransportTuple>,
+    pub tuple: TransportTuple,
+}
+
+impl PipeTransportStat {
+    pub(crate) fn from_fbs(
+        stats: pipe_transport::GetStatsResponse,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        Ok(Self {
+            transport_id: stats.base.transport_id.parse()?,
+            timestamp: stats.base.timestamp,
+            sctp_state: stats.base.sctp_state.as_ref().map(SctpState::from_fbs),
+            bytes_received: stats.base.bytes_received,
+            recv_bitrate: stats.base.recv_bitrate,
+            bytes_sent: stats.base.bytes_sent,
+            send_bitrate: stats.base.send_bitrate,
+            rtp_bytes_received: stats.base.rtp_bytes_received,
+            rtp_recv_bitrate: stats.base.rtp_recv_bitrate,
+            rtp_bytes_sent: stats.base.rtp_bytes_sent,
+            rtp_send_bitrate: stats.base.rtp_send_bitrate,
+            rtx_bytes_received: stats.base.rtx_bytes_received,
+            rtx_recv_bitrate: stats.base.rtx_recv_bitrate,
+            rtx_bytes_sent: stats.base.rtx_bytes_sent,
+            rtx_send_bitrate: stats.base.rtx_send_bitrate,
+            probation_bytes_sent: stats.base.probation_bytes_sent,
+            probation_send_bitrate: stats.base.probation_send_bitrate,
+            available_outgoing_bitrate: stats.base.available_outgoing_bitrate,
+            available_incoming_bitrate: stats.base.available_incoming_bitrate,
+            max_incoming_bitrate: stats.base.max_incoming_bitrate,
+            max_outgoing_bitrate: stats.base.max_outgoing_bitrate,
+            min_outgoing_bitrate: stats.base.min_outgoing_bitrate,
+            rtp_packet_loss_received: stats.base.rtp_packet_loss_received,
+            rtp_packet_loss_sent: stats.base.rtp_packet_loss_sent,
+            // PlainTransport specific.
+            tuple: TransportTuple::from_fbs(stats.tuple.as_ref()),
+        })
+    }
 }
 
 /// Remote parameters for pipe transport.
@@ -161,6 +270,7 @@ pub struct PipeTransportRemoteParameters {
 }
 
 #[derive(Default)]
+#[allow(clippy::type_complexity)]
 struct Handlers {
     new_producer: Bag<Arc<dyn Fn(&Producer) + Send + Sync>, Producer>,
     new_consumer: Bag<Arc<dyn Fn(&Consumer) + Send + Sync>, Consumer>,
@@ -183,6 +293,39 @@ enum Notification {
     Trace(TransportTraceEventData),
 }
 
+impl Notification {
+    pub(crate) fn from_fbs(
+        notification: notification::NotificationRef<'_>,
+    ) -> Result<Self, NotificationParseError> {
+        match notification.event().unwrap() {
+            notification::Event::TransportSctpStateChange => {
+                let Ok(Some(notification::BodyRef::TransportSctpStateChangeNotification(body))) =
+                    notification.body()
+                else {
+                    panic!("Wrong message from worker: {notification:?}");
+                };
+
+                let sctp_state = SctpState::from_fbs(&body.sctp_state().unwrap());
+
+                Ok(Notification::SctpStateChange { sctp_state })
+            }
+            notification::Event::TransportTrace => {
+                let Ok(Some(notification::BodyRef::TransportTraceNotification(body))) =
+                    notification.body()
+                else {
+                    panic!("Wrong message from worker: {notification:?}");
+                };
+
+                let trace_notification_fbs = transport::TraceNotification::try_from(body).unwrap();
+                let trace_notification = TransportTraceEventData::from_fbs(trace_notification_fbs);
+
+                Ok(Notification::Trace(trace_notification))
+            }
+            _ => Err(NotificationParseError::InvalidEvent),
+        }
+    }
+}
+
 struct Inner {
     id: TransportId,
     next_mid_for_consumers: AtomicUsize,
@@ -190,7 +333,6 @@ struct Inner {
     cname_for_producers: Mutex<Option<String>>,
     executor: Arc<Executor<'static>>,
     channel: Channel,
-    payload_channel: PayloadChannel,
     handlers: Arc<Handlers>,
     data: Arc<PipeTransportData>,
     app_data: AppData,
@@ -198,7 +340,7 @@ struct Inner {
     router: Router,
     closed: AtomicBool,
     // Drop subscription to transport-specific notifications when transport itself is dropped
-    subscription_handler: Mutex<Option<SubscriptionHandler>>,
+    _subscription_handler: Mutex<Option<SubscriptionHandler>>,
     _on_router_close_handler: Mutex<HandlerId>,
 }
 
@@ -217,34 +359,24 @@ impl Inner {
 
             self.handlers.close.call_simple();
 
-            let subscription_handler = self.subscription_handler.lock().take();
-
             if close_request {
                 let channel = self.channel.clone();
+                let router_id = self.router.id();
                 let request = TransportCloseRequest {
-                    internal: TransportInternal {
-                        router_id: self.router.id(),
-                        transport_id: self.id,
-                    },
+                    transport_id: self.id,
                 };
 
                 self.executor
                     .spawn(async move {
-                        if let Err(error) = channel.request(request).await {
-                            error!("transport closing failed on drop: {}", error);
+                        match channel.request(router_id, request).await {
+                            Err(RequestError::ChannelClosed) => {
+                                debug!("transport closing failed on drop: Channel already closed");
+                            }
+                            Err(error) => {
+                                error!("transport closing failed on drop: {}", error);
+                            }
+                            Ok(_) => {}
                         }
-
-                        // Drop from a different thread to avoid deadlock with recursive dropping
-                        // from within another subscription drop.
-                        drop(subscription_handler);
-                    })
-                    .detach();
-            } else {
-                self.executor
-                    .spawn(async move {
-                        // Drop from a different thread to avoid deadlock with recursive dropping
-                        // from within another subscription drop.
-                        drop(subscription_handler);
                     })
                     .detach();
             }
@@ -432,31 +564,33 @@ impl TransportGeneric for PipeTransport {
     async fn dump(&self) -> Result<Self::Dump, RequestError> {
         debug!("dump()");
 
-        serde_json::from_value(self.dump_impl().await?).map_err(|error| {
-            RequestError::FailedToParse {
-                error: error.to_string(),
-            }
-        })
+        let response = self.dump_impl().await?;
+
+        if let response::Body::PipeTransportDumpResponse(data) = response {
+            Ok(PipeTransportDump::from_fbs(*data)
+                .expect("Error parsing dump response: {response:?}"))
+        } else {
+            panic!("Wrong message from worker: {response:?}");
+        }
     }
 
     async fn get_stats(&self) -> Result<Vec<Self::Stat>, RequestError> {
         debug!("get_stats()");
 
-        serde_json::from_value(self.get_stats_impl().await?).map_err(|error| {
-            RequestError::FailedToParse {
-                error: error.to_string(),
-            }
-        })
+        let response = self.get_stats_impl().await?;
+
+        if let response::Body::PipeTransportGetStatsResponse(data) = response {
+            Ok(vec![PipeTransportStat::from_fbs(*data)
+                .expect("Error parsing dump response: {response:?}")])
+        } else {
+            panic!("Wrong message from worker: {response:?}");
+        }
     }
 }
 
 impl TransportImpl for PipeTransport {
     fn channel(&self) -> &Channel {
         &self.inner.channel
-    }
-
-    fn payload_channel(&self) -> &PayloadChannel {
-        &self.inner.payload_channel
     }
 
     fn executor(&self) -> &Arc<Executor<'static>> {
@@ -481,7 +615,6 @@ impl PipeTransport {
         id: TransportId,
         executor: Arc<Executor<'static>>,
         channel: Channel,
-        payload_channel: PayloadChannel,
         data: PipeTransportData,
         app_data: AppData,
         router: Router,
@@ -496,7 +629,7 @@ impl PipeTransport {
             let data = Arc::clone(&data);
 
             channel.subscribe_to_notifications(id.into(), move |notification| {
-                match serde_json::from_slice::<Notification>(notification) {
+                match Notification::from_fbs(notification) {
                     Ok(notification) => match notification {
                         Notification::SctpStateChange { sctp_state } => {
                             data.sctp_state.lock().replace(sctp_state);
@@ -546,13 +679,12 @@ impl PipeTransport {
             cname_for_producers,
             executor,
             channel,
-            payload_channel,
             handlers,
             data,
             app_data,
             router,
             closed: AtomicBool::new(false),
-            subscription_handler: Mutex::new(subscription_handler),
+            _subscription_handler: Mutex::new(subscription_handler),
             _on_router_close_handler: Mutex::new(on_router_close_handler),
         });
 
@@ -571,14 +703,14 @@ impl PipeTransport {
         let response = self
             .inner
             .channel
-            .request(TransportConnectPipeRequest {
-                internal: self.get_internal(),
-                data: TransportConnectRequestPipeData {
+            .request(
+                self.id(),
+                PipeTransportConnectRequest {
                     ip: remote_parameters.ip,
                     port: remote_parameters.port,
                     srtp_parameters: remote_parameters.srtp_parameters,
                 },
-            })
+            )
             .await?;
 
         *self.inner.data.tuple.lock() = response.tuple;
@@ -599,12 +731,12 @@ impl PipeTransport {
     ///
     /// # Notes on usage
     /// * Once the pipe transport is created, `transport.tuple()` will contain information about
-    ///   its `local_ip`, `local_port` and `protocol`.
+    ///   its `local_address`, `local_port` and `protocol`.
     /// * Information about `remote_ip` and `remote_port` will be set after calling `connect()`
     ///   method.
     #[must_use]
     pub fn tuple(&self) -> TransportTuple {
-        *self.inner.data.tuple.lock()
+        self.inner.data.tuple.lock().clone()
     }
 
     /// Local SCTP parameters. Or `None` if SCTP is not enabled.
@@ -652,13 +784,6 @@ impl PipeTransport {
     pub fn downgrade(&self) -> WeakPipeTransport {
         WeakPipeTransport {
             inner: Arc::downgrade(&self.inner),
-        }
-    }
-
-    fn get_internal(&self) -> TransportInternal {
-        TransportInternal {
-            router_id: self.router().id(),
-            transport_id: self.id(),
         }
     }
 }

@@ -9,8 +9,8 @@ namespace RTC
 	{
 		// 0 means no id.
 		uint8_t mid{ 0u };
-		uint8_t rid{ 0u };  // RTP_STREAM_ID
-		uint8_t rrid{ 0u }; // REPAIRED_RTP_STREAM_ID
+		uint8_t rid{ 0u };  // nanuns add: RTP_STREAM_ID
+		uint8_t rrid{ 0u }; // nanuns add: REPAIRED_RTP_STREAM_ID
 		uint8_t absSendTime{ 0u };
 		uint8_t transportWideCc01{ 0u };
 		uint8_t frameMarking07{ 0u }; // NOTE: Remove once RFC.
@@ -19,6 +19,8 @@ namespace RTC
 		uint8_t videoOrientation{ 0u };
 		uint8_t toffset{ 0u };
 		uint8_t absCaptureTime{ 0u };
+		uint8_t playoutDelay{ 0u };
+		uint8_t dependencyDescriptor{ 0u };
 	};
 } // namespace RTC
 

@@ -6,12 +6,12 @@
  * files (.hpp) MUST NOT include Logger.hpp.
  *
  * All the logging macros use the same format as printf(). The XXX_STD() version
- * of a macro logs to stdoud/stderr instead of using the Channel instance.
+ * of a macro logs to stdoud/stderr instead of using the ChannelSocket instance.
  * However some macros such as MS_ABORT() and MS_ASSERT() always log to stderr.
  *
  * If the macro MS_LOG_STD is defined, all the macros log to stdout/stderr.
  *
- * If the macro MS_LOG_FILE_LINE is defied, all the logging macros print more
+ * If the macro MS_LOG_FILE_LINE is defined, all the logging macros print more
  * verbose information, including current file and line.
  *
  * MS_TRACE()
@@ -64,9 +64,17 @@
  * 	 Example:
  * 	   MS_DUMP("foo");
  *
+ * MS_DUMP_CLEAN(indentation, ...)
+ *
+ *   Log always. Useful for Dump() methods in packets. It doesn't print the
+ *   class and method names.
+ *   `indentation` mandatory argument must be 0, 1, 2 or 3, and it affects the
+ *   output by adding indentation at the start of the string.
+ *
  * MS_DUMP_DATA(const uint8_t* data, size_t len)
  *
- *   Logs always. Prints the given data in hexadecimal format (Wireshark friendly).
+ *   Logs always. Prints the given data in hexadecimal format (Wireshark
+ *   friendly).
  *
  * MS_ERROR(...)
  *
@@ -96,8 +104,10 @@
 
 // clang-format off
 
+// NOLINTBEGIN
 #define _MS_TAG_ENABLED(tag) Settings::configuration.logTags.tag
 #define _MS_TAG_ENABLED_2(tag1, tag2) (Settings::configuration.logTags.tag1 || Settings::configuration.logTags.tag2)
+// NOLINTEND
 
 #if !defined(MS_LOG_DEV_LEVEL)
 	#define MS_LOG_DEV_LEVEL 0
@@ -126,20 +136,34 @@
 	((value & 0x02) ? '1' : '0'), \
 	((value & 0x01) ? '1' : '0')
 
+// Usage:
+//   MS_DEBUG_DEV("Leading text "MS_UINT8_TO_BINARY_PATTERN, MS_UINT8_TO_BINARY(value));
+#define MS_UINT8_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
+#define MS_UINT8_TO_BINARY(value) \
+	((value & 0x80) ? '1' : '0'), \
+	((value & 0x40) ? '1' : '0'), \
+	((value & 0x20) ? '1' : '0'), \
+	((value & 0x10) ? '1' : '0'), \
+	((value & 0x08) ? '1' : '0'), \
+	((value & 0x04) ? '1' : '0'), \
+	((value & 0x02) ? '1' : '0'), \
+	((value & 0x01) ? '1' : '0')
+
 class Logger
 {
 public:
 	static void ClassInit(Channel::ChannelSocket* channel);
 
 public:
-	static const uint64_t pid;
+	static const uint64_t Pid;
 	thread_local static Channel::ChannelSocket* channel;
-	static const size_t bufferSize {50000};
+	static const size_t BufferSize {50000};
 	thread_local static char buffer[];
 };
 
 /* Logging macros. */
 
+// NOLINTBEGIN
 #define _MS_LOG_SEPARATOR_CHAR_STD "\n"
 
 #ifdef MS_LOG_FILE_LINE
@@ -152,6 +176,7 @@ public:
 	#define _MS_LOG_STR_DESC _MS_LOG_STR " | "
 	#define _MS_LOG_ARG MS_CLASS, __FUNCTION__
 #endif
+// NOLINTEND
 
 #ifdef MS_LOG_TRACE
 	#define MS_TRACE() \
@@ -159,7 +184,7 @@ public:
 		{ \
 			if (Settings::configuration.logLevel == LogLevel::LOG_DEBUG) \
 			{ \
-				int loggerWritten = std::snprintf(Logger::buffer, Logger::bufferSize, "D(trace) " _MS_LOG_STR, _MS_LOG_ARG); \
+				const int loggerWritten = std::snprintf(Logger::buffer, Logger::BufferSize, "D(trace) " _MS_LOG_STR, _MS_LOG_ARG); \
 				Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(loggerWritten)); \
 			} \
 		} \
@@ -191,7 +216,7 @@ public:
 	{ \
 		if (Settings::configuration.logLevel == LogLevel::LOG_DEBUG && _MS_TAG_ENABLED(tag)) \
 		{ \
-			int loggerWritten = std::snprintf(Logger::buffer, Logger::bufferSize, "D" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
+			const int loggerWritten = std::snprintf(Logger::buffer, Logger::BufferSize, "D" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
 			Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(loggerWritten)); \
 		} \
 	} \
@@ -213,7 +238,7 @@ public:
 	{ \
 		if (Settings::configuration.logLevel >= LogLevel::LOG_WARN && _MS_TAG_ENABLED(tag)) \
 		{ \
-			int loggerWritten = std::snprintf(Logger::buffer, Logger::bufferSize, "W" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
+			const int loggerWritten = std::snprintf(Logger::buffer, Logger::BufferSize, "W" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
 			Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(loggerWritten)); \
 		} \
 	} \
@@ -235,7 +260,7 @@ public:
 	{ \
 		if (Settings::configuration.logLevel == LogLevel::LOG_DEBUG && _MS_TAG_ENABLED_2(tag1, tag2)) \
 		{ \
-			int loggerWritten = std::snprintf(Logger::buffer, Logger::bufferSize, "D" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
+			const int loggerWritten = std::snprintf(Logger::buffer, Logger::BufferSize, "D" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
 			Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(loggerWritten)); \
 		} \
 	} \
@@ -257,7 +282,7 @@ public:
 	{ \
 		if (Settings::configuration.logLevel >= LogLevel::LOG_WARN && _MS_TAG_ENABLED_2(tag1, tag2)) \
 		{ \
-			int loggerWritten = std::snprintf(Logger::buffer, Logger::bufferSize, "W" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
+			const int loggerWritten = std::snprintf(Logger::buffer, Logger::BufferSize, "W" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
 			Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(loggerWritten)); \
 		} \
 	} \
@@ -278,7 +303,7 @@ public:
 	#define MS_DEBUG_DEV(desc, ...) \
 		do \
 		{ \
-			int loggerWritten = std::snprintf(Logger::buffer, Logger::bufferSize, "D" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
+			const int loggerWritten = std::snprintf(Logger::buffer, Logger::BufferSize, "D" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
 			Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(loggerWritten)); \
 		} \
 		while (false)
@@ -300,7 +325,7 @@ public:
 	#define MS_WARN_DEV(desc, ...) \
 		do \
 		{ \
-			int loggerWritten = std::snprintf(Logger::buffer, Logger::bufferSize, "W" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
+			const int loggerWritten = std::snprintf(Logger::buffer, Logger::BufferSize, "W" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
 			Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(loggerWritten)); \
 		} \
 		while (false)
@@ -320,7 +345,7 @@ public:
 #define MS_DUMP(desc, ...) \
 	do \
 	{ \
-		int loggerWritten = std::snprintf(Logger::buffer, Logger::bufferSize, "X" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
+		const int loggerWritten = std::snprintf(Logger::buffer, Logger::BufferSize, "X" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
 		Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(loggerWritten)); \
 	} \
 	while (false)
@@ -333,40 +358,64 @@ public:
 	} \
 	while (false)
 
+#define MS_DUMP_CLEAN(indentation, desc, ...) \
+	do \
+	{ \
+		const char* spaces = (indentation == 1) ? "  " : \
+			((indentation == 2) ? "    " : \
+			((indentation == 3) ? "      " : "")); \
+		const int loggerWritten = std::snprintf(Logger::buffer, Logger::BufferSize, "X%s" desc, spaces, ##__VA_ARGS__); \
+		Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(loggerWritten)); \
+	} \
+	while (false)
+
+#define MS_DUMP_CLEAN_STD(indentation, desc, ...) \
+	do \
+	{ \
+		const char* spaces = (indentation == 1) ? "  " : \
+			((indentation == 2) ? "    " : \
+			((indentation == 3) ? "      " : "")); \
+		std::fprintf(stdout, "%s" desc _MS_LOG_SEPARATOR_CHAR_STD, spaces, ##__VA_ARGS__); \
+		std::fflush(stdout); \
+	} \
+	while (false)
+
 #define MS_DUMP_DATA(data, len) \
 	do \
 	{ \
-		int loggerWritten = std::snprintf(Logger::buffer, Logger::bufferSize, "X(data) " _MS_LOG_STR, _MS_LOG_ARG); \
+		const int loggerWritten = std::snprintf(Logger::buffer, Logger::BufferSize, "X" _MS_LOG_STR, _MS_LOG_ARG); \
 		Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(loggerWritten)); \
 		size_t bufferDataLen{ 0 }; \
 		for (size_t i{0}; i < len; ++i) \
 		{ \
-		  if (i % 8 == 0) \
+		  if (i % 4 == 0) \
 		  { \
 		  	if (bufferDataLen != 0) \
 		  	{ \
 		  		Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(bufferDataLen)); \
 		  		bufferDataLen = 0; \
 		  	} \
-		    int loggerWritten = std::snprintf(Logger::buffer + bufferDataLen, Logger::bufferSize, "X%06X ", static_cast<unsigned int>(i)); \
+		    const int loggerWritten = std::snprintf(Logger::buffer + bufferDataLen, Logger::BufferSize, "X%06X ", static_cast<unsigned int>(i)); \
 		    bufferDataLen += loggerWritten; \
 		  } \
-		  int loggerWritten = std::snprintf(Logger::buffer + bufferDataLen, Logger::bufferSize, "%02X ", static_cast<unsigned char>(data[i])); \
+		  const int loggerWritten = std::snprintf(Logger::buffer + bufferDataLen, Logger::BufferSize, "%02X ", static_cast<unsigned char>(data[i])); \
 		  bufferDataLen += loggerWritten; \
 		} \
 		if (bufferDataLen != 0) \
+		{ \
 			Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(bufferDataLen)); \
+		} \
 	} \
 	while (false)
 
 #define MS_DUMP_DATA_STD(data, len) \
 	do \
 	{ \
-		std::fprintf(stdout, "(data) " _MS_LOG_STR _MS_LOG_SEPARATOR_CHAR_STD, _MS_LOG_ARG); \
+		std::fprintf(stdout, _MS_LOG_STR _MS_LOG_SEPARATOR_CHAR_STD, _MS_LOG_ARG); \
 		size_t bufferDataLen{ 0 }; \
 		for (size_t i{0}; i < len; ++i) \
 		{ \
-		  if (i % 8 == 0) \
+		  if (i % 4 == 0) \
 		  { \
 		  	if (bufferDataLen != 0) \
 		  	{ \
@@ -374,10 +423,10 @@ public:
 		  		std::fprintf(stdout, "%s", Logger::buffer); \
 		  		bufferDataLen = 0; \
 		  	} \
-		    int loggerWritten = std::snprintf(Logger::buffer + bufferDataLen, Logger::bufferSize, "\n%06X ", static_cast<unsigned int>(i)); \
+		    const int loggerWritten = std::snprintf(Logger::buffer + bufferDataLen, Logger::BufferSize, "\n%06X ", static_cast<unsigned int>(i)); \
 		    bufferDataLen += loggerWritten; \
 		  } \
-		  int loggerWritten = std::snprintf(Logger::buffer + bufferDataLen, Logger::bufferSize, "%02X ", static_cast<unsigned char>(data[i])); \
+		  const int loggerWritten = std::snprintf(Logger::buffer + bufferDataLen, Logger::BufferSize, "%02X ", static_cast<unsigned char>(data[i])); \
 		  bufferDataLen += loggerWritten; \
 		} \
 		if (bufferDataLen != 0) \
@@ -394,7 +443,7 @@ public:
 	{ \
 		if (Settings::configuration.logLevel >= LogLevel::LOG_ERROR || MS_LOG_DEV_LEVEL >= 1) \
 		{ \
-			int loggerWritten = std::snprintf(Logger::buffer, Logger::bufferSize, "E" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
+			const int loggerWritten = std::snprintf(Logger::buffer, Logger::BufferSize, "E" _MS_LOG_STR_DESC desc, _MS_LOG_ARG, ##__VA_ARGS__); \
 			Logger::channel->SendLog(Logger::buffer, static_cast<uint32_t>(loggerWritten)); \
 		} \
 	} \
@@ -411,6 +460,7 @@ public:
 	} \
 	while (false)
 
+#ifdef MS_EXECUTABLE
 #define MS_ABORT(desc, ...) \
 	do \
 	{ \
@@ -419,6 +469,18 @@ public:
 		std::abort(); \
 	} \
 	while (false)
+#else
+#define MS_ABORT(desc, ...) \
+	do \
+	{ \
+		std::fprintf(stderr, "(ABORT) " _MS_LOG_STR_DESC desc _MS_LOG_SEPARATOR_CHAR_STD, _MS_LOG_ARG, ##__VA_ARGS__); \
+		std::fflush(stderr); \
+		char abortMessage[Logger::BufferSize]; \
+		std::snprintf(abortMessage, Logger::BufferSize, "(ABORT) " _MS_LOG_STR_DESC desc _MS_LOG_SEPARATOR_CHAR_STD, _MS_LOG_ARG, ##__VA_ARGS__); \
+		throw std::runtime_error(abortMessage); \
+	} \
+	while (false)
+#endif
 
 #define MS_ASSERT(condition, desc, ...) \
 	if (!(condition)) \
@@ -443,6 +505,8 @@ public:
 	#define MS_WARN_DEV MS_WARN_DEV_STD
 	#undef MS_DUMP
 	#define MS_DUMP MS_DUMP_STD
+	#undef MS_DUMP_CLEAN
+	#define MS_DUMP_CLEAN MS_DUMP_CLEAN_STD
 	#undef MS_DUMP_DATA
 	#define MS_DUMP_DATA MS_DUMP_DATA_STD
 	#undef MS_ERROR

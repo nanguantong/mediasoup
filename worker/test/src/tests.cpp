@@ -1,32 +1,46 @@
-#define CATCH_CONFIG_RUNNER
-
 #include "DepLibSRTP.hpp"
 #include "DepLibUV.hpp"
 #include "DepLibWebRTC.hpp"
 #include "DepOpenSSL.hpp"
 #include "DepUsrSCTP.hpp"
-#include "LogLevel.hpp"
 #include "Settings.hpp"
 #include "Utils.hpp"
-#include <catch2/catch.hpp>
+#include <catch2/catch_session.hpp>
 #include <cstdlib> // std::getenv()
+#include <sstream> // std::istringstream()
+#include <string>
+#include <vector>
 
 int main(int argc, char* argv[])
 {
-	LogLevel logLevel{ LogLevel::LOG_NONE };
+	std::string logLevel{ "none" };
+	std::vector<std::string> logTags = { "info" };
+
+	const auto* logLevelPtr = std::getenv("MS_TEST_LOG_LEVEL");
+	const auto* logTagsPtr  = std::getenv("MS_TEST_LOG_TAGS");
 
 	// Get logLevel from ENV variable.
-	if (std::getenv("MS_TEST_LOG_LEVEL"))
+	if (logLevelPtr)
 	{
-		if (std::string(std::getenv("MS_TEST_LOG_LEVEL")) == "debug")
-			logLevel = LogLevel::LOG_DEBUG;
-		else if (std::string(std::getenv("MS_TEST_LOG_LEVEL")) == "warn")
-			logLevel = LogLevel::LOG_WARN;
-		else if (std::string(std::getenv("MS_TEST_LOG_LEVEL")) == "error")
-			logLevel = LogLevel::LOG_ERROR;
+		logLevel = std::string(logLevelPtr);
 	}
 
-	Settings::configuration.logLevel = logLevel;
+	// Get logTags from ENV variable.
+	if (logTagsPtr)
+	{
+		auto logTagsStr = std::string(logTagsPtr);
+		std::istringstream iss(logTagsStr);
+		std::string logTag;
+
+		while (iss >> logTag)
+		{
+			logTags.push_back(logTag);
+		}
+	}
+
+	Settings::SetLogLevel(logLevel);
+	Settings::SetLogTags(logTags);
+	Settings::PrintConfiguration();
 
 	// Initialize static stuff.
 	DepLibUV::ClassInit();
@@ -36,7 +50,9 @@ int main(int argc, char* argv[])
 	DepLibWebRTC::ClassInit();
 	Utils::Crypto::ClassInit();
 
-	int status = Catch::Session().run(argc, argv);
+	Catch::Session session;
+
+	int status = session.run(argc, argv);
 
 	// Free static stuff.
 	DepLibSRTP::ClassDestroy();

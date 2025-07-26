@@ -19,7 +19,11 @@ namespace RTC
 			MS_TRACE();
 
 			if (len < 1)
+			{
+				MS_WARN_DEV("ignoring empty payload");
+
 				return nullptr;
+			}
 
 			std::unique_ptr<PayloadDescriptor> payloadDescriptor(new PayloadDescriptor());
 
@@ -37,14 +41,22 @@ namespace RTC
 			if (payloadDescriptor->i)
 			{
 				if (len < ++offset + 1)
+				{
+					MS_WARN_DEV("ignoring invalid payload (1)");
+
 					return nullptr;
+				}
 
 				byte = data[offset];
 
 				if (byte >> 7 & 0x01)
 				{
 					if (len < ++offset + 1)
+					{
+						MS_WARN_DEV("ignoring invalid payload (2)");
+
 						return nullptr;
+					}
 
 					payloadDescriptor->pictureId = (byte & 0x7F) << 8;
 					payloadDescriptor->pictureId += data[offset];
@@ -62,7 +74,11 @@ namespace RTC
 			if (payloadDescriptor->l)
 			{
 				if (len < ++offset + 1)
+				{
+					MS_WARN_DEV("ignoring invalid payload (3)");
+
 					return nullptr;
+				}
 
 				byte = data[offset];
 
@@ -74,7 +90,11 @@ namespace RTC
 				payloadDescriptor->hasTlIndex           = true;
 
 				if (len < ++offset + 1)
+				{
+					MS_WARN_DEV("ignoring invalid payload (4)");
+
 					return nullptr;
+				}
 
 				// Read TL0PICIDX if flexible mode is unset.
 				if (!payloadDescriptor->f)
@@ -113,7 +133,9 @@ namespace RTC
 			PayloadDescriptor* payloadDescriptor = VP9::Parse(data, len, frameMarking, frameMarkingLen);
 
 			if (!payloadDescriptor)
+			{
 				return;
+			}
 
 			if (payloadDescriptor->isKeyFrame)
 			{
@@ -134,7 +156,7 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			MS_DUMP("<PayloadDescriptor>");
+			MS_DUMP("<VP9::PayloadDescriptor>");
 			MS_DUMP(
 			  "  i:%" PRIu8 "|p:%" PRIu8 "|l:%" PRIu8 "|f:%" PRIu8 "|b:%" PRIu8 "|e:%" PRIu8 "|v:%" PRIu8,
 			  this->i,
@@ -144,20 +166,20 @@ namespace RTC
 			  this->b,
 			  this->e,
 			  this->v);
-			MS_DUMP("  pictureId            : %" PRIu16, this->pictureId);
-			MS_DUMP("  slIndex              : %" PRIu8, this->slIndex);
-			MS_DUMP("  tlIndex              : %" PRIu8, this->tlIndex);
-			MS_DUMP("  tl0PictureIndex      : %" PRIu8, this->tl0PictureIndex);
-			MS_DUMP("  interLayerDependency : %" PRIu8, this->interLayerDependency);
-			MS_DUMP("  switchingUpPoint     : %" PRIu8, this->switchingUpPoint);
-			MS_DUMP("  isKeyFrame           : %s", this->isKeyFrame ? "true" : "false");
-			MS_DUMP("  hasPictureId         : %s", this->hasPictureId ? "true" : "false");
-			MS_DUMP("  hasOneBytePictureId  : %s", this->hasOneBytePictureId ? "true" : "false");
-			MS_DUMP("  hasTwoBytesPictureId : %s", this->hasTwoBytesPictureId ? "true" : "false");
-			MS_DUMP("  hasTl0PictureIndex   : %s", this->hasTl0PictureIndex ? "true" : "false");
-			MS_DUMP("  hasSlIndex           : %s", this->hasSlIndex ? "true" : "false");
-			MS_DUMP("  hasTlIndex           : %s", this->hasTlIndex ? "true" : "false");
-			MS_DUMP("</PayloadDescriptor>");
+			MS_DUMP("  pictureId: %" PRIu16, this->pictureId);
+			MS_DUMP("  slIndex: %" PRIu8, this->slIndex);
+			MS_DUMP("  tlIndex: %" PRIu8, this->tlIndex);
+			MS_DUMP("  tl0PictureIndex: %" PRIu8, this->tl0PictureIndex);
+			MS_DUMP("  interLayerDependency: %" PRIu8, this->interLayerDependency);
+			MS_DUMP("  switchingUpPoint: %" PRIu8, this->switchingUpPoint);
+			MS_DUMP("  isKeyFrame: %s", this->isKeyFrame ? "true" : "false");
+			MS_DUMP("  hasPictureId: %s", this->hasPictureId ? "true" : "false");
+			MS_DUMP("  hasOneBytePictureId: %s", this->hasOneBytePictureId ? "true" : "false");
+			MS_DUMP("  hasTwoBytesPictureId: %s", this->hasTwoBytesPictureId ? "true" : "false");
+			MS_DUMP("  hasTl0PictureIndex: %s", this->hasTl0PictureIndex ? "true" : "false");
+			MS_DUMP("  hasSlIndex: %s", this->hasSlIndex ? "true" : "false");
+			MS_DUMP("  hasTlIndex: %s", this->hasTlIndex ? "true" : "false");
+			MS_DUMP("</VP9::PayloadDescriptor>");
 		}
 
 		VP9::PayloadDescriptorHandler::PayloadDescriptorHandler(VP9::PayloadDescriptor* payloadDescriptor)
@@ -168,7 +190,7 @@ namespace RTC
 		}
 
 		bool VP9::PayloadDescriptorHandler::Process(
-		  RTC::Codecs::EncodingContext* encodingContext, uint8_t* /*data*/, bool& marker)
+		  RTC::Codecs::EncodingContext* encodingContext, RTC::RtpPacket* /*packet*/, bool& marker)
 		{
 			MS_TRACE();
 
@@ -211,43 +233,24 @@ namespace RTC
 			}
 
 			// clang-format off
-			bool isOldPacket = (
+			const bool isOldPacket = (
 				this->payloadDescriptor->hasPictureId &&
-				RTC::SeqManager<uint16_t>::IsSeqLowerThan(
+				RTC::SeqManager<uint16_t, 15>::IsSeqLowerThan(
 					this->payloadDescriptor->pictureId,
 					context->pictureIdManager.GetMaxInput())
 			);
 			// clang-format on
 
-			// Upgrade current spatial layer if needed.
-			if (context->GetTargetSpatialLayer() > context->GetCurrentSpatialLayer())
+			if (!isOldPacket)
 			{
-				if (this->payloadDescriptor->isKeyFrame)
-				{
-					MS_DEBUG_DEV(
-					  "upgrading tmpSpatialLayer from %" PRIu16 " to %" PRIu16 " (packet:%" PRIu8 ":%" PRIu8
-					  ")",
-					  context->GetCurrentSpatialLayer(),
-					  context->GetTargetSpatialLayer(),
-					  packetSpatialLayer,
-					  packetTemporalLayer);
-
-					tmpSpatialLayer  = context->GetTargetSpatialLayer();
-					tmpTemporalLayer = 0; // Just in case.
-				}
-			}
-			// Downgrade current spatial layer if needed.
-			else if (context->GetTargetSpatialLayer() < context->GetCurrentSpatialLayer())
-			{
-				// In K-SVC we must wait for a keyframe.
-				if (context->IsKSvc())
+				// Upgrade current spatial layer if needed.
+				if (context->GetTargetSpatialLayer() > context->GetCurrentSpatialLayer())
 				{
 					if (this->payloadDescriptor->isKeyFrame)
-					// clang-format on
 					{
 						MS_DEBUG_DEV(
-						  "downgrading tmpSpatialLayer from %" PRIu16 " to %" PRIu16 " (packet:%" PRIu8
-						  ":%" PRIu8 ") after keyframe (K-SVC)",
+						  "upgrading tmpSpatialLayer from %" PRIu16 " to %" PRIu16 " (packet:%" PRIu8 ":%" PRIu8
+						  ")",
 						  context->GetCurrentSpatialLayer(),
 						  context->GetTargetSpatialLayer(),
 						  packetSpatialLayer,
@@ -257,38 +260,66 @@ namespace RTC
 						tmpTemporalLayer = 0; // Just in case.
 					}
 				}
-				// In full SVC we do not need a keyframe.
-				else
+				// Downgrade current spatial layer if needed.
+				else if (context->GetTargetSpatialLayer() < context->GetCurrentSpatialLayer())
 				{
-					// clang-format off
-					if (
-						packetSpatialLayer == context->GetTargetSpatialLayer() &&
-						this->payloadDescriptor->e
-					)
-					// clang-format on
+					// In K-SVC we must wait for a keyframe.
+					if (context->IsKSvc())
 					{
-						MS_DEBUG_DEV(
-						  "downgrading tmpSpatialLayer from %" PRIu16 " to %" PRIu16 " (packet:%" PRIu8
-						  ":%" PRIu8 ") without keyframe (full SVC)",
-						  context->GetCurrentSpatialLayer(),
-						  context->GetTargetSpatialLayer(),
-						  packetSpatialLayer,
-						  packetTemporalLayer);
+						if (this->payloadDescriptor->isKeyFrame)
+						// clang-format on
+						{
+							MS_DEBUG_DEV(
+							  "downgrading tmpSpatialLayer from %" PRIu16 " to %" PRIu16 " (packet:%" PRIu8
+							  ":%" PRIu8 ") after keyframe (K-SVC)",
+							  context->GetCurrentSpatialLayer(),
+							  context->GetTargetSpatialLayer(),
+							  packetSpatialLayer,
+							  packetTemporalLayer);
 
-						tmpSpatialLayer  = context->GetTargetSpatialLayer();
-						tmpTemporalLayer = 0; // Just in case.
+							tmpSpatialLayer  = context->GetTargetSpatialLayer();
+							tmpTemporalLayer = 0; // Just in case.
+						}
+					}
+					// In full SVC we do not need a keyframe.
+					else
+					{
+						// clang-format off
+						if (
+							packetSpatialLayer == context->GetTargetSpatialLayer() &&
+							this->payloadDescriptor->e
+						)
+						// clang-format on
+						{
+							MS_DEBUG_DEV(
+							  "downgrading tmpSpatialLayer from %" PRIu16 " to %" PRIu16 " (packet:%" PRIu8
+							  ":%" PRIu8 ") without keyframe (full SVC)",
+							  context->GetCurrentSpatialLayer(),
+							  context->GetTargetSpatialLayer(),
+							  packetSpatialLayer,
+							  packetTemporalLayer);
+
+							tmpSpatialLayer  = context->GetTargetSpatialLayer();
+							tmpTemporalLayer = 0; // Just in case.
+						}
 					}
 				}
 			}
 
-			// Unless old packet filter spatial layers that are either
+			// Filter spatial layers that are either
 			// * higher than current one
 			// * different than the current one when KSVC is enabled and this is not a keyframe
 			// (interframe p bit = 1)
+			uint16_t spatialLayerForPictureId =
+			  isOldPacket ? context->GetSpatialLayerForPictureId(this->payloadDescriptor->pictureId)
+			              : tmpSpatialLayer;
+
+			// clang-format off
 			if (
-			  !isOldPacket &&
-			  (packetSpatialLayer > tmpSpatialLayer ||
-			   (context->IsKSvc() && this->payloadDescriptor->p && packetSpatialLayer != tmpSpatialLayer)))
+				packetSpatialLayer > spatialLayerForPictureId ||
+				(context->IsKSvc() && this->payloadDescriptor->p && packetSpatialLayer != spatialLayerForPictureId)
+			)
+			// clang-format on
 			{
 				return false;
 			}
@@ -342,15 +373,23 @@ namespace RTC
 						tmpTemporalLayer = context->GetTargetTemporalLayer();
 					}
 				}
+			}
 
-				// Filter temporal layers higher than current one.
-				if (packetTemporalLayer > tmpTemporalLayer)
-					return false;
+			// Filter temporal layers higher than current one.
+			uint16_t temporalLayerForPictureId =
+			  isOldPacket ? context->GetTemporalLayerForPictureId(this->payloadDescriptor->pictureId)
+			              : tmpTemporalLayer;
+
+			if (packetTemporalLayer > temporalLayerForPictureId)
+			{
+				return false;
 			}
 
 			// Set marker bit if needed.
 			if (packetSpatialLayer == tmpSpatialLayer && this->payloadDescriptor->e)
+			{
 				marker = true;
+			}
 
 			// Update the pictureId manager.
 			if (this->payloadDescriptor->hasPictureId)
@@ -362,18 +401,17 @@ namespace RTC
 
 			// Update current spatial layer if needed.
 			if (tmpSpatialLayer != context->GetCurrentSpatialLayer())
-				context->SetCurrentSpatialLayer(tmpSpatialLayer);
+			{
+				context->SetCurrentSpatialLayer(tmpSpatialLayer, this->payloadDescriptor->pictureId);
+			}
 
 			// Update current temporal layer if needed.
 			if (tmpTemporalLayer != context->GetCurrentTemporalLayer())
-				context->SetCurrentTemporalLayer(tmpTemporalLayer);
+			{
+				context->SetCurrentTemporalLayer(tmpTemporalLayer, this->payloadDescriptor->pictureId);
+			}
 
 			return true;
-		}
-
-		void VP9::PayloadDescriptorHandler::Restore(uint8_t* /*data*/)
-		{
-			MS_TRACE();
 		}
 	} // namespace Codecs
 } // namespace RTC

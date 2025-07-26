@@ -1,7 +1,7 @@
 #include "common.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 #ifdef _WIN32
 #include <winsock2.h>
@@ -10,9 +10,10 @@
 #include <netinet/in.h> // sockaddr_in, sockaddr_in6
 #include <sys/socket.h> // struct sockaddr, struct sockaddr_storage, AF_INET, AF_INET6
 #endif
+
 using namespace Utils;
 
-SCENARIO("Utils::IP::GetFamily()")
+SCENARIO("Utils::IP::GetFamily()", "[utils][ip]")
 {
 	std::string ip;
 
@@ -71,7 +72,7 @@ SCENARIO("Utils::IP::GetFamily()")
 	REQUIRE(IP::GetFamily(ip) == AF_UNSPEC);
 }
 
-SCENARIO("Utils::IP::NormalizeIp()")
+SCENARIO("Utils::IP::NormalizeIp()", "[utils][ip]")
 {
 	std::string ip;
 
@@ -116,7 +117,7 @@ SCENARIO("Utils::IP::NormalizeIp()")
 	REQUIRE_THROWS_AS(IP::NormalizeIp(ip), MediaSoupTypeError);
 }
 
-SCENARIO("Utils::IP::GetAddressInfo()")
+SCENARIO("Utils::IP::GetAddressInfo()", "[utils][ip]")
 {
 	struct sockaddr_in sin;
 
@@ -126,7 +127,7 @@ SCENARIO("Utils::IP::GetAddressInfo()")
 	sin.sin_port        = htons(10251);
 	sin.sin_addr.s_addr = inet_addr("82.99.219.114");
 
-	auto* addr = reinterpret_cast<const struct sockaddr*>(&sin);
+	const auto* addr = reinterpret_cast<const struct sockaddr*>(&sin);
 	int family;
 	std::string ip;
 	uint16_t port;

@@ -2,29 +2,31 @@
 #define MS_TEST_HELPERS_HPP
 
 #include "common.hpp"
-#include <fstream>
-#include <string>
+#include "RTC/RtpPacket.hpp"
 
 namespace helpers
 {
-	inline bool readBinaryFile(const char* file, uint8_t* buffer, size_t* len)
-	{
-		std::string filePath = "test/" + std::string(file);
-#ifdef _WIN32
-		std::replace(filePath.begin(), filePath.end(), '/', '\\');
-#endif
-		std::ifstream in(filePath, std::ios::ate | std::ios::binary);
+	bool readBinaryFile(const char* file, uint8_t* buffer, size_t* len);
 
-		if (!in)
-			return false;
+	bool addToBuffer(uint8_t* buf, int* size, uint8_t* data, size_t len);
 
-		*len = static_cast<size_t>(in.tellg()) - 1;
-		in.seekg(0, std::ios::beg);
-		in.read(reinterpret_cast<char*>(buffer), *len);
-		in.close();
+	bool readPayloadData(const char* file, int pos, int bytes, uint8_t* payload);
 
-		return true;
-	}
+	bool writeRtpPacket(
+	  const char* file,
+	  uint8_t nalType,
+	  size_t nalLength,
+	  int32_t sid,
+	  int32_t tid,
+	  int32_t isIdr,
+	  int32_t firstSliceId,
+	  int32_t lastSliceId,
+	  uint8_t* payload,
+	  uint8_t* buf,
+	  size_t* len);
+
+	bool areBuffersEqual(const uint8_t* data1, size_t size1, const uint8_t* data2, size_t size2);
+	std::unique_ptr<RTC::RtpPacket> CreateRtpPacket(uint8_t* payload, size_t len);
 } // namespace helpers
 
 #endif

@@ -1,4 +1,4 @@
-use crate::data_structures::TransportListenIp;
+use crate::data_structures::{ListenInfo, Protocol};
 use crate::plain_transport::PlainTransportOptions;
 use crate::router::{Router, RouterOptions};
 use crate::transport::Transport;
@@ -6,6 +6,7 @@ use crate::worker::WorkerSettings;
 use crate::worker_manager::WorkerManager;
 use futures_lite::future;
 use std::env;
+use std::net::{IpAddr, Ipv4Addr};
 
 async fn init() -> Router {
     {
@@ -23,12 +24,10 @@ async fn init() -> Router {
         .await
         .expect("Failed to create worker");
 
-    let router = worker
+    worker
         .create_router(RouterOptions::default())
         .await
-        .expect("Failed to create router");
-
-    router
+        .expect("Failed to create router")
 }
 
 #[test]
@@ -38,9 +37,15 @@ fn router_close_event() {
 
         let transport = router
             .create_plain_transport({
-                let mut plain_transport_options = PlainTransportOptions::new(TransportListenIp {
-                    ip: "127.0.0.1".parse().unwrap(),
-                    announced_ip: Some("4.4.4.4".parse().unwrap()),
+                let mut plain_transport_options = PlainTransportOptions::new(ListenInfo {
+                    protocol: Protocol::Udp,
+                    ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    announced_address: Some("4.4.4.4".to_string()),
+                    port: None,
+                    port_range: None,
+                    flags: None,
+                    send_buffer_size: None,
+                    recv_buffer_size: None,
                 });
                 plain_transport_options.rtcp_mux = false;
 
@@ -66,6 +71,6 @@ fn router_close_event() {
             .expect("Failed to receive router_close event");
         close_rx.await.expect("Failed to receive close event");
 
-        assert_eq!(transport.closed(), true);
+        assert!(transport.closed());
     });
 }

@@ -4,58 +4,59 @@
 #include "common.hpp"
 #include "Channel/ChannelRequest.hpp"
 #include "Channel/ChannelSocket.hpp"
-#include "PayloadChannel/Notification.hpp"
-#include "PayloadChannel/PayloadChannelRequest.hpp"
-#include "PayloadChannel/PayloadChannelSocket.hpp"
+#include "FBS/worker.h"
 #include "RTC/Router.hpp"
-#include "handles/SignalsHandler.hpp"
+#include "RTC/Shared.hpp"
+#include "RTC/WebRtcServer.hpp"
+#include "handles/SignalHandle.hpp"
+#include <flatbuffers/flatbuffer_builder.h>
 #include <absl/container/flat_hash_map.h>
-#include <nlohmann/json.hpp>
 #include <string>
 
-using json = nlohmann::json;
-
 class Worker : public Channel::ChannelSocket::Listener,
-               public PayloadChannel::PayloadChannelSocket::Listener,
-               public SignalsHandler::Listener
+               public SignalHandle::Listener,
+               public RTC::Router::Listener
 {
 public:
-	explicit Worker(Channel::ChannelSocket* channel, PayloadChannel::PayloadChannelSocket* payloadChannel);
+	explicit Worker(Channel::ChannelSocket* channel);
 	~Worker();
 
 private:
 	void Close();
-	void FillJson(json& jsonObject) const;
-	void FillJsonResourceUsage(json& jsonObject) const;
-	void SetNewRouterIdFromInternal(json& internal, std::string& routerId) const;
-	RTC::Router* GetRouterFromInternal(json& internal) const;
+	flatbuffers::Offset<FBS::Worker::DumpResponse> FillBuffer(flatbuffers::FlatBufferBuilder& builder) const;
+	flatbuffers::Offset<FBS::Worker::ResourceUsageResponse> FillBufferResourceUsage(
+	  flatbuffers::FlatBufferBuilder& builder) const;
+	void SetNewRouterId(std::string& routerId) const;
+	RTC::WebRtcServer* GetWebRtcServer(const std::string& webRtcServerId) const;
+	RTC::Router* GetRouter(const std::string& routerId) const;
+	void CheckNoWebRtcServer(const std::string& webRtcServerId) const;
+	void CheckNoRouter(const std::string& routerId) const;
 
-	/* Methods inherited from Channel::lUnixStreamSocket::Listener. */
+	/* Methods inherited from Channel::ChannelSocket::RequestHandler. */
 public:
-	void OnChannelRequest(Channel::ChannelSocket* channel, Channel::ChannelRequest* request) override;
+	void HandleRequest(Channel::ChannelRequest* request) override;
+	void HandleNotification(Channel::ChannelNotification* notification) override;
+
+	/* Methods inherited from Channel::ChannelSocket::Listener. */
+public:
 	void OnChannelClosed(Channel::ChannelSocket* channel) override;
 
-	/* Methods inherited from PayloadChannel::lUnixStreamSocket::Listener. */
+	/* Methods inherited from SignalHandle::Listener. */
 public:
-	void OnPayloadChannelNotification(
-	  PayloadChannel::PayloadChannelSocket* payloadChannel,
-	  PayloadChannel::Notification* notification) override;
-	void OnPayloadChannelRequest(
-	  PayloadChannel::PayloadChannelSocket* payloadChannel,
-	  PayloadChannel::PayloadChannelRequest* request) override;
-	void OnPayloadChannelClosed(PayloadChannel::PayloadChannelSocket* payloadChannel) override;
+	void OnSignal(SignalHandle* signalsHandler, int signum) override;
 
-	/* Methods inherited from SignalsHandler::Listener. */
+	/* Pure virtual methods inherited from RTC::Router::Listener. */
 public:
-	void OnSignal(SignalsHandler* signalsHandler, int signum) override;
+	RTC::WebRtcServer* OnRouterNeedWebRtcServer(RTC::Router* router, std::string& webRtcServerId) override;
 
 private:
 	// Passed by argument.
 	Channel::ChannelSocket* channel{ nullptr };
-	PayloadChannel::PayloadChannelSocket* payloadChannel{ nullptr };
 	// Allocated by this.
-	SignalsHandler* signalsHandler{ nullptr };
-	// <routerId, RTC::Router*>
+	SignalHandle* signalHandle{ nullptr };
+	RTC::Shared* shared{ nullptr };
+	absl::flat_hash_map<std::string, RTC::WebRtcServer*> mapWebRtcServers;
+	// nanuns add: <routerId, RTC::Router*>
 	absl::flat_hash_map<std::string, RTC::Router*> mapRouters;
 	// Others.
 	bool closed{ false };
