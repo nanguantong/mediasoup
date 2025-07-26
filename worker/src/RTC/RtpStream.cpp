@@ -125,8 +125,6 @@ namespace RTC
 		// If this is the first packet seen, initialize stuff.
 		if (!this->started)
 		{
-			uint16_t seq = packet->GetSequenceNumber();
-
 			InitSeq(seq);
 
 			this->started     = true;
