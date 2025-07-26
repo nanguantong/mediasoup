@@ -686,6 +686,7 @@ namespace RTC
 			return ReceiveRtpPacketResult::DISCARDED;
 		}
 
+		// nanuns: 对packet进行预处理：如果是视频，则添加头部扩展 framemarking id
 		// Pre-process the packet.
 		PreProcessRtpPacket(packet);
 
@@ -779,6 +780,7 @@ namespace RTC
 		// May emit 'trace' event.
 		EmitTraceEventRtpAndKeyFrameTypes(packet, isRtx);
 
+		// nanuns: 在将 packet 发布至其订阅者之前，对其进行重设。主要进行 payload type，ssrc，header extension 的处理
 		// Mangle the packet before providing the listener with it.
 		if (!MangleRtpPacket(packet, rtpStream))
 		{
@@ -846,6 +848,7 @@ namespace RTC
 		rtpStream->ReceiveRtcpXrDelaySinceLastRr(ssrcInfo);
 	}
 
+	// nanuns: 生产者生成 RR 包，Producer 作为服务端的生产者，它是用来接收共享者发送的数据流
 	bool Producer::GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs)
 	{
 		MS_TRACE();
@@ -1790,6 +1793,7 @@ namespace RTC
 		EmitScore();
 	}
 
+	// nanuns: called by RtpStreamRecv::RequestKeyFrame(usePli/useFir) or OnNackGeneratorNackRequired
 	inline void Producer::OnRtpStreamSendRtcpPacket(
 	  RTC::RtpStreamRecv* /*rtpStream*/, RTC::RTCP::Packet* packet)
 	{

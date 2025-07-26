@@ -265,6 +265,7 @@ namespace RTC
 		return FBS::RtpStream::CreateStats(builder, FBS::RtpStream::StatsData::RecvStats, stats.Union());
 	}
 
+	// nanuns: 收到生产者的包
 	bool RtpStreamRecv::ReceivePacket(RTC::RtpPacket* packet)
 	{
 		MS_TRACE();
@@ -452,6 +453,7 @@ namespace RTC
 		return false;
 	}
 
+	// nanuns: 生成 RR 包
 	RTC::RTCP::ReceiverReport* RtpStreamRecv::GetRtcpReceiverReport()
 	{
 		MS_TRACE();
@@ -554,6 +556,7 @@ namespace RTC
 		return report;
 	}
 
+	// nanuns: 生成 RR 包
 	RTC::RTCP::ReceiverReport* RtpStreamRecv::GetRtxRtcpReceiverReport()
 	{
 		MS_TRACE();
@@ -566,6 +569,7 @@ namespace RTC
 		return nullptr;
 	}
 
+	// nanuns: 收到了生产者的SR report
 	void RtpStreamRecv::ReceiveRtcpSenderReport(RTC::RTCP::SenderReport* report)
 	{
 		MS_TRACE();
@@ -587,6 +591,7 @@ namespace RTC
 		UpdateScore();
 	}
 
+	// nanuns: 收到了生产者Rtx SR report
 	void RtpStreamRecv::ReceiveRtxRtcpSenderReport(RTC::RTCP::SenderReport* report)
 	{
 		MS_TRACE();
@@ -646,6 +651,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
+		// nanuns: 发送方接收到接收方反馈的PLI或SLI需要重新让编码器生成关键帧并发送给接收端
 		if (this->params.usePli)
 		{
 			MS_DEBUG_2TAGS(rtcp, rtx, "sending PLI [ssrc:%" PRIu32 "]", GetSsrc());
@@ -886,6 +892,7 @@ namespace RTC
 		}
 	}
 
+	// nanuns: 生成 Nack 包并发送给生产者, called by NackGenerator::ReceivePacket
 	inline void RtpStreamRecv::OnNackGeneratorNackRequired(const std::vector<uint16_t>& seqNumbers)
 	{
 		MS_TRACE();

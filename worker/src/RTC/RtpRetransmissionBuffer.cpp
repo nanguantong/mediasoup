@@ -573,6 +573,7 @@ namespace RTC
 
 		const int64_t diffTs = newestTimestamp - timestamp;
 
+		// nanuns: maxRetransmissionDelayMs: 音频1s，视频2s
 		return static_cast<uint32_t>(diffTs * 1000 / this->clockRate) > this->maxRetransmissionDelayMs;
 	}
 

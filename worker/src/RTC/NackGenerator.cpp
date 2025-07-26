@@ -35,7 +35,7 @@ namespace RTC
 		delete this->timer;
 	}
 
-	// nanuns add: isRecovered 代表是否是rtx包, true:是
+	// nanuns: mediasoup 收到生产者的包，生成 Nack 报文并发送给生产者，isRecovered 代表是否是rtx包, true:是
 	// Returns true if this is a found nacked packet. False otherwise.
 	bool NackGenerator::ReceivePacket(RTC::RtpPacket* packet, bool isRecovered)
 	{
@@ -250,12 +250,14 @@ namespace RTC
 			NackInfo& nackInfo = it->second;
 			const uint16_t seq = nackInfo.seq;
 
+			// nanuns: 限制创建后延迟多长时间发送，间隔小于 sendNackDelayMs=10ms (SendNackDelay)
 			if (this->sendNackDelayMs > 0 && nowMs - nackInfo.createdAtMs < this->sendNackDelayMs)
 			{
 				++it;
 				continue;
 			}
 
+			// nanuns: 基于序列号触发（第一次发送），还没发送过，且之前存在的nack包
 			// clang-format off
 			if (
 				filter == NackFilter::SEQ &&
@@ -271,6 +273,7 @@ namespace RTC
 				nackInfo.retries++;
 				nackInfo.sentAtMs = nowMs;
 
+				// nanuns: 超过最大nack次数10，从nackList删除
 				if (nackInfo.retries >= MaxNackRetries)
 				{
 					MS_WARN_TAG(
@@ -289,6 +292,7 @@ namespace RTC
 				continue;
 			}
 
+			// nanuns: 基于时间戳触发，还没发送过，或超过RTT间隔
 			if (
 			  filter == NackFilter::TIME &&
 			  (nackInfo.sentAtMs == 0 ||
@@ -298,6 +302,7 @@ namespace RTC
 				nackInfo.retries++;
 				nackInfo.sentAtMs = nowMs;
 
+				// nanuns: 超过最大nack次数10，从nackList删除
 				if (nackInfo.retries >= MaxNackRetries)
 				{
 					MS_WARN_TAG(

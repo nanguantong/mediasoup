@@ -98,6 +98,7 @@ namespace RTC
 		this->rtxSeq = Utils::Crypto::GetRandomUInt(0u, 0xFFFF);
 	}
 
+	// nanuns: mediasoup 发送包给 Consumer
 	RtpStreamSend::ReceivePacketResult RtpStreamSend::ReceivePacket(
 	  RTC::RtpPacket* packet, const RTC::SharedRtpPacket& sharedPacket)
 	{
@@ -130,6 +131,7 @@ namespace RTC
 		              : ReceivePacketResult::ACCEPTED_AND_NOT_STORED;
 	}
 
+	// nanuns: mediasoup 收到 Consumer 的 Nack 包
 	void RtpStreamSend::ReceiveNack(RTC::RTCP::FeedbackRtpNackPacket* nackPacket)
 	{
 		MS_TRACE();
@@ -273,6 +275,7 @@ namespace RTC
 		}
 	}
 
+	// nanuns: mediasoup 收到 Consumer RR 包
 	void RtpStreamSend::ReceiveRtcpReceiverReport(RTC::RTCP::ReceiverReport* report)
 	{
 		MS_TRACE();
@@ -435,6 +438,7 @@ namespace RTC
 		MS_ABORT("invalid method call");
 	}
 
+	// nanuns: 发送包同时存储包，用于重传
 	bool RtpStreamSend::StorePacket(RTC::RtpPacket* packet, const RTC::SharedRtpPacket& sharedPacket)
 	{
 		MS_TRACE();

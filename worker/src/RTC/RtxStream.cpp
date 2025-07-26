@@ -81,6 +81,7 @@ namespace RTC
 		return true;
 	}
 
+	// nanuns: 生成 RR 包
 	RTC::RTCP::ReceiverReport* RtxStream::GetRtcpReceiverReport()
 	{
 		MS_TRACE();
@@ -155,6 +156,7 @@ namespace RTC
 		return report;
 	}
 
+	// nanuns: 收到了生产者Rtx SR 包
 	void RtxStream::ReceiveRtcpSenderReport(RTC::RTCP::SenderReport* report)
 	{
 		MS_TRACE();

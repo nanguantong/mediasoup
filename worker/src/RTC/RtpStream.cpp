@@ -86,6 +86,7 @@ namespace RTC
 		  builder, FBS::RtpStream::StatsData::BaseStats, baseStats.Union());
 	}
 
+	// nanuns: Producer 或 Consumer 设置 RTX 信息
 	void RtpStream::SetRtx(uint8_t payloadType, uint32_t ssrc)
 	{
 		MS_TRACE();

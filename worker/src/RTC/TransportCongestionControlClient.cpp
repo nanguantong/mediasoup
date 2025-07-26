@@ -22,6 +22,7 @@ namespace RTC
 
 	/* Instance methods. */
 
+	// nanuns: 添加 Consumer 时创建，，作为给 Consumer 的发送端
 	TransportCongestionControlClient::TransportCongestionControlClient(
 	  RTC::TransportCongestionControlClient::Listener* listener,
 	  RTC::BweType bweType,
@@ -151,6 +152,7 @@ namespace RTC
 		return this->rtpTransportControllerSend->packet_sender()->GetPacingInfo();
 	}
 
+	// nanuns: 通过 XXXTransport(UDP/TCP socket) 发送之后回调过来
 	void TransportCongestionControlClient::PacketSent(
 	  const webrtc::RtpPacketSendInfo& packetInfo, int64_t nowMs)
 	{
@@ -166,6 +168,7 @@ namespace RTC
 		this->rtpTransportControllerSend->OnSentPacket(sentPacket, packetInfo.length);
 	}
 
+	// nanuns: REMB
 	void TransportCongestionControlClient::ReceiveEstimatedBitrate(uint32_t bitrate)
 	{
 		MS_TRACE();
@@ -178,6 +181,7 @@ namespace RTC
 		this->rtpTransportControllerSend->OnReceivedEstimatedBitrate(bitrate);
 	}
 
+	// nanuns: 收到 Consumer RR 包
 	void TransportCongestionControlClient::ReceiveRtcpReceiverReport(
 	  RTC::RTCP::ReceiverReportPacket* packet, float rtt, int64_t nowMs)
 	{
@@ -209,6 +213,7 @@ namespace RTC
 		  reportBlockList, static_cast<int64_t>(rtt), nowMs);
 	}
 
+	// nanuns: 收到 Consumer TCC 包
 	void TransportCongestionControlClient::ReceiveRtcpTransportFeedback(
 	  const RTC::RTCP::FeedbackRtpTransportPacket* feedback)
 	{

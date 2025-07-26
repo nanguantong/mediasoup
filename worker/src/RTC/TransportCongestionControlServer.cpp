@@ -20,6 +20,7 @@ namespace RTC
 
 	/* Instance methods. */
 
+	// nanuns: 添加 Producer 时创建，作为 Producer 的接收端
 	TransportCongestionControlServer::TransportCongestionControlServer(
 	  RTC::TransportCongestionControlServer::Listener* listener,
 	  RTC::BweType bweType,
@@ -107,6 +108,7 @@ namespace RTC
 		return this->packetLoss;
 	}
 
+	// nanuns: 收到 Producer Rtp 包，TransportWideCc01 由 Producer 生成并发给 Consumer（这里是 mediasoup server）
 	void TransportCongestionControlServer::IncomingPacket(uint64_t nowMs, const RTC::RtpPacket* packet)
 	{
 		MS_TRACE();
@@ -174,10 +176,12 @@ namespace RTC
 		}
 	}
 
+	// nanuns: TCC 包由 Consumer（这里是mediasoup server）生成并发送给 Producer
 	void TransportCongestionControlServer::FillAndSendTransportCcFeedback()
 	{
 		MS_TRACE();
 
+		// nanuns: 如果还没有收到 Producer 的 TCC 包，就没有必要发送 TCC fb
 		if (!this->transportWideSeqNumberReceived)
 		{
 			return;
@@ -290,10 +294,12 @@ namespace RTC
 
 			auto nowMs = DepLibUV::GetTimeMs();
 
+			// nanuns: 最大输入码率不受限制时，
 			MaySendLimitationRembFeedback(nowMs);
 		}
 	}
 
+	// nanuns: 发送 TCC fb 包给 Producer
 	bool TransportCongestionControlServer::SendTransportCcFeedback()
 	{
 		MS_TRACE();
@@ -315,18 +321,19 @@ namespace RTC
 
 		// Update packet loss history.
 		const size_t expectedPackets = this->transportCcFeedbackPacket->GetPacketStatusCount();
-		size_t lostPackets           = 0;
-
-		for (const auto& result : this->transportCcFeedbackPacket->GetPacketResults())
-		{
-			if (!result.received)
-			{
-				lostPackets += 1;
-			}
-		}
 
 		if (expectedPackets > 0)
 		{
+			size_t lostPackets = 0;
+
+			for (const auto& result : this->transportCcFeedbackPacket->GetPacketResults())
+			{
+				if (!result.received)
+				{
+					lostPackets += 1;
+				}
+			}
+
 			this->UpdatePacketLoss(static_cast<double>(lostPackets) / expectedPackets);
 		}
 
@@ -335,6 +342,7 @@ namespace RTC
 		return true;
 	}
 
+	// nanuns: 收到 RTP 包时（TCC方式），判断是否过期，清理老包
 	void TransportCongestionControlServer::MayDropOldPacketArrivalTimes(uint16_t seqNum, uint64_t nowMs)
 	{
 		MS_TRACE();
@@ -357,6 +365,7 @@ namespace RTC
 		}
 	}
 
+	// nanuns: 
 	void TransportCongestionControlServer::MaySendLimitationRembFeedback(uint64_t nowMs)
 	{
 		MS_TRACE();
@@ -387,8 +396,9 @@ namespace RTC
 			RTC::RTCP::FeedbackPsRembPacket packet(0u, 0u);
 
 			packet.SetBitrate(this->maxIncomingBitrate);
-			packet.Serialize(RTC::RTCP::Buffer);
+			//packet.Serialize(RTC::RTCP::Buffer);
 
+			// nanuns: 发送最大码率 FBPS 包给 Producer
 			// Notify the listener.
 			this->listener->OnTransportCongestionControlServerSendRtcpPacket(this, &packet);
 
@@ -401,6 +411,7 @@ namespace RTC
 		}
 	}
 
+	// nanuns: 更新丢包率，SendTransportCcFeedback 时调用计算
 	void TransportCongestionControlServer::UpdatePacketLoss(double packetLoss)
 	{
 		// Add the lost into the histogram.
@@ -439,6 +450,7 @@ namespace RTC
 		this->transportCcFeedbackPacket->SetFeedbackPacketCount(feedbackPacketCount);
 	}
 
+	// nanuns: 收到 RTP 包后由 REMB 估算出来的可用码率
 	void TransportCongestionControlServer::OnRembServerAvailableBitrate(
 	  const webrtc::RemoteBitrateEstimator* /*rembServer*/,
 	  const std::vector<uint32_t>& ssrcs,
@@ -471,8 +483,9 @@ namespace RTC
 
 		packet.SetBitrate(availableBitrate);
 		packet.SetSsrcs(ssrcs);
-		packet.Serialize(RTC::RTCP::Buffer);
+		// packet.Serialize(RTC::RTCP::Buffer);
 
+		// nanuns: REMB 码率改变后发送 FBPS 包给 Producer
 		// Notify the listener.
 		this->listener->OnTransportCongestionControlServerSendRtcpPacket(this, &packet);
 	}
@@ -483,6 +496,7 @@ namespace RTC
 
 		if (timer == this->transportCcFeedbackSendPeriodicTimer)
 		{
+			// nanuns: 作为 Producer 的接收端，周期性发送 TCC fb 给 Producer
 			FillAndSendTransportCcFeedback();
 		}
 	}

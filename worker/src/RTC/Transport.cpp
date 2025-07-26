@@ -1621,6 +1621,7 @@ namespace RTC
 		delete packet;
 	}
 
+	// nanuns: mediasoup 作为发送方，接收下行接收者发过来的 rtcp 包
 	void Transport::ReceiveRtcpPacket(RTC::RTCP::Packet* packet)
 	{
 		MS_TRACE();
@@ -2158,6 +2159,9 @@ namespace RTC
 		}
 	}
 
+	// nanuns: 定时发送 Rtcp 包给 生产者或者消费者
+	// Consumer 连接的是接收客户端，所以 mediasoup 需要定期向其发送 SR 报文
+	// Producer 连接的是发送客户端，所以 mediasoup 需要定期向其发送 RR 报文
 	void Transport::SendRtcp(uint64_t nowMs)
 	{
 		MS_TRACE();
@@ -2172,6 +2176,7 @@ namespace RTC
 		}
 #endif
 
+		// nanuns: mediasoup 向所有 Consumer 发送 SR 报文
 		for (auto& kv : this->mapConsumers)
 		{
 			auto* consumer = kv.second;
@@ -2191,6 +2196,7 @@ namespace RTC
 			}
 		}
 
+		// nanuns: mediasoup 向所有 Producer 发送 RR 报文
 		for (auto& kv : this->mapProducers)
 		{
 			auto* producer = kv.second;
@@ -2438,6 +2444,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
+		// nanuns: transport 将收到的 packet 传递给 router，由 router 转发至相应的 consumer
 		this->listener->OnTransportProducerRtpPacketReceived(this, producer, packet);
 	}
 
@@ -2457,6 +2464,7 @@ namespace RTC
 		  this, producer, mappedSsrc, worstRemoteFractionLost);
 	}
 
+	// nanuns: 发送 RTP 包给 Consumer
 	inline void Transport::OnConsumerSendRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet)
 	{
 		MS_TRACE();
@@ -2556,6 +2564,7 @@ namespace RTC
 		this->sendRtpTransmission.Update(packet);
 	}
 
+	// nanuns: 发送 RTX 包给 Consumer，基本跟 OnConsumerSendRtpPacket 一致
 	inline void Transport::OnConsumerRetransmitRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet)
 	{
 		MS_TRACE();
@@ -2950,6 +2959,7 @@ namespace RTC
 		EmitTraceEventBweType(bitrates);
 	}
 
+	// nanuns: PacedSender 调用
 	inline void Transport::OnTransportCongestionControlClientSendRtpPacket(
 	  RTC::TransportCongestionControlClient* /*tccClient*/,
 	  RTC::RtpPacket* packet,
@@ -2963,6 +2973,7 @@ namespace RTC
 		// Update transport wide sequence number if present.
 		// clang-format off
 		if (
+			this->tccClient &&
 			this->tccClient->GetBweType() == RTC::BweType::TRANSPORT_CC &&
 			packet->UpdateTransportWideCc01(this->transportWideCcSeq + 1)
 		)
@@ -2993,6 +3004,7 @@ namespace RTC
 
 			sentInfo.wideSeq     = this->transportWideCcSeq;
 			sentInfo.size        = packet->GetSize();
+			// nanuns: 由 PacerSender 主动发送 Probation 包
 			sentInfo.isProbation = true;
 			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
 
@@ -3084,6 +3096,7 @@ namespace RTC
 	}
 #endif
 
+	// nanuns: 定时发送 RTCP 报文
 	inline void Transport::OnTimer(TimerHandle* timer)
 	{
 		MS_TRACE();

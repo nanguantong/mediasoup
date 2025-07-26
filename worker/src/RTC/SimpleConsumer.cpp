@@ -432,6 +432,7 @@ namespace RTC
 		// Update RTP seq number and timestamp.
 		uint16_t seq;
 
+		// nanuns: 通过 consumer 的 sequence manager 获取 rtp packet 的 seq
 		this->rtpSeqManager->Input(packet->GetSequenceNumber(), seq);
 
 		// Save original packet fields.
@@ -716,6 +717,9 @@ namespace RTC
 
 		if (IsActive())
 		{
+			// nanuns
+			this->rtpStream->Resume();
+
 			RequestKeyFrame();
 		}
 	}

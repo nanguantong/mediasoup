@@ -12,6 +12,7 @@ namespace RTC
 {
 	/* Instance methods. */
 
+	// nanuns: 用于检查 producer 收到音频的音量，并定期向应用层汇报 producer 的音量。
 	AudioLevelObserver::AudioLevelObserver(
 	  RTC::Shared* shared,
 	  const std::string& id,
@@ -21,6 +22,12 @@ namespace RTC
 	{
 		MS_TRACE();
 
+		/*
+		 * nanuns: 解析应用层传入的参数
+		 * maxEntries : 监控的 audio producer 的最大条目数
+		 * threshold  : 静音的阈值，音量小于此值则为静音
+		 * interval   : 定时器的定时周期
+		 */
 		this->maxEntries = options->maxEntries();
 		this->threshold  = options->threshold();
 		this->interval   = options->interval();
@@ -80,6 +87,8 @@ namespace RTC
 		this->mapProducerDBovs.erase(producer);
 	}
 
+	// nanuns: 当 audio producer 收到 RTP 数据包时，会将数据包通过这个函数送至 AudioLevelObserver。
+	// 它会从 RTP 包中取出音量，记录音量值并增加计数。
 	void AudioLevelObserver::ReceiveRtpPacket(RTC::Producer* producer, RTC::RtpPacket* packet)
 	{
 		MS_TRACE();
@@ -139,6 +148,7 @@ namespace RTC
 		this->periodicTimer->Restart();
 	}
 
+	// nanuns: 定时器定期执行，将这段时间内的统计信息，生成统计结果，然后上报应用层。
 	void AudioLevelObserver::Update()
 	{
 		MS_TRACE();
