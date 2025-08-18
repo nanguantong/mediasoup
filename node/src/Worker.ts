@@ -1,5 +1,6 @@
 import * as process from 'node:process';
 import * as path from 'node:path';
+import type { Duplex } from 'node:stream';
 import { spawn, ChildProcess } from 'node:child_process';
 import { version } from './';
 import { Logger } from './Logger';
@@ -21,7 +22,7 @@ import { WebRtcServerImpl } from './WebRtcServer';
 import type { Router, RouterOptions } from './RouterTypes';
 import { RouterImpl } from './Router';
 import { portRangeToFbs, socketFlagsToFbs } from './Transport';
-import type { RtpCodecCapability } from './rtpParametersTypes';
+import type { RouterRtpCodecCapability } from './rtpParametersTypes';
 import * as utils from './utils';
 import * as fbsUtils from './fbsUtils';
 import type { AppData } from './types';
@@ -190,8 +191,8 @@ export class WorkerImpl<WorkerAppData extends AppData = AppData>
 		this.#pid = this.#child.pid!;
 
 		this.#channel = new Channel({
-			producerSocket: this.#child.stdio[3],
-			consumerSocket: this.#child.stdio[4],
+			producerSocket: this.#child.stdio[3] as Duplex,
+			consumerSocket: this.#child.stdio[4] as Duplex,
 			pid: this.#pid,
 		});
 
@@ -481,6 +482,7 @@ export class WorkerImpl<WorkerAppData extends AppData = AppData>
 						: FbsTransportProtocol.TCP,
 					listenInfo.ip,
 					listenInfo.announcedAddress ?? listenInfo.announcedIp,
+					Boolean(listenInfo.exposeInternalIp),
 					listenInfo.port,
 					portRangeToFbs(listenInfo.portRange),
 					socketFlagsToFbs(listenInfo.flags),
@@ -531,9 +533,9 @@ export class WorkerImpl<WorkerAppData extends AppData = AppData>
 		}
 
 		// Clone given media codecs to not modify input data.
-		const clonedMediaCodecs = utils.clone<RtpCodecCapability[] | undefined>(
-			mediaCodecs
-		);
+		const clonedMediaCodecs = utils.clone<
+			RouterRtpCodecCapability[] | undefined
+		>(mediaCodecs);
 
 		// This may throw.
 		const rtpCapabilities =

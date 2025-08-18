@@ -2,7 +2,21 @@
 
 ### NEXT
 
+- `TransportTuple`: Generate hash based ont only on remote IP:port but also on local IP:port ([PR #1586](https://github.com/versatica/mediasoup/pull/1586)).
+- `IceServer`: Only update selected tuple if the new Binding request has ICE renomination ([PR #1587](https://github.com/versatica/mediasoup/pull/1587), credits to @pangsimon).
+
+### 3.18.0
+
+- Node: Make `RtpCodecCapability.preferredPayloadType` mandatory and add `RouterRtpCodecCapability` type (in which `preferredPayloadType` is optional) and `RouterRtpCapabilities` type ([PR #1584](https://github.com/versatica/mediasoup/pull/1584)).
+
+### 3.17.1
+
+- `WebRtcServer`: Remove the limit of 8 `listenInfos`.
+
+### 3.17.0
+
 - Worker: Update Meson subprojects ([PR #1582](https://github.com/versatica/mediasoup/pull/1582)).
+- `TransportListenInfo`: Add `exposeInternalIp` which, if set to `true` and `announcedAddress` is set, exposes an additional ICE candidate in `WebRtcTransport` whose IP is `listenInfo.ip` rather than `listenInfo.announcedAddress` ([PR #1583](https://github.com/versatica/mediasoup/pull/1583)).
 
 ### 3.16.8
 
