@@ -1,5 +1,6 @@
 #define MS_CLASS "RTC::RtpPacket"
 // #define MS_LOG_DEV_LEVEL 3
+// #define DUMP_PAYLOAD_DESCRIPTOR 1
 
 #include "RTC/RtpPacket.hpp"
 #ifdef MS_RTC_LOGGER_RTP
@@ -13,6 +14,36 @@
 
 namespace RTC
 {
+	/* Class variables. */
+
+	thread_local uint32_t RtpPacket::nextMediasoupPacketId{ 0u };
+
+	/* Class methods. */
+
+	uint32_t RtpPacket::GetNextMediasoupPacketId()
+	{
+		MS_TRACE();
+
+		// Make RtpPacket::nextMediasoupPacketId first value be random and then
+		// increase it by one, and don't let it be 0.
+		if (RtpPacket::nextMediasoupPacketId == 0)
+		{
+			RtpPacket::nextMediasoupPacketId =
+			  Utils::Crypto::GetRandomUInt(1u, std::numeric_limits<uint32_t>::max() / 2);
+		}
+		else
+		{
+			RtpPacket::nextMediasoupPacketId++;
+
+			if (RtpPacket::nextMediasoupPacketId == 0)
+			{
+				RtpPacket::nextMediasoupPacketId = 1;
+			}
+		}
+
+		return RtpPacket::nextMediasoupPacketId;
+	}
+
 	/* Class methods. */
 
 	RtpPacket* RtpPacket::Parse(const uint8_t* data, size_t len)
@@ -171,7 +202,16 @@ namespace RTC
 		MS_TRACE();
 
 		MS_DUMP_CLEAN(indentation, "<RtpPacket>");
+
+		MS_DUMP_CLEAN(indentation, "  packet size: %zu bytes", GetSize());
+		MS_DUMP_CLEAN(indentation, "  sequence number: %" PRIu16, GetSequenceNumber());
+		MS_DUMP_CLEAN(indentation, "  timestamp: %" PRIu32, GetTimestamp());
+		MS_DUMP_CLEAN(indentation, "  marker: %s", HasMarker() ? "true" : "false");
+		MS_DUMP_CLEAN(indentation, "  payload type: %" PRIu8, GetPayloadType());
+		MS_DUMP_CLEAN(indentation, "  ssrc: %" PRIu32, GetSsrc());
+		MS_DUMP_CLEAN(indentation, "  csrc count: %" PRIu8, this->header->csrcCount);
 		MS_DUMP_CLEAN(indentation, "  padding: %s", this->header->padding ? "true" : "false");
+
 		if (HasHeaderExtension())
 		{
 			MS_DUMP_CLEAN(
@@ -180,14 +220,17 @@ namespace RTC
 			  GetHeaderExtensionId(),
 			  GetHeaderExtensionLength());
 		}
+
 		if (HasOneByteExtensions())
 		{
 			MS_DUMP_CLEAN(indentation, "  RFC5285 ext style: One-Byte Header");
 		}
+
 		if (HasTwoBytesExtensions())
 		{
 			MS_DUMP_CLEAN(indentation, "  RFC5285 ext style: Two-Bytes Header");
 		}
+
 		if (HasOneByteExtensions() || HasTwoBytesExtensions())
 		{
 			std::vector<std::string> extIds;
@@ -222,6 +265,7 @@ namespace RTC
 				MS_DUMP_CLEAN(indentation, "  RFC5285 ext ids: %s", extIdsStream.str().c_str());
 			}
 		}
+
 		if (this->midExtensionId != 0u)
 		{
 			std::string mid;
@@ -232,6 +276,7 @@ namespace RTC
 				  indentation, "  mid: extId:%" PRIu8 ", value:'%s'", this->midExtensionId, mid.c_str());
 			}
 		}
+
 		if (this->ridExtensionId != 0u)
 		{
 			std::string rid;
@@ -242,6 +287,7 @@ namespace RTC
 				  indentation, "  rid: extId:%" PRIu8 ", value:'%s'", this->ridExtensionId, rid.c_str());
 			}
 		}
+
 		if (this->rridExtensionId != 0u)
 		{
 			std::string rid;
@@ -252,10 +298,12 @@ namespace RTC
 				  indentation, "  rrid: extId:%" PRIu8 ", value:'%s'", this->rridExtensionId, rid.c_str());
 			}
 		}
+
 		if (this->absSendTimeExtensionId != 0u)
 		{
 			MS_DUMP_CLEAN(indentation, "  absSendTime: extId:%" PRIu8, this->absSendTimeExtensionId);
 		}
+
 		if (this->transportWideCc01ExtensionId != 0u)
 		{
 			uint16_t wideSeqNumber{ 0 };
@@ -269,6 +317,7 @@ namespace RTC
 				  wideSeqNumber);
 			}
 		}
+
 		if (this->ssrcAudioLevelExtensionId != 0u)
 		{
 			uint8_t volume{ 0 };
@@ -284,6 +333,22 @@ namespace RTC
 				  voice ? "true" : "false");
 			}
 		}
+
+		if (this->dependencyDescriptorExtensionId != 0u)
+		{
+			uint8_t extenLen;
+			uint8_t* extenValue = GetExtension(this->dependencyDescriptorExtensionId, extenLen);
+
+			if (extenValue)
+			{
+				MS_DUMP_CLEAN(
+				  indentation,
+				  "  dependencyDescriptor: extId:%" PRIu8 ", length:%" PRIu8,
+				  this->dependencyDescriptorExtensionId,
+				  extenLen);
+			}
+		}
+
 		if (this->videoOrientationExtensionId != 0u)
 		{
 			bool camera{ false };
@@ -301,6 +366,24 @@ namespace RTC
 				  rotation);
 			}
 		}
+
+		if (this->absCaptureTimeExtensionId != 0u)
+		{
+			uint64_t absCaptureTimestamp{ 0u };
+			int64_t estimatedCaptureClockOffset{ 0 };
+
+			if (ReadAbsCaptureTime(absCaptureTimestamp, estimatedCaptureClockOffset))
+			{
+				MS_DUMP_CLEAN(
+				  indentation,
+				  "  absCaptureTime: extId:%" PRIu8 ", absCaptureTimestamp:%" PRIu64
+				  ", estimatedCaptureClockOffset:%" PRId64,
+				  this->absCaptureTimeExtensionId,
+				  absCaptureTimestamp,
+				  estimatedCaptureClockOffset);
+			}
+		}
+
 		if (this->playoutDelayExtensionId != 0u)
 		{
 			uint16_t minDelay{ 0 };
@@ -311,25 +394,40 @@ namespace RTC
 				MS_DUMP_CLEAN(
 				  indentation,
 				  "  playoutDelay: extId:%" PRIu8 ", minDelay:%" PRIu16 ", maxDelay:%" PRIu16,
-				  this->videoOrientationExtensionId,
+				  this->playoutDelayExtensionId,
 				  minDelay,
 				  maxDelay);
 			}
 		}
-		MS_DUMP_CLEAN(indentation, "  csrc count: %" PRIu8, this->header->csrcCount);
-		MS_DUMP_CLEAN(indentation, "  marker: %s", HasMarker() ? "true" : "false");
-		MS_DUMP_CLEAN(indentation, "  payload type: %" PRIu8, GetPayloadType());
-		MS_DUMP_CLEAN(indentation, "  sequence number: %" PRIu16, GetSequenceNumber());
-		MS_DUMP_CLEAN(indentation, "  timestamp: %" PRIu32, GetTimestamp());
-		MS_DUMP_CLEAN(indentation, "  ssrc: %" PRIu32, GetSsrc());
+
+		if (this->mediasoupPacketIdExtensionId != 0u)
+		{
+			uint32_t mediasoupPacketId{ 0 };
+
+			if (ReadMediasoupPacketId(mediasoupPacketId))
+			{
+				MS_DUMP_CLEAN(
+				  indentation,
+				  "  mediasoupPacketId: extId:%" PRIu8 ", mediasoupPacketId:%" PRIu32,
+				  this->mediasoupPacketIdExtensionId,
+				  mediasoupPacketId);
+			}
+		}
+
 		MS_DUMP_CLEAN(indentation, "  payload size: %zu bytes", GetPayloadLength());
 		if (this->header->padding != 0u)
 		{
 			MS_DUMP_CLEAN(indentation, "  padding size: %" PRIu8 " bytes", this->payloadPadding);
 		}
-		MS_DUMP_CLEAN(indentation, "  packet size: %zu bytes", GetSize());
+
 		MS_DUMP_CLEAN(indentation, "  spatial layer: %" PRIu8, GetSpatialLayer());
 		MS_DUMP_CLEAN(indentation, "  temporal layer: %" PRIu8, GetTemporalLayer());
+#ifdef DUMP_PAYLOAD_DESCRIPTOR
+		if (this->payloadDescriptorHandler)
+		{
+			this->payloadDescriptorHandler->Dump(indentation + 1);
+		}
+#endif
 		MS_DUMP_CLEAN(indentation, "</RtpPacket>");
 	}
 
@@ -400,9 +498,11 @@ namespace RTC
 		this->absSendTimeExtensionId          = 0u;
 		this->transportWideCc01ExtensionId    = 0u;
 		this->ssrcAudioLevelExtensionId       = 0u;
-		this->videoOrientationExtensionId     = 0u;
-		this->playoutDelayExtensionId         = 0u;
 		this->dependencyDescriptorExtensionId = 0u;
+		this->videoOrientationExtensionId     = 0u;
+		this->absCaptureTimeExtensionId       = 0u;
+		this->playoutDelayExtensionId         = 0u;
+		this->mediasoupPacketIdExtensionId    = 0u;
 
 		// Clear the One-Byte and Two-Bytes extension elements maps.
 		std::fill(std::begin(this->oneByteExtensions), std::end(this->oneByteExtensions), nullptr);
@@ -597,6 +697,25 @@ namespace RTC
 		SetExtensionLength(this->midExtensionId, midLen);
 	}
 
+	void RtpPacket::UpdateDependencyDescriptor(const uint8_t* data, size_t len)
+	{
+		MS_TRACE();
+
+		uint8_t extenLen;
+		uint8_t* extenValue = GetExtension(this->dependencyDescriptorExtensionId, extenLen);
+
+		if (!extenValue)
+		{
+			MS_WARN_TAG(rtp, "dependency description not found");
+
+			return;
+		}
+
+		std::memcpy(extenValue, data, len);
+
+		SetExtensionLength(this->dependencyDescriptorExtensionId, len);
+	}
+
 	/**
 	 * The caller is responsible of not setting a length higher than the
 	 * available one (taking into account existing padding bytes).
@@ -760,11 +879,20 @@ namespace RTC
 		packet->absSendTimeExtensionId          = this->absSendTimeExtensionId;
 		packet->transportWideCc01ExtensionId    = this->transportWideCc01ExtensionId;
 		packet->ssrcAudioLevelExtensionId       = this->ssrcAudioLevelExtensionId;
-		packet->videoOrientationExtensionId     = this->videoOrientationExtensionId;
-		packet->playoutDelayExtensionId         = this->playoutDelayExtensionId;
 		packet->dependencyDescriptorExtensionId = this->dependencyDescriptorExtensionId;
+		packet->videoOrientationExtensionId     = this->videoOrientationExtensionId;
+		packet->absCaptureTimeExtensionId       = this->absCaptureTimeExtensionId;
+		packet->playoutDelayExtensionId         = this->playoutDelayExtensionId;
+		packet->mediasoupPacketIdExtensionId    = this->mediasoupPacketIdExtensionId;
+
 		// Assign the payload descriptor handler.
 		packet->payloadDescriptorHandler = this->payloadDescriptorHandler;
+
+		if (this->payloadDescriptorHandler)
+		{
+			packet->payloadDescriptorHandler->RtpPacketCloned(packet);
+		}
+
 		// Store allocated buffer.
 		packet->buffer = buffer;
 
@@ -1059,5 +1187,12 @@ namespace RTC
 				}
 			}
 		}
+	}
+
+	void RtpPacket::OnDependencyDescriptorUpdated(const uint8_t* data, size_t len)
+	{
+		MS_TRACE();
+
+		UpdateDependencyDescriptor(data, len);
 	}
 } // namespace RTC

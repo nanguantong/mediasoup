@@ -167,7 +167,7 @@ const ctx: TestContext = {
 				{
 					kind: 'audio',
 					uri: 'urn:ietf:params:rtp-hdrext:ssrc-audio-level',
-					preferredId: 10,
+					preferredId: 6,
 					preferredEncrypt: false,
 				},
 			],
@@ -261,19 +261,31 @@ test('router.pipeToRouter() succeeds with audio', async () => {
 	expect(pipeConsumer.rtpParameters.headerExtensions).toEqual([
 		{
 			uri: 'urn:ietf:params:rtp-hdrext:ssrc-audio-level',
+			id: 6,
+			encrypt: false,
+			parameters: {},
+		},
+		{
+			encrypt: false,
+			id: 7,
+			parameters: {},
+			uri: 'https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension',
+		},
+		{
+			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time',
 			id: 10,
 			encrypt: false,
 			parameters: {},
 		},
 		{
-			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time',
-			id: 13,
+			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/playout-delay',
+			id: 11,
 			encrypt: false,
 			parameters: {},
 		},
 		{
-			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/playout-delay',
-			id: 14,
+			uri: 'urn:mediasoup:params:rtp-hdrext:packet-id',
+			id: 12,
 			encrypt: false,
 			parameters: {},
 		},
@@ -309,19 +321,31 @@ test('router.pipeToRouter() succeeds with audio', async () => {
 	expect(pipeProducer.rtpParameters.headerExtensions).toEqual([
 		{
 			uri: 'urn:ietf:params:rtp-hdrext:ssrc-audio-level',
+			id: 6,
+			encrypt: false,
+			parameters: {},
+		},
+		{
+			encrypt: false,
+			id: 7,
+			parameters: {},
+			uri: 'https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension',
+		},
+		{
+			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time',
 			id: 10,
 			encrypt: false,
 			parameters: {},
 		},
 		{
-			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time',
-			id: 13,
+			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/playout-delay',
+			id: 11,
 			encrypt: false,
 			parameters: {},
 		},
 		{
-			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/playout-delay',
-			id: 14,
+			uri: 'urn:mediasoup:params:rtp-hdrext:packet-id',
+			id: 12,
 			encrypt: false,
 			parameters: {},
 		},
@@ -368,34 +392,39 @@ test('router.pipeToRouter() succeeds with video', async () => {
 		},
 	]);
 	expect(pipeConsumer.rtpParameters.headerExtensions).toEqual([
-		// TODO: Enable when DD is sendrecv.
-		// {
-		// 	uri: 'https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension',
-		// 	id: 8,
-		// 	encrypt: false,
-		// 	parameters: {},
-		// },
+		{
+			uri: 'https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension',
+			id: 7,
+			encrypt: false,
+			parameters: {},
+		},
 		{
 			uri: 'urn:3gpp:video-orientation',
-			id: 11,
+			id: 8,
 			encrypt: false,
 			parameters: {},
 		},
 		{
 			uri: 'urn:ietf:params:rtp-hdrext:toffset',
-			id: 12,
+			id: 9,
 			encrypt: false,
 			parameters: {},
 		},
 		{
 			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time',
-			id: 13,
+			id: 10,
 			encrypt: false,
 			parameters: {},
 		},
 		{
 			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/playout-delay',
-			id: 14,
+			id: 11,
+			encrypt: false,
+			parameters: {},
+		},
+		{
+			uri: 'urn:mediasoup:params:rtp-hdrext:packet-id',
+			id: 12,
 			encrypt: false,
 			parameters: {},
 		},
@@ -429,34 +458,39 @@ test('router.pipeToRouter() succeeds with video', async () => {
 		},
 	]);
 	expect(pipeProducer.rtpParameters.headerExtensions).toEqual([
-		// TODO: Enable when DD is sendrecv.
-		// {
-		// 	uri: 'https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension',
-		// 	id: 8,
-		// 	encrypt: false,
-		// 	parameters: {},
-		// },
+		{
+			uri: 'https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension',
+			id: 7,
+			encrypt: false,
+			parameters: {},
+		},
 		{
 			uri: 'urn:3gpp:video-orientation',
-			id: 11,
+			id: 8,
 			encrypt: false,
 			parameters: {},
 		},
 		{
 			uri: 'urn:ietf:params:rtp-hdrext:toffset',
-			id: 12,
+			id: 9,
 			encrypt: false,
 			parameters: {},
 		},
 		{
 			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time',
-			id: 13,
+			id: 10,
 			encrypt: false,
 			parameters: {},
 		},
 		{
 			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/playout-delay',
-			id: 14,
+			id: 11,
+			encrypt: false,
+			parameters: {},
+		},
+		{
+			uri: 'urn:mediasoup:params:rtp-hdrext:packet-id',
+			id: 12,
 			encrypt: false,
 			parameters: {},
 		},
@@ -544,34 +578,39 @@ test('router.createPipeTransport() with enableRtx succeeds', async () => {
 		},
 	]);
 	expect(pipeConsumer.rtpParameters.headerExtensions).toEqual([
-		// TODO: Enable when DD is sendrecv.
-		// {
-		// 	uri: 'https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension',
-		// 	id: 8,
-		// 	encrypt: false,
-		// 	parameters: {},
-		// },
+		{
+			uri: 'https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension',
+			id: 7,
+			encrypt: false,
+			parameters: {},
+		},
 		{
 			uri: 'urn:3gpp:video-orientation',
-			id: 11,
+			id: 8,
 			encrypt: false,
 			parameters: {},
 		},
 		{
 			uri: 'urn:ietf:params:rtp-hdrext:toffset',
-			id: 12,
+			id: 9,
 			encrypt: false,
 			parameters: {},
 		},
 		{
 			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time',
-			id: 13,
+			id: 10,
 			encrypt: false,
 			parameters: {},
 		},
 		{
 			uri: 'http://www.webrtc.org/experiments/rtp-hdrext/playout-delay',
-			id: 14,
+			id: 11,
+			encrypt: false,
+			parameters: {},
+		},
+		{
+			uri: 'urn:mediasoup:params:rtp-hdrext:packet-id',
+			id: 12,
 			encrypt: false,
 			parameters: {},
 		},

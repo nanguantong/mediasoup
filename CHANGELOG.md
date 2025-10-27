@@ -2,6 +2,26 @@
 
 ### NEXT
 
+### 3.19.6
+
+- AV1: Set DependencyDescriptor Header Extension to 'recvonly' but forward it between pipe transports ([#1632](https://github.com/versatica/mediasoup/pull/1632)).
+
+### 3.19.5
+
+- Add custom 'urn:mediasoup:params:rtp-hdrext:packet-id' (mediasoup-packet-id) header extension ([#1631](https://github.com/versatica/mediasoup/pull/1631)).
+
+### 3.19.4
+
+- AV1: Add support for DD extension header forwarding ([#1610](https://github.com/versatica/mediasoup/pull/1610)).
+- DependencyDescriptor: Update listener on RtpPacket clone ([#1618](https://github.com/versatica/mediasoup/pull/1618)).
+
+### 3.19.3
+
+- CI: Remove `macos-13` hosts.
+- VP8: Fix keyframe detection if "extended" bit is not set ([PR #1612](https://github.com/versatica/mediasoup/pull/1612), credits to @nifigase).
+- CI: Remove `node-20` GitHub actions.
+- Require Node.js >= 22 ([PR #1614](https://github.com/versatica/mediasoup/pull/1614)).
+
 ### 3.19.2
 
 - `IceServer`: Fix active tuple selection when in "completed" state ([PR #1608](https://github.com/versatica/mediasoup/pull/1608), credits to @pangsimon).

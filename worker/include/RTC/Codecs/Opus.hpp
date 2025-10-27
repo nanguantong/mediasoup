@@ -4,7 +4,6 @@
 #include "common.hpp"
 #include "RTC/Codecs/PayloadDescriptorHandler.hpp"
 #include "RTC/RtpPacket.hpp"
-#include "RTC/SeqManager.hpp"
 
 namespace RTC
 {
@@ -60,12 +59,13 @@ namespace RTC
 				~PayloadDescriptorHandler() override = default;
 
 			public:
-				void Dump() const override
+				void Dump(int indentation = 0) const override
 				{
-					this->payloadDescriptor->Dump();
+					this->payloadDescriptor->Dump(indentation);
 				}
 				bool Process(
 				  RTC::Codecs::EncodingContext* encodingContext, RTC::RtpPacket* packet, bool& marker) override;
+				void RtpPacketCloned(RtpPacket* packet) override{};
 				std::unique_ptr<RTC::Codecs::PayloadDescriptor::Encoder> GetEncoder() const override
 				{
 					return nullptr;
