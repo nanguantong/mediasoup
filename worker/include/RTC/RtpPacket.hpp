@@ -3,6 +3,7 @@
 
 #include "common.hpp"
 #include "Utils.hpp"
+#include "Logger.hpp"
 #include "FBS/rtpPacket.h"
 #include "RTC/Codecs/PayloadDescriptorHandler.hpp"
 #ifdef MS_RTC_LOGGER_RTP
@@ -332,6 +333,10 @@ namespace RTC
 			}
 
 			absSendtime = Utils::Byte::Get3Bytes(extenValue, 0);
+
+			// uint32_t ts = 0;
+			// memcpy(&ts, extenValue, 3);
+			// MS_DEBUG_DEV("ReadAbsSendTime %#x %#x %#x, %u %u %u %u", extenValue[0], extenValue[1], extenValue[2], absSendtime, ntohl(ts) >> 8, ts, ntohl(ts)); // 8904857 10084487 2279643392
 
 			return true;
 		}

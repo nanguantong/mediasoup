@@ -158,12 +158,12 @@ RemoteBitrateEstimatorAbsSendTime::FindBestProbe(
 
       MS_DEBUG_DEV(
         "probe failed, sent at %d bps, received at %d bps [mean "
-        "send delta:%fms, mean recv delta:%fms, num probes:%d]",
+        "send delta:%fms, mean recv delta:%fms, num probes:%d, %d]",
         send_bitrate_bps,
         recv_bitrate_bps,
         it->send_mean_ms,
         it->recv_mean_ms,
-        it->count);
+        it->count, it->num_above_min_delta);
 #endif
 
       break;
@@ -301,9 +301,9 @@ void RemoteBitrateEstimatorAbsSendTime::IncomingPacketInfo(
         }
         MS_DEBUG_DEV(
             "probe packet received [send time:%" PRId64
-            "ms, recv "
+            "ms(%u, %u), recv "
             "time:%" PRId64 "ms, send delta:%dms, recv delta:%d ms]",
-            send_time_ms,
+            send_time_ms, send_time_24bits, timestamp,
             arrival_time_ms,
             send_delta_ms,
             recv_delta_ms);
