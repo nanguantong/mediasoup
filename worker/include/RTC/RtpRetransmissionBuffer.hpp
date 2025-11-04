@@ -30,6 +30,8 @@ namespace RTC
 			uint16_t sequenceNumber{ 0u };
 			// Correct timestamp since original packet may not have the same.
 			uint32_t timestamp{ 0u };
+			// Correct marker bit since original packet may not have the same.
+			bool marker{ false };
 			// Last time this packet was resent.
 			uint64_t resentAtMs{ 0u };
 			// Number of times this packet was resent.
@@ -43,10 +45,10 @@ namespace RTC
 		RtpRetransmissionBuffer(uint16_t maxItems, uint32_t maxRetransmissionDelayMs, uint32_t clockRate);
 		~RtpRetransmissionBuffer();
 
+		void Dump(int indentation = 0) const;
 		Item* Get(uint16_t seq) const;
 		bool Insert(RTC::RtpPacket* packet, const RTC::SharedRtpPacket& sharedPacket);
 		void Clear();
-		void Dump() const;
 
 	private:
 		Item* GetOldest() const;

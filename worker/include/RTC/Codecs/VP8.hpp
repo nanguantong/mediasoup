@@ -57,7 +57,7 @@ namespace RTC
 				/* Pure virtual methods inherited from RTC::Codecs::PayloadDescriptor. */
 				~PayloadDescriptor() override = default;
 
-				void Dump() const override;
+				void Dump(int indentation = 0) const override;
 				// Rewrite the buffer with the given pictureId and tl0PictureIndex values.
 				void Encode(uint8_t* data, uint16_t pictureId, uint8_t tl0PictureIndex) const;
 				void Encode(uint8_t* data) const;
@@ -141,12 +141,13 @@ namespace RTC
 				~PayloadDescriptorHandler() override = default;
 
 			public:
-				void Dump() const override
+				void Dump(int indentation = 0) const override
 				{
-					this->payloadDescriptor->Dump();
+					this->payloadDescriptor->Dump(indentation);
 				}
 				bool Process(
 				  RTC::Codecs::EncodingContext* encodingContext, RTC::RtpPacket* packet, bool& marker) override;
+				void RtpPacketCloned(RtpPacket* packet) override{};
 				std::unique_ptr<RTC::Codecs::PayloadDescriptor::Encoder> GetEncoder() const override
 				{
 					return this->payloadDescriptor->GetEncoder();

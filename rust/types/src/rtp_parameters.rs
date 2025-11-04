@@ -247,7 +247,7 @@ impl MimeType {
 
 /// Known Audio MIME types.
 #[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Deserialize, Serialize)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
 pub enum MimeTypeAudio {
     /// Opus
     #[serde(rename = "audio/opus")]
@@ -291,16 +291,16 @@ impl FromStr for MimeTypeAudio {
     type Err = ParseMimeTypeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.to_ascii_lowercase().as_str() {
             "audio/opus" => Ok(Self::Opus),
             "audio/multiopus" => Ok(Self::MultiChannelOpus),
-            "audio/PCMU" => Ok(Self::Pcmu),
-            "audio/PCMA" => Ok(Self::Pcma),
-            "audio/ISAC" => Ok(Self::Isac),
-            "audio/G722" => Ok(Self::G722),
-            "audio/iLBC" => Ok(Self::Ilbc),
-            "audio/SILK" => Ok(Self::Silk),
-            "audio/CN" => Ok(Self::Cn),
+            "audio/pcmu" => Ok(Self::Pcmu),
+            "audio/pcma" => Ok(Self::Pcma),
+            "audio/isac" => Ok(Self::Isac),
+            "audio/g722" => Ok(Self::G722),
+            "audio/ilbc" => Ok(Self::Ilbc),
+            "audio/silk" => Ok(Self::Silk),
+            "audio/cn" => Ok(Self::Cn),
             "audio/telephone-event" => Ok(Self::TelephoneEvent),
             "audio/rtx" => Ok(Self::Rtx),
             "audio/red" => Ok(Self::Red),
@@ -310,6 +310,16 @@ impl FromStr for MimeTypeAudio {
                 ParseMimeTypeError::InvalidInput
             }),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for MimeTypeAudio {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        MimeTypeAudio::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -334,7 +344,8 @@ impl MimeTypeAudio {
 }
 
 /// Known Video MIME types.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Deserialize, Serialize)]
+#[allow(non_camel_case_types)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
 pub enum MimeTypeVideo {
     /// VP8
     #[serde(rename = "video/VP8")]
@@ -363,11 +374,11 @@ impl FromStr for MimeTypeVideo {
     type Err = ParseMimeTypeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "video/VP8" => Ok(Self::Vp8),
-            "video/VP9" => Ok(Self::Vp9),
-            "video/H264" => Ok(Self::H264),
-            "video/AV1" => Ok(Self::AV1),
+        match s.to_ascii_lowercase().as_str() {
+            "video/vp8" => Ok(Self::Vp8),
+            "video/vp9" => Ok(Self::Vp9),
+            "video/h264" => Ok(Self::H264),
+            "video/av1" => Ok(Self::AV1),
             "video/rtx" => Ok(Self::Rtx),
             "video/red" => Ok(Self::Red),
             "video/ulpfec" => Ok(Self::Ulpfec),
@@ -377,6 +388,16 @@ impl FromStr for MimeTypeVideo {
                 ParseMimeTypeError::InvalidInput
             }),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for MimeTypeVideo {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        MimeTypeVideo::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -427,8 +448,10 @@ pub enum RtpCodecCapability {
         channels: NonZeroU8,
         /// Codec specific parameters. Some parameters (such as `packetization-mode` and
         /// `profile-level-id` in H264 or `profile-id` in VP9) are critical for codec matching.
+        #[serde(default)]
         parameters: RtpCodecParametersParameters,
         /// Transport layer and codec-specific feedback messages for this codec.
+        #[serde(default)]
         rtcp_feedback: Vec<RtcpFeedback>,
     },
     /// Video codec capability
@@ -443,8 +466,10 @@ pub enum RtpCodecCapability {
         clock_rate: NonZeroU32,
         /// Codec specific parameters. Some parameters (such as `packetization-mode` and
         /// `profile-level-id` in H264 or `profile-id` in VP9) are critical for codec matching.
+        #[serde(default)]
         parameters: RtpCodecParametersParameters,
         /// Transport layer and codec-specific feedback messages for this codec.
+        #[serde(default)]
         rtcp_feedback: Vec<RtcpFeedback>,
     },
 }
@@ -536,32 +561,35 @@ pub enum RtpHeaderExtensionUri {
     /// urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id
     #[serde(rename = "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id")]
     RepairRtpStreamId,
+    /// <http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time>
+    #[serde(rename = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time")]
+    AbsSendTime,
+    /// <http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01>
+    #[serde(rename = "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01")]
+    TransportWideCcDraft01,
+    /// urn:ietf:params:rtp-hdrext:ssrc-audio-level
+    #[serde(rename = "urn:ietf:params:rtp-hdrext:ssrc-audio-level")]
+    SsrcAudioLevel,
     /// <https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension>
     #[serde(
         rename = "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension"
     )]
     DependencyDescriptor,
-    /// urn:ietf:params:rtp-hdrext:ssrc-audio-level
-    #[serde(rename = "urn:ietf:params:rtp-hdrext:ssrc-audio-level")]
-    AudioLevel,
     /// urn:3gpp:video-orientation
     #[serde(rename = "urn:3gpp:video-orientation")]
     VideoOrientation,
     /// urn:ietf:params:rtp-hdrext:toffset
     #[serde(rename = "urn:ietf:params:rtp-hdrext:toffset")]
     TimeOffset,
-    /// <http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01>
-    #[serde(rename = "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01")]
-    TransportWideCcDraft01,
-    /// <http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time>
-    #[serde(rename = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time")]
-    AbsSendTime,
     /// <http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time>
     #[serde(rename = "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time")]
     AbsCaptureTime,
     /// <http://www.webrtc.org/experiments/rtp-hdrext/playout-delay>
     #[serde(rename = "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay")]
     PlayoutDelay,
+    /// urn:mediasoup:params:rtp-hdrext:packet-id
+    #[serde(rename = "urn:mediasoup:params:rtp-hdrext:packet-id")]
+    MediasoupPacketId,
 
     #[doc(hidden)]
     #[serde(other, rename = "unsupported")]
@@ -576,18 +604,19 @@ impl FromStr for RtpHeaderExtensionUri {
             "urn:ietf:params:rtp-hdrext:sdes:mid" => Ok(Self::Mid),
             "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id" => Ok(Self::RtpStreamId),
             "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id" => Ok(Self::RepairRtpStreamId),
-            "urn:ietf:params:rtp-hdrext:ssrc-audio-level" => Ok(Self::AudioLevel),
-            "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension" => Ok(Self::DependencyDescriptor),
-            "urn:3gpp:video-orientation" => Ok(Self::VideoOrientation),
-            "urn:ietf:params:rtp-hdrext:toffset" => Ok(Self::TimeOffset),
+            "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" => Ok(Self::AbsSendTime),
             "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01" => {
                 Ok(Self::TransportWideCcDraft01)
             }
-            "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" => Ok(Self::AbsSendTime),
+            "urn:ietf:params:rtp-hdrext:ssrc-audio-level" => Ok(Self::SsrcAudioLevel),
+            "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension" => Ok(Self::DependencyDescriptor),
+            "urn:3gpp:video-orientation" => Ok(Self::VideoOrientation),
+            "urn:ietf:params:rtp-hdrext:toffset" => Ok(Self::TimeOffset),
             "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time" => {
                 Ok(Self::AbsCaptureTime)
             }
             "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay" => Ok(Self::PlayoutDelay),
+            "urn:mediasoup:params:rtp-hdrext:packet-id" => Ok(Self::MediasoupPacketId),
             _ => Err(RtpHeaderExtensionUriParseError::Unsupported),
         }
     }
@@ -603,21 +632,24 @@ impl RtpHeaderExtensionUri {
             RtpHeaderExtensionUri::RepairRtpStreamId => {
                 "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id"
             }
-            RtpHeaderExtensionUri::DependencyDescriptor => "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension",
-            RtpHeaderExtensionUri::AudioLevel => "urn:ietf:params:rtp-hdrext:ssrc-audio-level",
-            RtpHeaderExtensionUri::VideoOrientation => "urn:3gpp:video-orientation",
-            RtpHeaderExtensionUri::TimeOffset => "urn:ietf:params:rtp-hdrext:toffset",
-            RtpHeaderExtensionUri::TransportWideCcDraft01 => {
-                "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"
-            }
             RtpHeaderExtensionUri::AbsSendTime => {
                 "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time"
             }
+            RtpHeaderExtensionUri::TransportWideCcDraft01 => {
+                "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"
+            }
+            RtpHeaderExtensionUri::SsrcAudioLevel => "urn:ietf:params:rtp-hdrext:ssrc-audio-level",
+            RtpHeaderExtensionUri::DependencyDescriptor => "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension",
+            RtpHeaderExtensionUri::VideoOrientation => "urn:3gpp:video-orientation",
+            RtpHeaderExtensionUri::TimeOffset => "urn:ietf:params:rtp-hdrext:toffset",
             RtpHeaderExtensionUri::AbsCaptureTime => {
                 "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time"
             }
             RtpHeaderExtensionUri::PlayoutDelay => {
                 "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay"
+            }
+            RtpHeaderExtensionUri::MediasoupPacketId => {
+                "urn:mediasoup:params:rtp-hdrext:packet-id"
             }
             RtpHeaderExtensionUri::Unsupported => "unsupported",
         }
@@ -762,8 +794,10 @@ pub enum RtpCodecParameters {
         /// Codec-specific parameters available for signaling. Some parameters (such as
         /// `packetization-mode` and `profile-level-id` in H264 or `profile-id` in VP9) are critical for
         /// codec matching.
+        #[serde(default)]
         parameters: RtpCodecParametersParameters,
         /// Transport layer and codec-specific feedback messages for this codec.
+        #[serde(default)]
         rtcp_feedback: Vec<RtcpFeedback>,
     },
     /// Video codec
@@ -778,8 +812,10 @@ pub enum RtpCodecParameters {
         /// Codec-specific parameters available for signaling. Some parameters (such as
         /// `packetization-mode` and `profile-level-id` in H264 or `profile-id` in VP9) are critical for
         /// codec matching.
+        #[serde(default)]
         parameters: RtpCodecParametersParameters,
         /// Transport layer and codec-specific feedback messages for this codec.
+        #[serde(default)]
         rtcp_feedback: Vec<RtcpFeedback>,
     },
 }

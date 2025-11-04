@@ -38,19 +38,20 @@ class TestPayloadDescriptorHandler : public Codecs::PayloadDescriptorHandler
 public:
 	explicit TestPayloadDescriptorHandler(bool isKeyFrame) : isKeyFrame(isKeyFrame){};
 	~TestPayloadDescriptorHandler() override = default;
-	void Dump() const override
+	void Dump(int indentation = 0) const override
 	{
 	}
 	bool Process(Codecs::EncodingContext* /*context*/, RTC::RtpPacket* /*packet*/, bool& /*marker*/) override
 	{
 		return true;
 	}
-
+	void RtpPacketCloned(RTC::RtpPacket* packet) override
+	{
+	}
 	std::unique_ptr<RTC::Codecs::PayloadDescriptor::Encoder> GetEncoder() const override
 	{
 		return nullptr;
 	}
-
 	void Encode(RtpPacket* /*packet*/, RTC::Codecs::PayloadDescriptor::Encoder* /*encoder*/) override
 	{
 	}

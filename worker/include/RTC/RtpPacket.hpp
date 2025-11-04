@@ -17,7 +17,7 @@
 
 namespace RTC
 {
-	class RtpPacket
+	class RtpPacket : public Codecs::DependencyDescriptor::Listener
 	{
 	public:
 		/* Struct for RTP header. */
@@ -88,6 +88,7 @@ namespace RTC
 
 	public:
 		static const size_t HeaderSize{ 12 };
+
 		static bool IsRtp(const uint8_t* data, size_t len)
 		{
 			// NOTE: RtcpPacket::IsRtcp() must always be called before this method.
@@ -107,6 +108,11 @@ namespace RTC
 
 		static RtpPacket* Parse(const uint8_t* data, size_t len);
 
+		static uint32_t GetNextMediasoupPacketId();
+
+	private:
+		thread_local static uint32_t nextMediasoupPacketId;
+
 	private:
 		RtpPacket(
 		  Header* header,
@@ -119,7 +125,7 @@ namespace RTC
 	public:
 		~RtpPacket();
 
-		void Dump() const;
+		void Dump(int indentation = 0) const;
 		flatbuffers::Offset<FBS::RtpPacket::Dump> FillBuffer(flatbuffers::FlatBufferBuilder& builder) const;
 
 		const uint8_t* GetData() const
@@ -265,9 +271,19 @@ namespace RTC
 			this->ssrcAudioLevelExtensionId = id;
 		}
 
+		void SetDependencyDescriptorExtensionId(uint8_t id)
+		{
+			this->dependencyDescriptorExtensionId = id;
+		}
+
 		void SetVideoOrientationExtensionId(uint8_t id)
 		{
 			this->videoOrientationExtensionId = id;
+		}
+
+		void SetAbsCaptureTimeExtensionId(uint8_t id)
+		{
+			this->absCaptureTimeExtensionId = id;
 		}
 
 		void SetPlayoutDelayExtensionId(uint8_t id)
@@ -275,9 +291,9 @@ namespace RTC
 			this->playoutDelayExtensionId = id;
 		}
 
-		void SetDependencyDescriptorExtensionId(uint8_t id)
+		void SetMediasoupPacketIdExtensionId(uint8_t id)
 		{
-			this->dependencyDescriptorExtensionId = id;
+			this->mediasoupPacketIdExtensionId = id;
 		}
 
 		bool ReadMid(std::string& mid) const
@@ -405,6 +421,29 @@ namespace RTC
 			return true;
 		}
 
+		bool ReadDependencyDescriptor(
+		  std::unique_ptr<RTC::Codecs::DependencyDescriptor>& dependencyDescriptor,
+		  std::unique_ptr<RTC::Codecs::DependencyDescriptor::TemplateDependencyStructure>&
+		    templateDependencyStructure) const
+		{
+			uint8_t extenLen;
+			uint8_t* extenValue = GetExtension(this->dependencyDescriptorExtensionId, extenLen);
+
+			auto* value = Codecs::DependencyDescriptor::Parse(
+			  extenValue, extenLen, const_cast<RTC::RtpPacket*>(this), templateDependencyStructure);
+
+			if (!value)
+			{
+				return false;
+			}
+
+			dependencyDescriptor.reset(value);
+
+			return true;
+		}
+
+		void UpdateDependencyDescriptor(const uint8_t* data, size_t len);
+
 		bool ReadVideoOrientation(bool& camera, bool& flip, uint16_t& rotation) const
 		{
 			uint8_t extenLen;
@@ -442,6 +481,34 @@ namespace RTC
 			return true;
 		}
 
+		bool ReadAbsCaptureTime(uint64_t& absCaptureTimestamp, int64_t& estimatedCaptureClockOffset) const
+		{
+			uint8_t extenLen;
+			uint8_t* extenValue = GetExtension(this->absCaptureTimeExtensionId, extenLen);
+
+			// Extension value can be 8 or 16 bytes depending on whether it contains
+			// estimated capture clock offset or not.
+			//
+			// https://webrtc.googlesource.com/src/+/refs/heads/main/docs/native-code/rtp-hdrext/abs-capture-time
+			if (!extenValue || (extenLen != 8u && extenLen != 16u))
+			{
+				return false;
+			}
+
+			absCaptureTimestamp = Utils::Byte::Get8Bytes(extenValue, 0);
+
+			if (extenLen == 16)
+			{
+				estimatedCaptureClockOffset = static_cast<int64_t>(Utils::Byte::Get8Bytes(extenValue, 8));
+			}
+			else
+			{
+				estimatedCaptureClockOffset = 0;
+			}
+
+			return true;
+		}
+
 		bool ReadPlayoutDelay(uint16_t& minDelay, uint16_t& maxDelay) const
 		{
 			uint8_t extenLen;
@@ -455,26 +522,24 @@ namespace RTC
 			uint32_t v = Utils::Byte::Get3Bytes(extenValue, 0);
 			minDelay   = v >> 12u;
 			maxDelay   = v & 0xFFFu;
+
 			return true;
 		}
 
-		bool ReadDependencyDescriptor(
-		  std::unique_ptr<RTC::Codecs::DependencyDescriptor>& dependencyDescriptor,
-		  std::unique_ptr<RTC::Codecs::DependencyDescriptor::TemplateDependencyStructure>&
-		    templateDependencyStructure) const
+		/**
+		 * Custom id to identify this packet.
+		 */
+		bool ReadMediasoupPacketId(uint32_t& mediasoupPacketId) const
 		{
 			uint8_t extenLen;
-			uint8_t* extenValue = GetExtension(this->dependencyDescriptorExtensionId, extenLen);
+			uint8_t* extenValue = GetExtension(this->mediasoupPacketIdExtensionId, extenLen);
 
-			auto* value =
-			  Codecs::DependencyDescriptor::Parse(extenValue, extenLen, templateDependencyStructure);
-
-			if (!value)
+			if (extenLen != 4u)
 			{
 				return false;
 			}
 
-			dependencyDescriptor.reset(value);
+			mediasoupPacketId = Utils::Byte::Get4Bytes(extenValue, 0);
 
 			return true;
 		}
@@ -492,7 +557,8 @@ namespace RTC
 					return false;
 				}
 
-				// `-1` because we have 14 elements total 0..13 and `id` is in the range 1..14.
+				// `-1` because we have 14 elements total 0..13 and `id` is in the
+				// range 1..14.
 				return this->oneByteExtensions[id - 1] != nullptr;
 			}
 			else if (HasTwoBytesExtensions())
@@ -506,7 +572,8 @@ namespace RTC
 
 				auto* extension = it->second;
 
-				// In Two-Byte extensions value length may be zero. If so, return false.
+				// In Two-Byte extensions value length may be zero. If so, return
+				// false.
 				return extension->len != 0u;
 			}
 			else
@@ -530,7 +597,8 @@ namespace RTC
 					return nullptr;
 				}
 
-				// `-1` because we have 14 elements total 0..13 and `id` is in the range 1..14.
+				// `-1` because we have 14 elements total 0..13 and `id` is in the
+				// range 1..14.
 				auto* extension = this->oneByteExtensions[id - 1];
 
 				if (!extension)
@@ -556,7 +624,8 @@ namespace RTC
 
 				len = extension->len;
 
-				// In Two-Byte extensions value length may be zero. If so, return nullptr.
+				// In Two-Byte extensions value length may be zero. If so, return
+				// nullptr.
 				if (extension->len == 0u)
 				{
 					return nullptr;
@@ -653,12 +722,17 @@ namespace RTC
 	private:
 		void ParseExtensions();
 
+		/* Pure virtual methods inherited from RTC::Codecs::DependencyDescriptor::Listener. */
+	public:
+		void OnDependencyDescriptorUpdated(const uint8_t* data, size_t len);
+
 	private:
 		Header* header{ nullptr };
 		uint8_t* csrcList{ nullptr };
 		HeaderExtension* headerExtension{ nullptr };
 		// There might be up to 14 one-byte header extensions
-		// (https://datatracker.ietf.org/doc/html/rfc5285#section-4.2), use std::array.
+		// (https://datatracker.ietf.org/doc/html/rfc5285#section-4.2), use
+		// std::array.
 		std::array<OneByteExtension*, 14> oneByteExtensions{};
 		absl::flat_hash_map<uint8_t, TwoBytesExtension*> mapTwoBytesExtensions;
 		uint8_t midExtensionId{ 0u };
@@ -667,9 +741,11 @@ namespace RTC
 		uint8_t absSendTimeExtensionId{ 0u }; // 3个字节长度
 		uint8_t transportWideCc01ExtensionId{ 0u }; // 2个字节长度，wideSeqNumber
 		uint8_t ssrcAudioLevelExtensionId{ 0u }; // 1个字节长度, voice(1bit)+volume(7bit)
-		uint8_t videoOrientationExtensionId{ 0u }; // 1个字节长度
-		uint8_t playoutDelayExtensionId{ 0u };
 		uint8_t dependencyDescriptorExtensionId{ 0u };
+		uint8_t videoOrientationExtensionId{ 0u }; // 1个字节长度
+		uint8_t absCaptureTimeExtensionId{ 0u };
+		uint8_t playoutDelayExtensionId{ 0u };
+		uint8_t mediasoupPacketIdExtensionId{ 0u };
 		uint8_t* payload{ nullptr };
 		size_t payloadLength{ 0u };
 		uint8_t payloadPadding{ 0u };

@@ -26,6 +26,7 @@ namespace RTC
 		item->ssrc           = packet->GetSsrc();
 		item->sequenceNumber = packet->GetSequenceNumber();
 		item->timestamp      = packet->GetTimestamp();
+		item->marker         = packet->HasMarker();
 
 		return item;
 	}
@@ -46,6 +47,37 @@ namespace RTC
 		MS_TRACE();
 
 		Clear();
+	}
+
+	void RtpRetransmissionBuffer::Dump(int indentation) const
+	{
+		MS_TRACE();
+
+		MS_DUMP_CLEAN(indentation, "<RtpRetransmissionBuffer>");
+		MS_DUMP_CLEAN(
+		  indentation, "  buffer [size:%zu, maxSize:%" PRIu16 "]", this->buffer.size(), this->maxItems);
+		if (!this->buffer.empty())
+		{
+			const auto* oldestItem = GetOldest();
+			const auto* newestItem = GetNewest();
+
+			MS_DUMP_CLEAN(
+			  indentation,
+			  "  oldest item [seq:%" PRIu16 ", timestamp:%" PRIu32 "]",
+			  oldestItem->sequenceNumber,
+			  oldestItem->timestamp);
+			MS_DUMP_CLEAN(
+			  indentation,
+			  "  newest item [seq:%" PRIu16 ", timestamp:%" PRIu32 "]",
+			  newestItem->sequenceNumber,
+			  newestItem->timestamp);
+			MS_DUMP_CLEAN(
+			  indentation,
+			  "  buffer window: %" PRIu32 "ms",
+			  static_cast<uint32_t>(newestItem->timestamp * 1000 / this->clockRate) -
+			    static_cast<uint32_t>(oldestItem->timestamp * 1000 / this->clockRate));
+		}
+		MS_DUMP_CLEAN(indentation, "</RtpRetransmissionBuffer>");
 	}
 
 	RtpRetransmissionBuffer::Item* RtpRetransmissionBuffer::Get(uint16_t seq) const
@@ -425,33 +457,6 @@ namespace RTC
 		}
 
 		this->buffer.clear();
-	}
-
-	void RtpRetransmissionBuffer::Dump() const
-	{
-		MS_TRACE();
-
-		MS_DUMP("<RtpRetransmissionBuffer>");
-		MS_DUMP("  buffer [size:%zu, maxSize:%" PRIu16 "]", this->buffer.size(), this->maxItems);
-		if (!this->buffer.empty())
-		{
-			const auto* oldestItem = GetOldest();
-			const auto* newestItem = GetNewest();
-
-			MS_DUMP(
-			  "  oldest item [seq:%" PRIu16 ", timestamp:%" PRIu32 "]",
-			  oldestItem->sequenceNumber,
-			  oldestItem->timestamp);
-			MS_DUMP(
-			  "  newest item [seq:%" PRIu16 ", timestamp:%" PRIu32 "]",
-			  newestItem->sequenceNumber,
-			  newestItem->timestamp);
-			MS_DUMP(
-			  "  buffer window: %" PRIu32 "ms",
-			  static_cast<uint32_t>(newestItem->timestamp * 1000 / this->clockRate) -
-			    static_cast<uint32_t>(oldestItem->timestamp * 1000 / this->clockRate));
-		}
-		MS_DUMP("</RtpRetransmissionBuffer>");
 	}
 
 	RtpRetransmissionBuffer::Item* RtpRetransmissionBuffer::GetOldest() const

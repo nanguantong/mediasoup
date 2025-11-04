@@ -3,22 +3,10 @@
 
 use crate::fbs::{FromFbs, ToFbs, TryFromFbs};
 use mediasoup_sys::fbs::rtp_parameters;
-pub use mediasoup_types::rtp_parameters::*;
+use mediasoup_types::rtp_parameters::*;
 use std::borrow::Cow;
 use std::error::Error;
 use std::str::FromStr;
-use thiserror::Error;
-
-/// Error that caused [`MimeType`] parsing error.
-#[derive(Debug, Error, Eq, PartialEq)]
-pub enum ParseMimeTypeError {
-    /// Invalid MIME type input string
-    #[error("Invalid MIME type input string")]
-    InvalidInput,
-    /// Unknown MIME type
-    #[error("Unknown MIME type")]
-    UnknownMimeType,
-}
 
 impl<'a> TryFromFbs<'a> for RtpParameters {
     type FbsType = rtp_parameters::RtpParametersRef<'a>;
@@ -205,25 +193,30 @@ impl FromFbs for RtpHeaderExtensionUri {
             rtp_parameters::RtpHeaderExtensionUri::RepairRtpStreamId => {
                 RtpHeaderExtensionUri::RepairRtpStreamId
             }
+            rtp_parameters::RtpHeaderExtensionUri::AbsSendTime => {
+                RtpHeaderExtensionUri::AbsSendTime
+            }
+            rtp_parameters::RtpHeaderExtensionUri::TransportWideCcDraft01 => {
+                RtpHeaderExtensionUri::TransportWideCcDraft01
+            }
+            rtp_parameters::RtpHeaderExtensionUri::SsrcAudioLevel => {
+                RtpHeaderExtensionUri::SsrcAudioLevel
+            }
             rtp_parameters::RtpHeaderExtensionUri::DependencyDescriptor => {
                 RtpHeaderExtensionUri::DependencyDescriptor
             }
-            rtp_parameters::RtpHeaderExtensionUri::AudioLevel => RtpHeaderExtensionUri::AudioLevel,
             rtp_parameters::RtpHeaderExtensionUri::VideoOrientation => {
                 RtpHeaderExtensionUri::VideoOrientation
             }
             rtp_parameters::RtpHeaderExtensionUri::TimeOffset => RtpHeaderExtensionUri::TimeOffset,
-            rtp_parameters::RtpHeaderExtensionUri::TransportWideCcDraft01 => {
-                RtpHeaderExtensionUri::TransportWideCcDraft01
-            }
-            rtp_parameters::RtpHeaderExtensionUri::AbsSendTime => {
-                RtpHeaderExtensionUri::AbsSendTime
-            }
             rtp_parameters::RtpHeaderExtensionUri::AbsCaptureTime => {
                 RtpHeaderExtensionUri::AbsCaptureTime
             }
             rtp_parameters::RtpHeaderExtensionUri::PlayoutDelay => {
                 RtpHeaderExtensionUri::PlayoutDelay
+            }
+            rtp_parameters::RtpHeaderExtensionUri::MediasoupPacketId => {
+                RtpHeaderExtensionUri::MediasoupPacketId
             }
         }
     }
@@ -241,25 +234,30 @@ impl ToFbs for RtpHeaderExtensionUri {
             RtpHeaderExtensionUri::RepairRtpStreamId => {
                 rtp_parameters::RtpHeaderExtensionUri::RepairRtpStreamId
             }
+            RtpHeaderExtensionUri::AbsSendTime => {
+                rtp_parameters::RtpHeaderExtensionUri::AbsSendTime
+            }
+            RtpHeaderExtensionUri::TransportWideCcDraft01 => {
+                rtp_parameters::RtpHeaderExtensionUri::TransportWideCcDraft01
+            }
+            RtpHeaderExtensionUri::SsrcAudioLevel => {
+                rtp_parameters::RtpHeaderExtensionUri::SsrcAudioLevel
+            }
             RtpHeaderExtensionUri::DependencyDescriptor => {
                 rtp_parameters::RtpHeaderExtensionUri::DependencyDescriptor
             }
-            RtpHeaderExtensionUri::AudioLevel => rtp_parameters::RtpHeaderExtensionUri::AudioLevel,
             RtpHeaderExtensionUri::VideoOrientation => {
                 rtp_parameters::RtpHeaderExtensionUri::VideoOrientation
             }
             RtpHeaderExtensionUri::TimeOffset => rtp_parameters::RtpHeaderExtensionUri::TimeOffset,
-            RtpHeaderExtensionUri::TransportWideCcDraft01 => {
-                rtp_parameters::RtpHeaderExtensionUri::TransportWideCcDraft01
-            }
-            RtpHeaderExtensionUri::AbsSendTime => {
-                rtp_parameters::RtpHeaderExtensionUri::AbsSendTime
-            }
             RtpHeaderExtensionUri::AbsCaptureTime => {
                 rtp_parameters::RtpHeaderExtensionUri::AbsCaptureTime
             }
             RtpHeaderExtensionUri::PlayoutDelay => {
                 rtp_parameters::RtpHeaderExtensionUri::PlayoutDelay
+            }
+            RtpHeaderExtensionUri::MediasoupPacketId => {
+                rtp_parameters::RtpHeaderExtensionUri::MediasoupPacketId
             }
             RtpHeaderExtensionUri::Unsupported => panic!("Invalid RTP extension header URI"),
         }

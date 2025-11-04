@@ -218,6 +218,8 @@ namespace RTC
 
 		this->paused = data->paused();
 
+		this->enableMediasoupPacketIdHeaderExtension = data->enableMediasoupPacketIdHeaderExtension();
+
 		// The number of encodings in rtpParameters must match the number of encodings
 		// in rtpMapping.
 		if (this->rtpParameters.encodings.size() != this->rtpMapping.encodings.size())
@@ -264,14 +266,21 @@ namespace RTC
 				this->rtpHeaderExtensionIds.ssrcAudioLevel = exten.id;
 			}
 
+			if (
+			  this->rtpHeaderExtensionIds.dependencyDescriptor == 0u &&
+			  exten.type == RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR)
+			{
+				this->rtpHeaderExtensionIds.dependencyDescriptor = exten.id;
+			}
+
 			if (this->rtpHeaderExtensionIds.videoOrientation == 0u && exten.type == RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION)
 			{
 				this->rtpHeaderExtensionIds.videoOrientation = exten.id;
 			}
 
-			if (this->rtpHeaderExtensionIds.toffset == 0u && exten.type == RTC::RtpHeaderExtensionUri::Type::TOFFSET)
+			if (this->rtpHeaderExtensionIds.timeOffset == 0u && exten.type == RTC::RtpHeaderExtensionUri::Type::TIME_OFFSET)
 			{
-				this->rtpHeaderExtensionIds.toffset = exten.id;
+				this->rtpHeaderExtensionIds.timeOffset = exten.id;
 			}
 
 			if (this->rtpHeaderExtensionIds.absCaptureTime == 0u && exten.type == RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME)
@@ -284,11 +293,9 @@ namespace RTC
 				this->rtpHeaderExtensionIds.playoutDelay = exten.id;
 			}
 
-			if (
-			  this->rtpHeaderExtensionIds.dependencyDescriptor == 0u &&
-			  exten.type == RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR)
+			if (this->rtpHeaderExtensionIds.mediasoupPacketId == 0u && exten.type == RTC::RtpHeaderExtensionUri::Type::MEDIASOUP_PACKET_ID)
 			{
-				this->rtpHeaderExtensionIds.dependencyDescriptor = exten.id;
+				this->rtpHeaderExtensionIds.mediasoupPacketId = exten.id;
 			}
 		}
 
@@ -1395,8 +1402,7 @@ namespace RTC
 					  extenLen,
 					  bufferPtr);
 
-					// Not needed since this is the latest added extension.
-					// bufferPtr += extenLen;
+					bufferPtr += extenLen;
 				}
 			}
 			else if (this->kind == RTC::Media::Kind::VIDEO)
@@ -1435,21 +1441,6 @@ namespace RTC
 					bufferPtr += extenLen;
 				}
 
-				// Proxy urn:3gpp:video-orientation.
-				extenValue = packet->GetExtension(this->rtpHeaderExtensionIds.videoOrientation, extenLen);
-
-				if (extenValue)
-				{
-					std::memcpy(bufferPtr, extenValue, extenLen);
-
-					extensions.emplace_back(
-					  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION),
-					  extenLen,
-					  bufferPtr);
-
-					bufferPtr += extenLen;
-				}
-
 				// Proxy https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension.
 				extenValue = packet->GetExtension(this->rtpHeaderExtensionIds.dependencyDescriptor, extenLen);
 
@@ -1465,23 +1456,101 @@ namespace RTC
 					bufferPtr += extenLen;
 				}
 
-				// Proxy urn:ietf:params:rtp-hdrext:toffset.
-				extenValue = packet->GetExtension(this->rtpHeaderExtensionIds.toffset, extenLen);
+				// Proxy urn:3gpp:video-orientation.
+				extenValue = packet->GetExtension(this->rtpHeaderExtensionIds.videoOrientation, extenLen);
 
 				if (extenValue)
 				{
 					std::memcpy(bufferPtr, extenValue, extenLen);
 
 					extensions.emplace_back(
-					  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::TOFFSET), extenLen, bufferPtr);
+					  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION),
+					  extenLen,
+					  bufferPtr);
+
+					bufferPtr += extenLen;
+				}
+
+				// Proxy urn:ietf:params:rtp-hdrext:toffset.
+				extenValue = packet->GetExtension(this->rtpHeaderExtensionIds.timeOffset, extenLen);
+
+				if (extenValue)
+				{
+					std::memcpy(bufferPtr, extenValue, extenLen);
+
+					extensions.emplace_back(
+					  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::TIME_OFFSET), extenLen, bufferPtr);
+
+					bufferPtr += extenLen;
+				}
+			}
+
+			// Add urn:mediasoup:params:rtp-hdrext:packet-id.
+			//
+			// Here if may happen that the packet ALREADY contains the header (if it comes
+			// from another mediasoup Router in which it was added). If so, honor it.
+			// Otherwise, if the flag `enableMediasoupPacketIdHeaderExtension` is set,
+			// add it.
+			{
+				extenValue = packet->GetExtension(this->rtpHeaderExtensionIds.mediasoupPacketId, extenLen);
+
+				if (extenValue)
+				{
+					std::memcpy(bufferPtr, extenValue, extenLen);
+
+					extensions.emplace_back(
+					  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::MEDIASOUP_PACKET_ID),
+					  extenLen,
+					  bufferPtr);
+
+					// Not needed since this is the latest added extension.
+					// bufferPtr += extenLen;
+				}
+				else if (this->enableMediasoupPacketIdHeaderExtension)
+				{
+					extenLen = 4;
+
+					Utils::Byte::Set4Bytes(bufferPtr, 0, RTC::RtpPacket::GetNextMediasoupPacketId());
+
+					extensions.emplace_back(
+					  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::MEDIASOUP_PACKET_ID),
+					  extenLen,
+					  bufferPtr);
 
 					// Not needed since this is the latest added extension.
 					// bufferPtr += extenLen;
 				}
 			}
 
+			uint8_t highestExtenId{ 0u };
+			uint8_t highestExtenLen{ 0u };
+
+			for (const auto& extension : extensions)
+			{
+				if (extension.id > highestExtenId)
+				{
+					highestExtenId = extension.id;
+				}
+
+				if (extension.len > highestExtenLen)
+				{
+					highestExtenLen = extension.len;
+				}
+			}
+
 			// Set the new extensions into the packet.
-			packet->SetExtensions(packet->HasTwoBytesExtensions() ? 2 : 1, extensions);
+			// Use 1-byte or 2-bytes type depending on the highest extension id and
+			// length we are introducing in the packet.
+			uint8_t type = highestExtenId <= 14 && highestExtenLen <= 16 ? 1 : 2;
+
+			MS_DEBUG_DEV(
+			  "using %" PRIu8 " byte(s) header extensions [highestExtenId:%" PRIu8
+			  ", highestExtenLen:%" PRIu8 "]",
+			  type,
+			  highestExtenId,
+			  highestExtenLen);
+
+			packet->SetExtensions(type, extensions);
 
 			// Assign mediasoup RTP header extension ids (just those that mediasoup may
 			// be interested in after passing it to the Router).
@@ -1494,10 +1563,14 @@ namespace RTC
 			  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::SSRC_AUDIO_LEVEL));
 			packet->SetVideoOrientationExtensionId(
 			  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION));
+			packet->SetAbsCaptureTimeExtensionId(
+			  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME));
 			packet->SetPlayoutDelayExtensionId(
 			  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY));
 			packet->SetDependencyDescriptorExtensionId(
 			  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR));
+			packet->SetMediasoupPacketIdExtensionId(
+			  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::MEDIASOUP_PACKET_ID));
 		}
 
 		return true;
