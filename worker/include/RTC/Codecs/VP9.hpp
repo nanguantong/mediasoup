@@ -99,7 +99,7 @@ namespace RTC
 				  : RTC::Codecs::EncodingContext(params)
 				{
 				}
-				~EncodingContext() = default;
+				~EncodingContext() override = default;
 
 				/* Pure virtual methods inherited from RTC::Codecs::EncodingContext. */
 			public:
@@ -117,7 +117,7 @@ namespace RTC
 			{
 			public:
 				explicit PayloadDescriptorHandler(PayloadDescriptor* payloadDescriptor);
-				~PayloadDescriptorHandler() = default;
+				~PayloadDescriptorHandler() override = default;
 
 			public:
 				void Dump(int indentation = 0) const override
@@ -126,7 +126,7 @@ namespace RTC
 				}
 				bool Process(
 				  RTC::Codecs::EncodingContext* encodingContext, RTC::RtpPacket* packet, bool& marker) override;
-				void RtpPacketCloned(RtpPacket* packet) override{};
+				void RtpPacketCloned(RtpPacket* packet) override {};
 				std::unique_ptr<RTC::Codecs::PayloadDescriptor::Encoder> GetEncoder() const override
 				{
 					return nullptr;

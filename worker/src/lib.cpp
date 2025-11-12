@@ -23,7 +23,7 @@
 #include <csignal> // sigaction()
 #include <string>
 
-void IgnoreSignals();
+static void ignoreSignals();
 
 // NOLINTNEXTLINE
 extern "C" int mediasoup_worker_run(
@@ -133,10 +133,8 @@ extern "C" int mediasoup_worker_run(
 		RTC::DtlsTransport::ClassInit();
 		RTC::SrtpSession::ClassInit();
 
-#ifdef MS_EXECUTABLE
 		// Ignore some signals.
-		IgnoreSignals();
-#endif
+		ignoreSignals();
 
 		// Run the Worker.
 		const Worker worker(channel.get());
@@ -175,15 +173,14 @@ extern "C" int mediasoup_worker_run(
 #endif
 }
 
-void IgnoreSignals()
+static void ignoreSignals()
 {
+#ifdef MS_EXECUTABLE
 #ifndef _WIN32
 	MS_TRACE();
 
 	int err;
-	struct sigaction act
-	{
-	}; // NOLINT(cppcoreguidelines-pro-type-member-init)
+	struct sigaction act{}; // NOLINT(cppcoreguidelines-pro-type-member-init)
 
 	// clang-format off
 	absl::flat_hash_map<std::string, int> const ignoredSignals =
@@ -217,5 +214,6 @@ void IgnoreSignals()
 			MS_THROW_ERROR("sigaction() failed for signal %s: %s", sigName.c_str(), std::strerror(errno));
 		}
 	}
+#endif
 #endif
 }

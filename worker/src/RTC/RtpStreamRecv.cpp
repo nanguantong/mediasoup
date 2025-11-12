@@ -40,16 +40,11 @@ namespace RTC
 		auto temporalLayer = packet->GetTemporalLayer();
 
 		// Sanity check. Do not allow spatial layers higher than defined.
-		if (spatialLayer > this->spatialLayerCounters.size() - 1)
-		{
-			spatialLayer = this->spatialLayerCounters.size() - 1;
-		}
+		spatialLayer = std::min(static_cast<size_t>(spatialLayer), this->spatialLayerCounters.size() - 1);
 
 		// Sanity check. Do not allow temporal layers higher than defined.
-		if (temporalLayer > this->spatialLayerCounters[0].size() - 1)
-		{
-			temporalLayer = this->spatialLayerCounters[0].size() - 1;
-		}
+		temporalLayer =
+		  std::min(static_cast<size_t>(temporalLayer), this->spatialLayerCounters[0].size() - 1);
 
 		auto& counter = this->spatialLayerCounters[spatialLayer][temporalLayer];
 
@@ -247,8 +242,9 @@ namespace RTC
 				{
 					auto layer = std::to_string(sIdx) + "." + std::to_string(tIdx);
 
-					bitrateByLayer.emplace_back(FBS::RtpStream::CreateBitrateByLayerDirect(
-					  builder, layer.c_str(), GetBitrate(nowMs, sIdx, tIdx)));
+					bitrateByLayer.emplace_back(
+					  FBS::RtpStream::CreateBitrateByLayerDirect(
+					    builder, layer.c_str(), GetBitrate(nowMs, sIdx, tIdx)));
 				}
 			}
 		}
@@ -474,7 +470,7 @@ namespace RTC
 
 		report->SetSsrc(GetSsrc());
 
-		const uint32_t prevPacketsLost = this->packetsLost;
+		const int32_t prevPacketsLost = this->packetsLost;
 
 		// Calculate Packets Expected and Lost.
 		auto expected = GetExpectedPackets();
@@ -485,7 +481,7 @@ namespace RTC
 		}
 		else
 		{
-			this->packetsLost = 0u;
+			this->packetsLost = 0;
 		}
 
 		// Calculate Fraction Lost.
@@ -512,9 +508,9 @@ namespace RTC
 		// Worst remote fraction lost is not worse than local one.
 		if (worstRemoteFractionLost <= this->fractionLost)
 		{
-			this->reportedPacketLost += (this->packetsLost - prevPacketsLost);
+			this->reportedPacketsLost += (this->packetsLost - prevPacketsLost);
 
-			report->SetTotalLost(this->reportedPacketLost);
+			report->SetTotalLost(this->reportedPacketsLost);
 			report->SetFractionLost(this->fractionLost);
 		}
 		else
@@ -522,9 +518,9 @@ namespace RTC
 			// Recalculate packetsLost.
 			const uint32_t newLostInterval = (worstRemoteFractionLost * expectedInterval) >> 8;
 
-			this->reportedPacketLost += newLostInterval;
+			this->reportedPacketsLost += newLostInterval;
 
-			report->SetTotalLost(this->reportedPacketLost);
+			report->SetTotalLost(this->reportedPacketsLost);
 			report->SetFractionLost(worstRemoteFractionLost);
 		}
 
@@ -629,10 +625,7 @@ namespace RTC
 		this->rtt += (static_cast<float>(rtt & 0x0000FFFF) / 65536) * 1000;
 
 		// Avoid negative RTT value since it doesn't make sense.
-		if (this->rtt <= 0.0f)
-		{
-			this->rtt = 0.0f;
-		}
+		this->rtt = std::max(this->rtt, 0.0f);
 
 		// Tell it to the NackGenerator.
 		if (this->params.useNack)
@@ -792,10 +785,7 @@ namespace RTC
 			return;
 		}
 
-		if (lost > received)
-		{
-			lost = received;
-		}
+		lost = std::min(lost, received);
 
 		if (repaired > lost)
 		{

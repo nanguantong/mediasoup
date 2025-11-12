@@ -17,6 +17,44 @@ namespace RTC
 
 	static constexpr size_t TargetLayerRetransmissionBufferSize{ 15u };
 
+	/* Class methods */
+
+	void PipeConsumer::StorePacketInTargetLayerRetransmissionBuffer(
+	  std::map<uint16_t, RTC::SharedRtpPacket, RTC::SeqManager<uint16_t>::SeqLowerThan>&
+	    targetLayerRetransmissionBuffer,
+	  RTC::RtpPacket* packet,
+	  RTC::SharedRtpPacket& sharedPacket)
+	{
+		MS_TRACE();
+
+		MS_DEBUG_DEV(
+		  "storing packet in target layer retransmission buffer [ssrc:%" PRIu32 ", seq:%" PRIu16
+		  ", ts:%" PRIu32 "]",
+		  packet->GetSsrc(),
+		  packet->GetSequenceNumber(),
+		  packet->GetTimestamp());
+
+		// Store original packet into the buffer. Only clone once and only if
+		// necessary.
+		if (!sharedPacket.HasPacket())
+		{
+			sharedPacket.Assign(packet);
+		}
+		// Assert that, if sharedPacket was already filled, both packet and
+		// sharedPacket are the very same RTP packet.
+		else
+		{
+			sharedPacket.AssertSamePacket(packet);
+		}
+
+		targetLayerRetransmissionBuffer[packet->GetSequenceNumber()] = sharedPacket;
+
+		if (targetLayerRetransmissionBuffer.size() > TargetLayerRetransmissionBufferSize)
+		{
+			targetLayerRetransmissionBuffer.erase(targetLayerRetransmissionBuffer.begin());
+		}
+	}
+
 	/* Instance methods. */
 
 	PipeConsumer::PipeConsumer(
@@ -226,6 +264,7 @@ namespace RTC
 		return 0u;
 	}
 
+	// NOLINTNEXTLINE (misc-no-recursion)
 	void PipeConsumer::SendRtpPacket(RTC::RtpPacket* packet, RTC::SharedRtpPacket& sharedPacket)
 	{
 		MS_TRACE();
@@ -513,10 +552,7 @@ namespace RTC
 			auto fractionLost = rtpStream->GetFractionLost();
 
 			// If our fraction lost is worse than the given one, update it.
-			if (fractionLost > worstRemoteFractionLost)
-			{
-				worstRemoteFractionLost = fractionLost;
-			}
+			worstRemoteFractionLost = std::max(fractionLost, worstRemoteFractionLost);
 		}
 	}
 
@@ -617,10 +653,7 @@ namespace RTC
 
 		for (auto* rtpStream : this->rtpStreams)
 		{
-			if (rtpStream->GetRtt() > rtt)
-			{
-				rtt = rtpStream->GetRtt();
-			}
+			rtt = std::max(rtpStream->GetRtt(), rtt);
 		}
 
 		return rtt;
@@ -820,42 +853,6 @@ namespace RTC
 			auto mappedSsrc = consumableRtpEncoding.ssrc;
 
 			this->listener->OnConsumerKeyFrameRequested(this, mappedSsrc);
-		}
-	}
-
-	void PipeConsumer::StorePacketInTargetLayerRetransmissionBuffer(
-	  std::map<uint16_t, RTC::SharedRtpPacket, RTC::SeqManager<uint16_t>::SeqLowerThan>&
-	    targetLayerRetransmissionBuffer,
-	  RTC::RtpPacket* packet,
-	  RTC::SharedRtpPacket& sharedPacket)
-	{
-		MS_TRACE();
-
-		MS_DEBUG_DEV(
-		  "storing packet in target layer retransmission buffer [ssrc:%" PRIu32 ", seq:%" PRIu16
-		  ", ts:%" PRIu32 "]",
-		  packet->GetSsrc(),
-		  packet->GetSequenceNumber(),
-		  packet->GetTimestamp());
-
-		// Store original packet into the buffer. Only clone once and only if
-		// necessary.
-		if (!sharedPacket.HasPacket())
-		{
-			sharedPacket.Assign(packet);
-		}
-		// Assert that, if sharedPacket was already filled, both packet and
-		// sharedPacket are the very same RTP packet.
-		else
-		{
-			sharedPacket.AssertSamePacket(packet);
-		}
-
-		targetLayerRetransmissionBuffer[packet->GetSequenceNumber()] = sharedPacket;
-
-		if (targetLayerRetransmissionBuffer.size() > TargetLayerRetransmissionBufferSize)
-		{
-			targetLayerRetransmissionBuffer.erase(targetLayerRetransmissionBuffer.begin());
 		}
 	}
 

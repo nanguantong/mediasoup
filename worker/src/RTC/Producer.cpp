@@ -14,8 +14,7 @@
 #include "RTC/RtcLogger.hpp"
 #endif
 #include <absl/container/inlined_vector.h>
-#include <algorithm> // std::max, std::min
-#include <cstring>   // std::memcpy()
+#include <cstring> // std::memcpy()
 
 namespace RTC
 {
@@ -279,13 +278,14 @@ namespace RTC
 
 		for (const auto& encodingMapping : this->rtpMapping.encodings)
 		{
-			encodings.emplace_back(FBS::RtpParameters::CreateEncodingMappingDirect(
-			  builder,
-			  encodingMapping.rid.c_str(),
-			  encodingMapping.ssrc != 0u ? flatbuffers::Optional<uint32_t>(encodingMapping.ssrc)
-			                             : flatbuffers::nullopt,
-			  nullptr, /* capability mode. NOTE: Present in NODE*/
-			  encodingMapping.mappedSsrc));
+			encodings.emplace_back(
+			  FBS::RtpParameters::CreateEncodingMappingDirect(
+			    builder,
+			    encodingMapping.rid.c_str(),
+			    encodingMapping.ssrc != 0u ? flatbuffers::Optional<uint32_t>(encodingMapping.ssrc)
+			                               : flatbuffers::nullopt,
+			    nullptr, /* capability mode. NOTE: Present in NODE*/
+			    encodingMapping.mappedSsrc));
 		}
 
 		// Build rtpMapping.
@@ -1526,12 +1526,13 @@ namespace RTC
 				continue;
 			}
 
-			scores.emplace_back(FBS::Producer::CreateScoreDirect(
-			  this->shared->channelNotifier->GetBufferBuilder(),
-			  rtpStream->GetEncodingIdx(),
-			  rtpStream->GetSsrc(),
-			  !rtpStream->GetRid().empty() ? rtpStream->GetRid().c_str() : nullptr,
-			  rtpStream->GetScore()));
+			scores.emplace_back(
+			  FBS::Producer::CreateScoreDirect(
+			    this->shared->channelNotifier->GetBufferBuilder(),
+			    rtpStream->GetEncodingIdx(),
+			    rtpStream->GetSsrc(),
+			    !rtpStream->GetRid().empty() ? rtpStream->GetRid().c_str() : nullptr,
+			    rtpStream->GetScore()));
 		}
 
 		auto notification = FBS::Producer::CreateScoreNotificationDirect(

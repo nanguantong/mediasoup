@@ -45,6 +45,7 @@ namespace RTC
 
 			void Dump(int indentation = 0) const;
 			size_t Serialize(uint8_t* buffer);
+			// NOLINTNEXTLINE (readability-convert-member-functions-to-static)
 			size_t GetSize() const
 			{
 				return HeaderSize;
@@ -59,40 +60,19 @@ namespace RTC
 			}
 			uint8_t GetFractionLost() const
 			{
-				return uint8_t{ Utils::Byte::Get1Byte((uint8_t*)this->header, 4) };
+				return Utils::Byte::Get1Byte(reinterpret_cast<uint8_t*>(this->header), 4);
 			}
 			void SetFractionLost(uint8_t fractionLost)
 			{
-				Utils::Byte::Set1Byte((uint8_t*)this->header, 4, fractionLost);
+				Utils::Byte::Set1Byte(reinterpret_cast<uint8_t*>(this->header), 4, fractionLost);
 			}
 			int32_t GetTotalLost() const
 			{
-				auto value = uint32_t{ Utils::Byte::Get3Bytes((uint8_t*)this->header, 5) };
-
-				// Possitive value.
-				if (((value >> 23) & 1) == 0)
-				{
-					return value;
-				}
-
-				// Negative value.
-				if (value != 0x0800000)
-				{
-					value &= ~(1 << 23);
-				}
-
-				return -value;
+				return Utils::Byte::Get3BytesSigned(reinterpret_cast<uint8_t*>(this->header), 5);
 			}
 			void SetTotalLost(int32_t totalLost)
 			{
-				// Get the limit value for possitive and negative totalLost.
-				int32_t clamp = (totalLost >= 0)         ? totalLost > 0x07FFFFF ? 0x07FFFFF : totalLost
-				                : -totalLost > 0x0800000 ? 0x0800000
-				                                         : -totalLost;
-
-				uint32_t value = (totalLost >= 0) ? (clamp & 0x07FFFFF) : (clamp | 0x0800000);
-
-				Utils::Byte::Set3Bytes(reinterpret_cast<uint8_t*>(this->header), 5, value);
+				Utils::Byte::Set3BytesSigned(reinterpret_cast<uint8_t*>(this->header), 5, totalLost);
 			}
 			uint32_t GetLastSeq() const
 			{
@@ -135,7 +115,7 @@ namespace RTC
 		class ReceiverReportPacket : public Packet
 		{
 		public:
-			static size_t MaxReportsPerPacket;
+			static size_t maxReportsPerPacket;
 
 			using Iterator = std::vector<ReceiverReport*>::iterator;
 
@@ -191,10 +171,11 @@ namespace RTC
 		public:
 			void Dump(int indentation = 0) const override;
 			size_t Serialize(uint8_t* buffer) override;
-			// NOTE: We need to force this since when we parse a SenderReportPacket that
-			// contains receive report blocks we also generate a second ReceiverReportPacket
-			// from same data and len, so parent Packet::GetType() would return
-			// this->type which would be SR instead of RR.
+			// NOTE: We need to force this since when we parse a SenderReportPacket
+			// that contains receive report blocks we also generate a second
+			// ReceiverReportPacket/ from same data and len, so parent
+			// Packet::GetType() would return this->type which would be SR instead of
+			// RR.
 			Type GetType() const override
 			{
 				return Type::RR;
@@ -209,7 +190,7 @@ namespace RTC
 				// If number of reports exceeds 31 then the required number of packets
 				// will be serialized which will take the size calculated below.
 				size_t size = (Packet::CommonHeaderSize + 4u /* this->ssrc */) *
-				              ((this->GetCount() / MaxReportsPerPacket) + 1);
+				              ((this->GetCount() / maxReportsPerPacket) + 1);
 				size += ReceiverReport::HeaderSize * this->GetCount();
 
 				return size;

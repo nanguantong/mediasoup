@@ -9,7 +9,6 @@
 #include "Utils.hpp"
 #include "RTC/Consts.hpp"
 #include "RTC/RtpDictionaries.hpp"
-#include <algorithm> // std::max, std::min
 
 namespace RTC
 {
@@ -594,7 +593,7 @@ namespace RTC
 		this->sentPriorScore = totalSent;
 
 		// Calculate number of packets lost in this interval.
-		const uint32_t totalLost = report->GetTotalLost() > 0 ? report->GetTotalLost() : 0;
+		const int32_t totalLost = report->GetTotalLost() > 0 ? report->GetTotalLost() : 0;
 		uint32_t lost;
 
 		if (totalLost < this->lostPriorScore)

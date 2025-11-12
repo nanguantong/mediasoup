@@ -78,7 +78,7 @@ namespace RTC
 		/* Struct for replacing and setting header extensions. */
 		struct GenericExtension
 		{
-			GenericExtension(uint8_t id, uint8_t len, uint8_t* value) : id(id), len(len), value(value){};
+			GenericExtension(uint8_t id, uint8_t len, uint8_t* value) : id(id), len(len), value(value) {};
 
 			uint8_t id;
 			uint8_t len;
@@ -122,7 +122,7 @@ namespace RTC
 		  size_t size);
 
 	public:
-		~RtpPacket();
+		~RtpPacket() override;
 
 		void Dump(int indentation = 0) const;
 		flatbuffers::Offset<FBS::RtpPacket::Dump> FillBuffer(flatbuffers::FlatBufferBuilder& builder) const;
@@ -719,7 +719,7 @@ namespace RTC
 
 		/* Pure virtual methods inherited from RTC::Codecs::DependencyDescriptor::Listener. */
 	public:
-		void OnDependencyDescriptorUpdated(const uint8_t* data, size_t len);
+		void OnDependencyDescriptorUpdated(const uint8_t* data, size_t len) override;
 
 	private:
 		Header* header{ nullptr };

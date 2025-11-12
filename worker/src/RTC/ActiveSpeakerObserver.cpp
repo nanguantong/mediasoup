@@ -4,7 +4,6 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "RTC/RtpDictionaries.hpp"
-#include <algorithm> // std::max, std::min
 
 namespace RTC
 {
@@ -50,15 +49,15 @@ namespace RTC
 	static inline double computeActivityScore(
 	  const uint8_t vL, const uint32_t nR, const double p, const double lambda)
 	{
-		double activityScore = std::log(binomialCoefficient(nR, vL)) + vL * std::log(p) +
-		                       (nR - vL) * std::log(1 - p) - std::log(lambda) + lambda * vL;
+		double activityScore = std::log(binomialCoefficient(nR, vL)) + (vL * std::log(p)) +
+		                       ((nR - vL) * std::log(1 - p)) - std::log(lambda) + (lambda * vL);
 
 		activityScore = std::max(activityScore, MinActivityScore);
 
 		return activityScore;
 	}
 
-	inline bool ComputeBigs(
+	static inline bool computeBigs(
 	  const std::vector<uint8_t>& littles, std::vector<uint8_t>& bigs, uint8_t threashold)
 	{
 		const uint32_t littleLen       = littles.size();
@@ -535,14 +534,14 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		return ComputeBigs(this->immediates, this->mediums, MediumThreshold);
+		return computeBigs(this->immediates, this->mediums, MediumThreshold);
 	}
 
 	bool ActiveSpeakerObserver::Speaker::ComputeLongs()
 	{
 		MS_TRACE();
 
-		return ComputeBigs(this->mediums, this->longs, LongThreashold);
+		return computeBigs(this->mediums, this->longs, LongThreashold);
 	}
 
 	void ActiveSpeakerObserver::Speaker::EvalImmediateActivityScore()

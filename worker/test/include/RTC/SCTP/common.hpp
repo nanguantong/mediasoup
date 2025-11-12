@@ -2,16 +2,16 @@
 #define MS_TEST_RTC_SCTP_CHUNKS_COMMON_HPP
 
 #include "common.hpp"
-#include "MediaSoupErrors.hpp"
-#include "Utils.hpp"
-#include "helpers.hpp" // in worker/test/include/
-#include "RTC/SCTP/packet/Chunk.hpp"
-#include "RTC/SCTP/packet/ErrorCause.hpp"
-#include "RTC/SCTP/packet/Packet.hpp"
-#include "RTC/SCTP/packet/Parameter.hpp"
-#include "RTC/SCTP/packet/errorCauses/InvalidStreamIdentifierErrorCause.hpp"
-#include "RTC/SCTP/packet/parameters/HeartbeatInfoParameter.hpp"
-#include <catch2/catch_test_macros.hpp>
+#include "MediaSoupErrors.hpp"            // IWYU pragma: export
+#include "Utils.hpp"                      // IWYU pragma: export
+#include "helpers.hpp"                    // IWYU pragma: export in worker/test/include/
+#include "RTC/SCTP/packet/Chunk.hpp"      // IWYU pragma: export
+#include "RTC/SCTP/packet/ErrorCause.hpp" // IWYU pragma: export
+#include "RTC/SCTP/packet/Packet.hpp"     // IWYU pragma: export
+#include "RTC/SCTP/packet/Parameter.hpp"  // IWYU pragma: export
+#include "RTC/SCTP/packet/errorCauses/InvalidStreamIdentifierErrorCause.hpp" // IWYU pragma: export
+#include "RTC/SCTP/packet/parameters/HeartbeatInfoParameter.hpp"             // IWYU pragma: export
+#include <catch2/catch_test_macros.hpp>                                      // IWYU pragma: export
 
 using namespace RTC::SCTP;
 
@@ -23,8 +23,10 @@ extern thread_local uint8_t CloneBuffer[66663];
 extern thread_local uint8_t DataBuffer[66664];
 extern thread_local uint8_t ThrowBuffer[66665];
 
-void resetBuffers();
+void ResetBuffers();
 
+// clang-format off
+// NOLINTNEXTLINE (cppcoreguidelines-macro-usage)
 #define CHECK_PACKET(                                                                              \
   /*const Packet**/ packet,                                                                        \
   /*const uint8_t**/ buffer,                                                                       \
@@ -57,12 +59,13 @@ void resetBuffers();
 		REQUIRE(packet->HasChunks() == (chunksCount > 0));                                             \
 		REQUIRE(packet->GetChunkAt(chunksCount) == nullptr);                                           \
 		REQUIRE(                                                                                       \
-		  helpers::areBuffersEqual(packet->GetBuffer(), packet->GetLength(), buffer, length) == true); \
+		  helpers::AreBuffersEqual(packet->GetBuffer(), packet->GetLength(), buffer, length) == true); \
 		REQUIRE_THROWS_AS(                                                                             \
 		  const_cast<Packet*>(packet)->Serialize(ThrowBuffer, length - 1), MediaSoupError);            \
 		REQUIRE_THROWS_AS(packet->Clone(ThrowBuffer, length - 1), MediaSoupError);                     \
 	} while (false)
 
+// NOLINTNEXTLINE (cppcoreguidelines-macro-usage)
 #define CHECK_CHUNK(                                                                                 \
   /*const Chunk**/ chunk,                                                                            \
   /*uint8_t**/ buffer,                                                                               \
@@ -120,7 +123,7 @@ void resetBuffers();
 		if (buffer)                                                                                      \
 		{                                                                                                \
 			REQUIRE(                                                                                       \
-			  helpers::areBuffersEqual(chunk->GetBuffer(), chunk->GetLength(), buffer, length) == true);   \
+			  helpers::AreBuffersEqual(chunk->GetBuffer(), chunk->GetLength(), buffer, length) == true);   \
 		}                                                                                                \
 		REQUIRE_THROWS_AS(                                                                               \
 		  const_cast<Chunk*>(reinterpret_cast<const Chunk*>(chunk))->Serialize(ThrowBuffer, length - 1), \
@@ -128,6 +131,7 @@ void resetBuffers();
 		REQUIRE_THROWS_AS(chunk->Clone(ThrowBuffer, length - 1), MediaSoupError);                        \
 	} while (false)
 
+// NOLINTNEXTLINE (cppcoreguidelines-macro-usage)
 #define CHECK_PARAMETER(                                                                            \
   /*const Parameter**/ parameter,                                                                   \
   /*const uint8_t**/ buffer,                                                                        \
@@ -137,6 +141,7 @@ void resetBuffers();
   /*Parameter::ParameterType*/ parameterType,                                                       \
   /*bool*/ unknownType,                                                                             \
   /*Parameter::ActionForUnknownParameterType*/ actionForUnknownParameterType)                       \
+	do                                                                                                \
 	{                                                                                                 \
 		REQUIRE(parameter);                                                                             \
 		REQUIRE(parameter->GetBuffer() != nullptr);                                                     \
@@ -156,7 +161,7 @@ void resetBuffers();
 		if (buffer)                                                                                     \
 		{                                                                                               \
 			REQUIRE(                                                                                      \
-			  helpers::areBuffersEqual(parameter->GetBuffer(), parameter->GetLength(), buffer, length) == \
+			  helpers::AreBuffersEqual(parameter->GetBuffer(), parameter->GetLength(), buffer, length) == \
 			  true);                                                                                      \
 		}                                                                                               \
 		REQUIRE_THROWS_AS(                                                                              \
@@ -167,6 +172,7 @@ void resetBuffers();
 	}                                                                                                 \
 	while (false)
 
+// NOLINTNEXTLINE (cppcoreguidelines-macro-usage)
 #define CHECK_ERROR_CAUSE(                                                                         \
   /*const ErrorCause**/ errorCause,                                                                \
   /*const uint8_t**/ buffer,                                                                       \
@@ -175,6 +181,7 @@ void resetBuffers();
   /*bool*/ frozen,                                                                                 \
   /*ErrorCause::ErrorCauseCode*/ causeCode,                                                        \
   /*bool*/ unknownCode)                                                                            \
+	do                                                                                               \
 	{                                                                                                \
 		REQUIRE(errorCause);                                                                           \
 		REQUIRE(errorCause->GetBuffer() != nullptr);                                                   \
@@ -193,7 +200,7 @@ void resetBuffers();
 		if (buffer)                                                                                    \
 		{                                                                                              \
 			REQUIRE(                                                                                     \
-			  helpers::areBuffersEqual(                                                                  \
+			  helpers::AreBuffersEqual(                                                                  \
 			    errorCause->GetBuffer(), errorCause->GetLength(), buffer, length) == true);              \
 		}                                                                                              \
 		REQUIRE_THROWS_AS(                                                                             \
@@ -203,5 +210,6 @@ void resetBuffers();
 		REQUIRE_THROWS_AS(errorCause->Clone(ThrowBuffer, length - 1), MediaSoupError);                 \
 	}                                                                                                \
 	while (false)
+// clang-format on
 
 #endif

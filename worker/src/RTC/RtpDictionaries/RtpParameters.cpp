@@ -269,7 +269,7 @@ namespace RTC
 
 					for (; it != this->codecs.end(); ++it)
 					{
-						auto codec = *it;
+						const auto& codec = *it;
 
 						if (static_cast<int32_t>(codec.payloadType) == apt)
 						{
@@ -355,7 +355,7 @@ namespace RTC
 
 				for (; it != this->codecs.end(); ++it)
 				{
-					auto codec = *it;
+					const auto& codec = *it;
 
 					if (codec.payloadType == encoding.codecPayloadType)
 					{

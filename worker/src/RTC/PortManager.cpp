@@ -46,9 +46,7 @@ namespace RTC
 
 		int err;
 		const int family = Utils::IP::GetFamily(ip);
-		struct sockaddr_storage bindAddr
-		{
-		};
+		struct sockaddr_storage bindAddr{};
 		uv_handle_t* uvHandle{ nullptr };
 		std::string protocolStr;
 		const uint8_t bitFlags = ConvertSocketFlags(flags, protocol, family);
@@ -267,9 +265,7 @@ namespace RTC
 
 		int err;
 		const int family = Utils::IP::GetFamily(ip);
-		struct sockaddr_storage bindAddr
-		{
-		};
+		struct sockaddr_storage bindAddr{};
 		std::string protocolStr;
 
 		switch (protocol)
@@ -634,6 +630,7 @@ namespace RTC
 		}
 	}
 
+	// NOLINTNEXTLINE (readability-convert-member-functions-to-static)
 	void PortManager::Dump(int indentation) const
 	{
 		MS_DUMP_CLEAN(indentation, "<PortManager>");

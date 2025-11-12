@@ -30,6 +30,22 @@ Creates a prebuilt of `mediasoup-worker` binary in the `worker/prebuild` folder.
 
 Runs both `lint:node` and `lint:worker` tasks.
 
+#### Install clang-format
+
+A specific clang-format version is required to be installed in the system, which is defined in [clang-format-mjs](../worker/scripts/clang-format.mjs).
+
+macOS:
+
+```bash
+brew install clang-format@VERSION
+```
+
+Linux:
+
+```bash
+sudo apt-get install clang-format-VERSION
+```
+
 ### `npm run lint:node`
 
 Validates mediasoup TypeScript files using [ESLint](https://eslint.org), [Prettier](https://prettier.io) and [Knip](https://knip.dev/).
@@ -38,9 +54,13 @@ Validates mediasoup TypeScript files using [ESLint](https://eslint.org), [Pretti
 
 Validates mediasoup worker C++ files using [clang-format](https://clang.llvm.org/docs/ClangFormat.html). It invokes `invoke lint` below.
 
+See [Install clang-format](#install-clang-format) for requirements.
+
 ### `npm run format`
 
 Runs both `format:node` and `format:worker` tasks.
+
+See [Install clang-format](#install-clang-format) for requirements.
 
 ### `npm run format:node`
 
@@ -49,6 +69,8 @@ Format TypeScript and JavaScript code using [Prettier](https://prettier.io).
 ### `npm run format:worker`
 
 Rewrites mediasoup worker C++ files using [clang-format](https://clang.llvm.org/docs/ClangFormat.html). It invokes `invoke format` below.
+
+See [Install clang-format](#install-clang-format) for requirements.
 
 ### `npm run flatc`
 
@@ -196,9 +218,13 @@ Builds a Xcode project for the mediasoup worker subproject.
 
 Validates mediasoup worker C++ files using [clang-format](https://clang.llvm.org/docs/ClangFormat.html) and rules in `worker/.clang-format`.
 
+See [Install clang-format](#install-clang-format) for requirements.
+
 ### `invoke format`
 
 Rewrites mediasoup worker C++ files using [clang-format](https://clang.llvm.org/docs/ClangFormat.html).
+
+See [Install clang-format](#install-clang-format) for requirements.
 
 ### `invoke test`
 
@@ -236,7 +262,7 @@ Runs [clang-tidy](http://clang.llvm.org/extra/clang-tidy) and performs C++ code 
 **Usage example in macOS:**
 
 ```bash
-MEDIASOUP_CLANG_TIDY_DIR=/usr/local/opt/llvm/bin invoke tidy
+MEDIASOUP_CLANG_TIDY_DIR=/opt/homebrew/opt/llvm/bin/ invoke tidy
 ```
 
 ### `invoke fuzzer`

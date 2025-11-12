@@ -2,6 +2,7 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/RtxStream.hpp"
+#include "DepLibUV.hpp"
 #include "Logger.hpp"
 #include "Utils.hpp"
 
@@ -89,7 +90,7 @@ namespace RTC
 
 		report->SetSsrc(GetSsrc());
 
-		const uint32_t prevPacketsLost = this->packetsLost;
+		const int32_t prevPacketsLost = this->packetsLost;
 
 		// Calculate Packets Expected and Lost.
 		auto expected = GetExpectedPackets();
@@ -123,9 +124,9 @@ namespace RTC
 			this->fractionLost = std::round((static_cast<double>(lostInterval << 8) / expectedInterval));
 		}
 
-		this->reportedPacketLost += (this->packetsLost - prevPacketsLost);
+		this->reportedPacketsLost += (this->packetsLost - prevPacketsLost);
 
-		report->SetTotalLost(this->reportedPacketLost);
+		report->SetTotalLost(this->reportedPacketsLost);
 		report->SetFractionLost(this->fractionLost);
 
 		// Fill the rest of the report.
