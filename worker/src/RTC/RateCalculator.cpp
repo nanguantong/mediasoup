@@ -2,6 +2,7 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/RateCalculator.hpp"
+#include "DepLibUV.hpp"
 #include "Logger.hpp"
 #include "Utils.hpp"
 #include <cmath>   // std::trunc()
@@ -198,12 +199,12 @@ namespace RTC
 
 	void RtpDataCounter::Update(RTC::RtpPacket* packet)
 	{
-		const uint64_t nowMs = DepLibUV::GetTimeMs();
-
 		this->packets++;
 
 		if (!this->ignorePaddingOnlyPackets || packet->GetPayloadLength() > 0)
 		{
+			const uint64_t nowMs = DepLibUV::GetTimeMs();
+
 			this->rate.Update(packet->GetSize(), nowMs);
 		}
 	}

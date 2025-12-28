@@ -16,7 +16,8 @@ namespace RTC
 {
 	/* Class variables. */
 
-	thread_local uint32_t RtpPacket::nextMediasoupPacketId{ 0u };
+	thread_local uint32_t RtpPacket::nextMediasoupPacketId{ Utils::Crypto::GetRandomUInt(
+		0u, std::numeric_limits<uint32_t>::max() / 2) };
 
 	/* Class methods. */
 
@@ -24,24 +25,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		// Make RtpPacket::nextMediasoupPacketId first value be random and then
-		// increase it by one, and don't let it be 0.
-		if (RtpPacket::nextMediasoupPacketId == 0)
-		{
-			RtpPacket::nextMediasoupPacketId =
-			  Utils::Crypto::GetRandomUInt(1u, std::numeric_limits<uint32_t>::max() / 2);
-		}
-		else
-		{
-			RtpPacket::nextMediasoupPacketId++;
-
-			if (RtpPacket::nextMediasoupPacketId == 0)
-			{
-				RtpPacket::nextMediasoupPacketId = 1;
-			}
-		}
-
-		return RtpPacket::nextMediasoupPacketId;
+		return RtpPacket::nextMediasoupPacketId++;
 	}
 
 	/* Class methods. */
@@ -290,12 +274,12 @@ namespace RTC
 
 		if (this->rridExtensionId != 0u)
 		{
-			std::string rid;
+			std::string rrid;
 
-			if (ReadRid(rid))
+			if (ReadRid(rrid))
 			{
 				MS_DUMP_CLEAN(
-				  indentation, "  rrid: extId:%" PRIu8 ", value:'%s'", this->rridExtensionId, rid.c_str());
+				  indentation, "  rrid: extId:%" PRIu8 ", value:'%s'", this->rridExtensionId, rrid.c_str());
 			}
 		}
 
@@ -487,10 +471,8 @@ namespace RTC
 		                        : flatbuffers::nullopt);
 	}
 
-	void RtpPacket::SetExtensions(uint8_t type, const std::vector<GenericExtension>& extensions)
+	void RtpPacket::SetExtensions(ExtensionsType type, const std::vector<GenericExtension>& extensions)
 	{
-		MS_ASSERT(type == 1u || type == 2u, "type must be 1 or 2");
-
 		// Reset extension ids.
 		this->midExtensionId                  = 0u;
 		this->ridExtensionId                  = 0u;
@@ -510,26 +492,26 @@ namespace RTC
 
 		// If One-Byte is requested and the packet already has One-Byte extensions,
 		// keep the header extension id.
-		if (type == 1u && HasOneByteExtensions())
+		if (type == ExtensionsType::OneByte && HasOneByteExtensions())
 		{
 			// Nothing to do.
 		}
 		// If Two-Bytes is requested and the packet already has Two-Bytes extensions,
 		// keep the header extension id.
-		else if (type == 2u && HasTwoBytesExtensions())
+		else if (type == ExtensionsType::TwoBytes && HasTwoBytesExtensions())
 		{
 			// Nothing to do.
 		}
 		// Otherwise, if there is header extension of non matching type, modify its id.
 		else if (this->headerExtension)
 		{
-			if (type == 1u)
+			if (type == ExtensionsType::OneByte)
 			{
-				this->headerExtension->id = uint16_t{ htons(0xBEDE) };
+				this->headerExtension->id = htons(0xBEDE);
 			}
-			else if (type == 2u)
+			else if (type == ExtensionsType::TwoBytes)
 			{
-				this->headerExtension->id = uint16_t{ htons(0b0001000000000000) };
+				this->headerExtension->id = htons(0b0001000000000000);
 			}
 		}
 
@@ -538,7 +520,7 @@ namespace RTC
 
 		for (const auto& extension : extensions)
 		{
-			if (type == 1u)
+			if (type == ExtensionsType::OneByte)
 			{
 				if (extension.id == 0 || extension.id > 14 || extension.len == 0 || extension.len > 16)
 				{
@@ -547,7 +529,7 @@ namespace RTC
 
 				extensionsTotalSize += (1 + extension.len);
 			}
-			else if (type == 2u)
+			else if (type == ExtensionsType::TwoBytes)
 			{
 				if (extension.id == 0)
 				{
@@ -604,13 +586,13 @@ namespace RTC
 			this->size += shift;
 
 			// Set the header extension id.
-			if (type == 1u)
+			if (type == ExtensionsType::OneByte)
 			{
-				this->headerExtension->id = uint16_t{ htons(0xBEDE) };
+				this->headerExtension->id = htons(0xBEDE);
 			}
-			else if (type == 2u)
+			else if (type == ExtensionsType::TwoBytes)
 			{
-				this->headerExtension->id = uint16_t{ htons(0b0001000000000000) };
+				this->headerExtension->id = htons(0b0001000000000000);
 			}
 
 			// Set the header extension length.
@@ -622,7 +604,7 @@ namespace RTC
 
 		for (const auto& extension : extensions)
 		{
-			if (type == 1u)
+			if (type == ExtensionsType::OneByte)
 			{
 				if (extension.id == 0 || extension.id > 14 || extension.len == 0 || extension.len > 16)
 				{
@@ -638,7 +620,7 @@ namespace RTC
 				std::memmove(ptr, extension.value, extension.len);
 				ptr += extension.len;
 			}
-			else if (type == 2u)
+			else if (type == ExtensionsType::TwoBytes)
 			{
 				if (extension.id == 0)
 				{

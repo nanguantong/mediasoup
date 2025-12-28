@@ -32,9 +32,7 @@ namespace RTC
 			static constexpr uint16_t MaxCurrentLayerPictureIdNum{ 1000u };
 
 		public:
-			explicit PictureIdList()
-			{
-			}
+			explicit PictureIdList() = default;
 
 			~PictureIdList()
 			{
@@ -61,7 +59,7 @@ namespace RTC
 					}
 				}
 
-				this->layerChanges.push_back({ pictureId, layer });
+				this->layerChanges.emplace_back(pictureId, layer);
 			}
 
 			int16_t GetLayer(uint16_t pictureId) const

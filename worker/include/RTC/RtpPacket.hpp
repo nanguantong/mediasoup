@@ -51,6 +51,13 @@ namespace RTC
 			uint8_t value[1];
 		};
 
+	public:
+		enum class ExtensionsType : uint8_t
+		{
+			OneByte  = 1,
+			TwoBytes = 2
+		};
+
 	private:
 		/* Struct for One-Byte extension. */
 		struct OneByteExtension
@@ -164,32 +171,32 @@ namespace RTC
 
 		uint16_t GetSequenceNumber() const
 		{
-			return uint16_t{ ntohs(this->header->sequenceNumber) };
+			return ntohs(this->header->sequenceNumber);
 		}
 
 		void SetSequenceNumber(uint16_t seq)
 		{
-			this->header->sequenceNumber = uint16_t{ htons(seq) };
+			this->header->sequenceNumber = htons(seq);
 		}
 
 		uint32_t GetTimestamp() const
 		{
-			return uint32_t{ ntohl(this->header->timestamp) };
+			return ntohl(this->header->timestamp);
 		}
 
 		void SetTimestamp(uint32_t timestamp)
 		{
-			this->header->timestamp = uint32_t{ htonl(timestamp) };
+			this->header->timestamp = htonl(timestamp);
 		}
 
 		uint32_t GetSsrc() const
 		{
-			return uint32_t{ ntohl(this->header->ssrc) };
+			return ntohl(this->header->ssrc);
 		}
 
 		void SetSsrc(uint32_t ssrc)
 		{
-			this->header->ssrc = uint32_t{ htonl(ssrc) };
+			this->header->ssrc = htonl(ssrc);
 		}
 
 		bool HasHeaderExtension() const
@@ -198,7 +205,7 @@ namespace RTC
 		}
 
 		// After calling this method, all the extension ids are reset to 0.
-		void SetExtensions(uint8_t type, const std::vector<GenericExtension>& extensions);
+		void SetExtensions(ExtensionsType type, const std::vector<GenericExtension>& extensions);
 
 		uint16_t GetHeaderExtensionId() const
 		{
@@ -207,7 +214,7 @@ namespace RTC
 				return 0u;
 			}
 
-			return uint16_t{ ntohs(this->headerExtension->id) };
+			return ntohs(this->headerExtension->id);
 		}
 
 		size_t GetHeaderExtensionLength() const

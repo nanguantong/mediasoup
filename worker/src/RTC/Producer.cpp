@@ -81,10 +81,9 @@ namespace RTC
 
 			auto& encodingMapping = this->rtpMapping.encodings.back();
 
-			// ssrc is optional.
-			if (encoding->ssrc().has_value())
+			if (auto ssrc = encoding->ssrc(); ssrc.has_value())
 			{
-				encodingMapping.ssrc = encoding->ssrc().value();
+				encodingMapping.ssrc = ssrc.value();
 			}
 
 			// rid is optional.
@@ -1434,7 +1433,9 @@ namespace RTC
 			// Set the new extensions into the packet.
 			// Use 1-byte or 2-bytes type depending on the highest extension id and
 			// length we are introducing in the packet.
-			uint8_t type = highestExtenId <= 14 && highestExtenLen <= 16 ? 1 : 2;
+			const auto type = highestExtenId <= 14 && highestExtenLen <= 16
+			                    ? RTC::RtpPacket::ExtensionsType::OneByte
+			                    : RTC::RtpPacket::ExtensionsType::TwoBytes;
 
 			MS_DEBUG_DEV(
 			  "using %" PRIu8 " byte(s) header extensions [highestExtenId:%" PRIu8

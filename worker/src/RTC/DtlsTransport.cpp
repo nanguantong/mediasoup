@@ -13,6 +13,7 @@
 #include <cstring> // std::memcpy(), std::strcmp()
 
 // clang-format off
+// NOLINTNEXTLINE (cppcoreguidelines-macro-usage)
 #define LOG_OPENSSL_ERROR(desc) \
 	do \
 	{ \
@@ -65,7 +66,7 @@ inline static long onSslBioOut(
   int ret,
   size_t* /*processed*/)
 {
-	long resultOfcallback = (operationType == BIO_CB_RETURN) ? static_cast<long>(ret) : 1;
+	const long resultOfcallback = (operationType == BIO_CB_RETURN) ? static_cast<long>(ret) : 1;
 
 	// This callback is called twice for write operations:
 	// - First one with operationType = BIO_CB_WRITE.
@@ -681,7 +682,7 @@ namespace RTC
 
 			ret = X509_digest(DtlsTransport::certificate, hashFunction, binaryFingerprint, &size);
 
-			if (ret == 0)
+			if (ret == 0 || size == 0)
 			{
 				MS_ERROR("X509_digest() failed");
 				MS_THROW_ERROR("Fingerprints generation failed");
@@ -1241,6 +1242,7 @@ namespace RTC
 		}
 	}
 
+	// NOLINTNEXTLINE (misc-no-recursion)
 	bool DtlsTransport::SetTimeout()
 	{
 		MS_TRACE();
@@ -1394,7 +1396,7 @@ namespace RTC
 		// Compare the remote fingerprint with the value given via signaling.
 		ret = X509_digest(certificate, hashFunction, binaryFingerprint, &size);
 
-		if (ret == 0)
+		if (ret == 0 || size == 0)
 		{
 			MS_ERROR("X509_digest() failed");
 
@@ -1695,6 +1697,7 @@ namespace RTC
 		// callback).
 	}
 
+	// NOLINTNEXTLINE (misc-no-recursion)
 	void DtlsTransport::OnTimer(TimerHandle* /*timer*/)
 	{
 		MS_TRACE();

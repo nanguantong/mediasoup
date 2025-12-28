@@ -114,6 +114,7 @@ namespace RTC
 
 			// clang-format off
 			if (
+				// NOLINTNEXTLINE (bugprone-inc-dec-in-conditions)
 				(len >= ++offset + 1) &&
 				payloadDescriptor->start &&
 				payloadDescriptor->partitionIndex == 0 &&
@@ -198,6 +199,11 @@ namespace RTC
 		void VP8::PayloadDescriptor::Encode(uint8_t* data, uint16_t pictureId, uint8_t tl0PictureIndex) const
 		{
 			MS_TRACE();
+
+			if (data == nullptr)
+			{
+				MS_ABORT("data is nullptr");
+			}
 
 			// Nothing to do.
 			if (!this->extended)
@@ -318,22 +324,14 @@ namespace RTC
 			)
 			// clang-format on
 			{
-				if (this->payloadDescriptor->tlIndex > context->GetTargetTemporalLayer())
-				{
-					context->pictureIdManager.Drop(this->payloadDescriptor->pictureId);
-
-					if (this->payloadDescriptor->tlIndex == 0)
-					{
-						context->tl0PictureIndexManager.Drop(this->payloadDescriptor->tl0PictureIndex);
-					}
-
-					return false;
-				}
-				// Upgrade required. Drop current packet if sync flag is not set.
+				// Drop if:
+				// - Temporal layer is higher than target.
+				// - Temporal layer is higher than current and sync flag is not set.
 				// clang-format off
-				else if (
-					this->payloadDescriptor->tlIndex > context->GetCurrentTemporalLayer() &&
-					!this->payloadDescriptor->y
+				if (
+				  this->payloadDescriptor->tlIndex > context->GetTargetTemporalLayer() ||
+				  (this->payloadDescriptor->tlIndex > context->GetCurrentTemporalLayer() &&
+				   !this->payloadDescriptor->y)
 				)
 				// clang-format on
 				{

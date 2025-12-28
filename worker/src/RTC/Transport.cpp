@@ -55,15 +55,16 @@ namespace RTC
 		{
 			this->direct = true;
 
-			if (options->maxMessageSize().has_value())
+			if (auto maxMessageSize = options->maxMessageSize(); maxMessageSize.has_value())
 			{
-				this->maxMessageSize = options->maxMessageSize().value();
+				this->maxMessageSize = maxMessageSize.value();
 			}
 		}
 
-		if (options->initialAvailableOutgoingBitrate().has_value())
+		if (auto initialAvailableOutgoingBitrate = options->initialAvailableOutgoingBitrate();
+		    initialAvailableOutgoingBitrate.has_value())
 		{
-			this->initialAvailableOutgoingBitrate = options->initialAvailableOutgoingBitrate().value();
+			this->initialAvailableOutgoingBitrate = initialAvailableOutgoingBitrate.value();
 		}
 
 		if (options->enableSctp())
@@ -1613,15 +1614,24 @@ namespace RTC
 		switch (result)
 		{
 			case RTC::Producer::ReceiveRtpPacketResult::MEDIA:
+			{
 				this->recvRtpTransmission.Update(packet);
 				break;
+			}
+
 			case RTC::Producer::ReceiveRtpPacketResult::RETRANSMISSION:
+			{
 				this->recvRtxTransmission.Update(packet);
 				break;
+			}
+
 			case RTC::Producer::ReceiveRtpPacketResult::DISCARDED:
+			{
 				// Tell the child class to remove this SSRC.
 				RecvStreamClosed(packet->GetSsrc());
 				break;
+			}
+
 			default:;
 		}
 

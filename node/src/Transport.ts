@@ -1,4 +1,4 @@
-import * as flatbuffers from 'flatbuffers';
+import type * as flatbuffers from 'flatbuffers';
 import { Logger } from './Logger';
 import { EnhancedEventEmitter } from './enhancedEvents';
 import * as ortc from './ortc';
@@ -113,10 +113,10 @@ type TransportData =
 const logger = new Logger('Transport');
 
 export abstract class TransportImpl<
-		TransportAppData extends AppData = AppData,
-		Events extends TransportEvents = TransportEvents,
-		Observer extends TransportObserver = TransportObserver,
-	>
+	TransportAppData extends AppData = AppData,
+	Events extends TransportEvents = TransportEvents,
+	Observer extends TransportObserver = TransportObserver,
+>
 	extends EnhancedEventEmitter<Events>
 	implements Transport
 {

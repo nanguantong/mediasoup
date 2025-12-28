@@ -252,7 +252,6 @@ namespace RTC
 		auto stats = FBS::RtpStream::CreateRecvStatsDirect(
 		  builder,
 		  baseStats,
-		  static_cast<uint32_t>(this->jitter),
 		  this->transmissionCounter.GetPacketCount(),
 		  this->transmissionCounter.GetBytes(),
 		  this->transmissionCounter.GetBitrate(nowMs),
@@ -413,7 +412,8 @@ namespace RTC
 		RTC::RtpStream::PacketRetransmitted(packet);
 
 		// Pass the packet to the NackGenerator and return true just if this was a
-		// NACKed packet.
+		// NACKed packet or a RTX packet containing a non yet seen original RTP
+		// packet.
 		if (this->nackGenerator->ReceivePacket(packet, /*isRecovered*/ true))
 		{
 			// Mark the packet as repaired.

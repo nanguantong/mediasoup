@@ -6,6 +6,7 @@
 
 namespace Utils
 {
+	//NOLINTNEXTLINE (cppcoreguidelines-pro-type-member-init)
 	BitStream::BitStream(uint8_t* data, size_t len) : len(len)
 	{
 		MS_TRACE();
@@ -63,7 +64,7 @@ namespace Utils
 
 		for (unsigned i = 0; i < count; ++i)
 		{
-			bits = 2 * bits + GetBit();
+			bits = (2 * bits) + GetBit();
 		}
 
 		return bits;
@@ -78,7 +79,7 @@ namespace Utils
 			return 0;
 		}
 
-		auto leftBits = this->len * 8 - this->offset;
+		auto leftBits = (this->len * 8) - this->offset;
 
 		return leftBits;
 	}
@@ -111,8 +112,8 @@ namespace Utils
 			return std::nullopt;
 		}
 
-		unsigned v = this->GetBits(w - 1);
-		unsigned m = (1u << w) - n;
+		const unsigned v = this->GetBits(w - 1);
+		const unsigned m = (1u << w) - n;
 
 		if (v < m)
 		{
@@ -124,9 +125,9 @@ namespace Utils
 			return std::nullopt;
 		}
 
-		unsigned extra_bit = this->GetBit();
+		const unsigned extraBit = this->GetBit();
 
-		return (v << 1) - m + extra_bit;
+		return (v << 1) - m + extraBit;
 	}
 
 	void BitStream::Write(uint32_t offset, uint32_t n, uint32_t v)
@@ -142,7 +143,7 @@ namespace Utils
 			++w;
 		}
 
-		unsigned m = (1 << w) - n;
+		const unsigned m = (1 << w) - n;
 
 		if (v < m)
 		{
@@ -173,10 +174,10 @@ namespace Utils
 		MS_TRACE();
 
 		// Retrieve the current byte position.
-		size_t byteOffset = offset >> 0x3;
+		const size_t byteOffset = offset >> 0x3;
 
 		// Calculate the bitmask for the target bit within the current byte.
-		auto bitmask = (1u << (0x7 - (offset & 0x7)));
+		const auto bitmask = (1u << (0x7 - (offset & 0x7)));
 
 		if (bit)
 		{
@@ -199,8 +200,8 @@ namespace Utils
 
 		for (unsigned i = 0; i < count; ++i)
 		{
-			uint32_t shift = count - i - 1;
-			uint8_t bit    = (bits >> shift) & 0x1;
+			const uint32_t shift = count - i - 1;
+			const uint8_t bit    = (bits >> shift) & 0x1;
 
 			this->PutBit(offset++, bit);
 		}

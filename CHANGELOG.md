@@ -2,6 +2,27 @@
 
 ### NEXT
 
+### 3.19.14
+
+- Worker: Fix missing system header include, which fails in GCC 15 ([PR #1679](https://github.com/versatica/mediasoup/pull/1679), credits to @upisfree).
+
+### 3.19.13
+
+- `RtxStream`: Don't check if RTP timestamp moved backwards ([PR #1668](https://github.com/versatica/mediasoup/pull/1668), credits to @Lynnworld).
+- Fix RTX packets containing non yet seen RTP packets being discarded ([PR #1653](https://github.com/versatica/mediasoup/pull/1653), credits to @penguinol, @mengbieting and @Lynnworld).
+
+### 3.19.12
+
+- Only look up the RTP packet’s RID extension if the packet doesn’t have MID extension ([PR #1666](https://github.com/versatica/mediasoup/pull/1666)).
+
+### 3.19.11
+
+- Node: Add `workerBin` optional field in `createWorker()` ([PR #1660](https://github.com/versatica/mediasoup/pull/1660)).
+
+### 3.19.10
+
+- Add `jitter` in `Consumer` 'outbound-rtp' stats ([PR #1654](https://github.com/versatica/mediasoup/pull/1654)).
+
 ### 3.19.9
 
 - Fix RTCP packets lost in stats ([PR #1651](https://github.com/versatica/mediasoup/pull/1651)).
