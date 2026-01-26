@@ -1838,13 +1838,14 @@ namespace RTC
 				{
 					case RTC::RTCP::FeedbackPs::MessageType::PLI:
 					{
-						auto* consumer = GetConsumerByMediaSsrc(feedback->GetMediaSsrc());
-
 						if (feedback->GetMediaSsrc() == RTC::RtpProbationSsrc)
 						{
 							break;
 						}
-						else if (!consumer)
+
+						auto* consumer = GetConsumerByMediaSsrc(feedback->GetMediaSsrc());
+
+						if (!consumer)
 						{
 							MS_DEBUG_TAG(
 							  rtcp,
@@ -1877,13 +1878,15 @@ namespace RTC
 						for (auto it = fir->Begin(); it != fir->End(); ++it)
 						{
 							auto& item     = *it;
-							auto* consumer = GetConsumerByMediaSsrc(item->GetSsrc());
 
 							if (item->GetSsrc() == RTC::RtpProbationSsrc)
 							{
 								continue;
 							}
-							else if (!consumer)
+
+							auto* consumer = GetConsumerByMediaSsrc(item->GetSsrc());
+
+							if (!consumer)
 							{
 								MS_DEBUG_TAG(
 								  rtcp,

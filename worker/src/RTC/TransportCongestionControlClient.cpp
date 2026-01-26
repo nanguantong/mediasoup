@@ -22,7 +22,7 @@ namespace RTC
 
 	/* Instance methods. */
 
-	// nanuns: 添加 Consumer 时创建，，作为给 Consumer 的发送端
+	// nanuns: 添加 Consumer 时创建，作为给 Consumer 的发送端
 	TransportCongestionControlClient::TransportCongestionControlClient(
 	  RTC::TransportCongestionControlClient::Listener* listener,
 	  RTC::BweType bweType,
@@ -124,7 +124,9 @@ namespace RTC
 		this->desiredBitrateTrend.ForceUpdate(0u, nowMs);
 #endif
 
-		this->rtpTransportControllerSend->OnNetworkAvailability(false);
+		if (this->rtpTransportControllerSend != nullptr) {
+			this->rtpTransportControllerSend->OnNetworkAvailability(false);
+		}
 	}
 
 	void TransportCongestionControlClient::InsertPacket(webrtc::RtpPacketSendInfo& packetInfo)
