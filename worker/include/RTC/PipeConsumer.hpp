@@ -12,10 +12,10 @@ namespace RTC
 	{
 	private:
 		static void StorePacketInTargetLayerRetransmissionBuffer(
-		  std::map<uint16_t, RTC::SharedRtpPacket, RTC::SeqManager<uint16_t>::SeqLowerThan>&
+		  std::map<uint16_t, RTC::RTP::SharedPacket, RTC::SeqManager<uint16_t>::SeqLowerThan>&
 		    targetLayerRetransmissionBuffer,
-		  RTC::RtpPacket* packet,
-		  RTC::SharedRtpPacket& sharedPacket);
+		  RTC::RTP::Packet* packet,
+		  RTC::RTP::SharedPacket& sharedPacket);
 
 	public:
 		PipeConsumer(
@@ -42,7 +42,7 @@ namespace RTC
 		uint32_t IncreaseLayer(uint32_t bitrate, bool considerLoss) override;
 		void ApplyLayers() override;
 		uint32_t GetDesiredBitrate() const override;
-		void SendRtpPacket(RTC::RtpPacket* packet, RTC::SharedRtpPacket& sharedPacket) override;
+		void SendRtpPacket(RTC::RTP::Packet* packet, RTC::RTP::SharedPacket& sharedPacket) override;
 		bool GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs) override;
 		const std::vector<RTC::RtpStreamSend*>& GetRtpStreams() const override
 		{
@@ -71,7 +71,7 @@ namespace RTC
 		/* Pure virtual methods inherited from RtpStreamSend::Listener. */
 	public:
 		void OnRtpStreamScore(RTC::RtpStream* rtpStream, uint8_t score, uint8_t previousScore) override;
-		void OnRtpStreamRetransmitRtpPacket(RTC::RtpStreamSend* rtpStream, RTC::RtpPacket* packet) override;
+		void OnRtpStreamRetransmitRtpPacket(RTC::RtpStreamSend* rtpStream, RTC::RTP::Packet* packet) override;
 
 	private:
 		// Allocated by this.
@@ -81,13 +81,12 @@ namespace RTC
 		absl::flat_hash_map<uint32_t, RTC::RtpStreamSend*> mapSsrcRtpStream;
 		bool keyFrameSupported{ false };
 		absl::flat_hash_map<RTC::RtpStreamSend*, bool> mapRtpStreamSyncRequired;
-		absl::flat_hash_map<RTC::RtpStreamSend*, std::unique_ptr<RTC::SeqManager<uint16_t>>>
-		  mapRtpStreamRtpSeqManager;
+		absl::flat_hash_map<RTC::RtpStreamSend*, RTC::SeqManager<uint16_t>> mapRtpStreamRtpSeqManager;
 		// Buffers to store packets that arrive earlier than the first packet of the
 		// video key frame.
 		absl::flat_hash_map<
 		  RTC::RtpStreamSend*,
-		  std::map<uint16_t, RTC::SharedRtpPacket, RTC::SeqManager<uint16_t>::SeqLowerThan>>
+		  std::map<uint16_t, RTC::RTP::SharedPacket, RTC::SeqManager<uint16_t>::SeqLowerThan>>
 		  mapRtpStreamTargetLayerRetransmissionBuffer;
 	};
 } // namespace RTC

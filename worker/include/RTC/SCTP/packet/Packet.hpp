@@ -70,7 +70,7 @@ namespace RTC
 			static const size_t CommonHeaderLength{ 12 };
 
 			/**
-			 * Parse a SCTP packet.
+			 * Parse a SCTP Packet.
 			 *
 			 * @remarks
 			 * `bufferLength` must be the exact length of the Packet.
@@ -201,8 +201,6 @@ namespace RTC
 			template<typename T>
 			T* BuildChunkInPlace()
 			{
-				AssertNotFrozen();
-
 				// The new Chunk will be added after other Chunks in the Packet, this is,
 				// at the end of the Packet,  whose length we know it's padded to 4
 				// bytes, and each Parameter total length is also multiple of 4 bytes.

@@ -1,8 +1,8 @@
 #include "common.hpp"
 #include "MediaSoupErrors.hpp"
-#include "RTC/SCTP/common.hpp" // in worker/test/include/
 #include "RTC/SCTP/packet/Parameter.hpp"
 #include "RTC/SCTP/packet/parameters/IPv6AddressParameter.hpp"
+#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 
@@ -31,12 +31,11 @@ SCENARIO("IPv6 Adress Parameter (6)", "[sctp][serializable]")
 
 		auto* parameter = IPv6AddressParameter::Parse(buffer, sizeof(buffer));
 
-		CHECK_PARAMETER(
+		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 20,
-		  /*frozen*/ true,
 		  /*parameterType*/ Parameter::ParameterType::IPV6_ADDRESS,
 		  /*unknownType*/ false,
 		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
@@ -47,22 +46,17 @@ SCENARIO("IPv6 Adress Parameter (6)", "[sctp][serializable]")
 		REQUIRE(parameter->GetIPv6Address()[3] == 0xB8);
 		REQUIRE(parameter->GetIPv6Address()[15] == 0x34);
 
-		/* Should throw if modifications are attempted when it's frozen. */
-
-		REQUIRE_THROWS_AS(parameter->SetIPv6Address(ThrowBuffer), MediaSoupError);
-
 		/* Serialize it. */
 
 		parameter->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
-		CHECK_PARAMETER(
+		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
 		  /*buffer*/ SerializeBuffer,
 		  /*bufferLength*/ sizeof(SerializeBuffer),
 		  /*length*/ 20,
-		  /*frozen*/ false,
 		  /*parameterType*/ Parameter::ParameterType::IPV6_ADDRESS,
 		  /*unknownType*/ false,
 		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
@@ -81,12 +75,11 @@ SCENARIO("IPv6 Adress Parameter (6)", "[sctp][serializable]")
 
 		delete parameter;
 
-		CHECK_PARAMETER(
+		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ clonedParameter,
 		  /*buffer*/ CloneBuffer,
 		  /*bufferLength*/ sizeof(CloneBuffer),
 		  /*length*/ 20,
-		  /*frozen*/ false,
 		  /*parameterType*/ Parameter::ParameterType::IPV6_ADDRESS,
 		  /*unknownType*/ false,
 		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
@@ -172,12 +165,11 @@ SCENARIO("IPv6 Adress Parameter (6)", "[sctp][serializable]")
 	{
 		auto* parameter = IPv6AddressParameter::Factory(FactoryBuffer, sizeof(FactoryBuffer));
 
-		CHECK_PARAMETER(
+		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 20,
-		  /*frozen*/ false,
 		  /*parameterType*/ Parameter::ParameterType::IPV6_ADDRESS,
 		  /*unknownType*/ false,
 		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
@@ -196,12 +188,11 @@ SCENARIO("IPv6 Adress Parameter (6)", "[sctp][serializable]")
 
 		parameter->SetIPv6Address(ipBuffer);
 
-		CHECK_PARAMETER(
+		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 20,
-		  /*frozen*/ false,
 		  /*parameterType*/ Parameter::ParameterType::IPV6_ADDRESS,
 		  /*unknownType*/ false,
 		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
@@ -219,12 +210,11 @@ SCENARIO("IPv6 Adress Parameter (6)", "[sctp][serializable]")
 
 		delete parameter;
 
-		CHECK_PARAMETER(
+		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parsedParameter,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ 20,
 		  /*length*/ 20,
-		  /*frozen*/ true,
 		  /*parameterType*/ Parameter::ParameterType::IPV6_ADDRESS,
 		  /*unknownType*/ false,
 		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);

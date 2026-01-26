@@ -1,10 +1,10 @@
 #include "common.hpp"
 #include "MediaSoupErrors.hpp"
-#include "RTC/SCTP/common.hpp" // in worker/test/include/
 #include "RTC/SCTP/packet/Chunk.hpp"
 #include "RTC/SCTP/packet/Parameter.hpp"
 #include "RTC/SCTP/packet/chunks/IDataChunk.hpp"
 #include "RTC/SCTP/packet/parameters/IPv4AddressParameter.hpp"
+#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 
@@ -38,12 +38,11 @@ SCENARIO("SCTP I-Data Chunk (64)", "[sctp][serializable]")
 
 		auto* chunk = IDataChunk::Parse(buffer, sizeof(buffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 24,
-		  /*frozen*/ true,
 		  /*chunkType*/ Chunk::ChunkType::I_DATA,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP_AND_REPORT,
@@ -69,29 +68,17 @@ SCENARIO("SCTP I-Data Chunk (64)", "[sctp][serializable]")
 		// This should be padding.
 		REQUIRE(chunk->GetUserData()[3] == 0x00);
 
-		/* Should throw if modifications are attempted when it's frozen. */
-
-		REQUIRE_THROWS_AS(chunk->SetI(true), MediaSoupError);
-		REQUIRE_THROWS_AS(chunk->SetE(true), MediaSoupError);
-		REQUIRE_THROWS_AS(chunk->SetTsn(12345678), MediaSoupError);
-		REQUIRE_THROWS_AS(chunk->SetStreamIdentifier(9988), MediaSoupError);
-		REQUIRE_THROWS_AS(chunk->SetMessageIdentifier(1234), MediaSoupError);
-		REQUIRE_THROWS_AS(
-		  chunk->SetPayloadProtocolIdentifierOrFragmentSequenceNumber(987654321), MediaSoupError);
-		REQUIRE_THROWS_AS(chunk->SetUserData(DataBuffer, 3), MediaSoupError);
-
 		/* Serialize it. */
 
 		chunk->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ SerializeBuffer,
 		  /*bufferLength*/ sizeof(SerializeBuffer),
 		  /*length*/ 24,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::I_DATA,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP_AND_REPORT,
@@ -125,12 +112,11 @@ SCENARIO("SCTP I-Data Chunk (64)", "[sctp][serializable]")
 
 		delete chunk;
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ clonedChunk,
 		  /*buffer*/ CloneBuffer,
 		  /*bufferLength*/ sizeof(CloneBuffer),
 		  /*length*/ 24,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::I_DATA,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP_AND_REPORT,
@@ -163,12 +149,11 @@ SCENARIO("SCTP I-Data Chunk (64)", "[sctp][serializable]")
 	{
 		auto* chunk = IDataChunk::Factory(FactoryBuffer, sizeof(FactoryBuffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 20,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::I_DATA,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP_AND_REPORT,
@@ -214,12 +199,11 @@ SCENARIO("SCTP I-Data Chunk (64)", "[sctp][serializable]")
 		// 3 bytes + 1 byte of padding.
 		chunk->SetUserData(DataBuffer, 3);
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 20 + 3 + 1,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::I_DATA,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP_AND_REPORT,
@@ -251,12 +235,11 @@ SCENARIO("SCTP I-Data Chunk (64)", "[sctp][serializable]")
 
 		delete chunk;
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ parsedChunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ 20 + 3 + 1,
 		  /*length*/ 20 + 3 + 1,
-		  /*frozen*/ true,
 		  /*chunkType*/ Chunk::ChunkType::I_DATA,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP_AND_REPORT,
@@ -289,12 +272,11 @@ SCENARIO("SCTP I-Data Chunk (64)", "[sctp][serializable]")
 	{
 		auto* chunk = IDataChunk::Factory(ThrowBuffer, sizeof(ThrowBuffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ ThrowBuffer,
 		  /*bufferLength*/ sizeof(ThrowBuffer),
 		  /*length*/ 20,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::I_DATA,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP_AND_REPORT,
@@ -306,12 +288,11 @@ SCENARIO("SCTP I-Data Chunk (64)", "[sctp][serializable]")
 
 		REQUIRE_THROWS_AS(chunk->SetUserData(DataBuffer, 65535), MediaSoupError);
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ ThrowBuffer,
 		  /*bufferLength*/ sizeof(ThrowBuffer),
 		  /*length*/ 20,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::I_DATA,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP_AND_REPORT,

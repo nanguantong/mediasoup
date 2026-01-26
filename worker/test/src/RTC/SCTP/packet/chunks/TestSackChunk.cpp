@@ -1,8 +1,8 @@
 #include "common.hpp"
 #include "MediaSoupErrors.hpp"
-#include "RTC/SCTP/common.hpp" // in worker/test/include/
 #include "RTC/SCTP/packet/Chunk.hpp"
 #include "RTC/SCTP/packet/chunks/SackChunk.hpp"
+#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 
@@ -42,12 +42,11 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 
 		auto* chunk = SackChunk::Parse(buffer, sizeof(buffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 36,
-		  /*frozen*/ true,
 		  /*chunkType*/ Chunk::ChunkType::SACK,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -69,23 +68,17 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 		REQUIRE(chunk->GetDuplicateTsnAt(1) == 4278216311);
 		REQUIRE(chunk->GetDuplicateTsnAt(2) == 556942164);
 
-		/* Should throw if modifications are attempted when it's frozen. */
-
-		REQUIRE_THROWS_AS(chunk->SetCumulativeTsnAck(1234), MediaSoupError);
-		REQUIRE_THROWS_AS(chunk->SetAdvertisedReceiverWindowCredit(1234), MediaSoupError);
-
 		/* Serialize it. */
 
 		chunk->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ SerializeBuffer,
 		  /*bufferLength*/ sizeof(SerializeBuffer),
 		  /*length*/ 36,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::SACK,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -115,12 +108,11 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 
 		delete chunk;
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ clonedChunk,
 		  /*buffer*/ CloneBuffer,
 		  /*bufferLength*/ sizeof(CloneBuffer),
 		  /*length*/ 36,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::SACK,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -227,12 +219,11 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 	{
 		auto* chunk = SackChunk::Factory(FactoryBuffer, sizeof(FactoryBuffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 16,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::SACK,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -259,12 +250,11 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 		chunk->AddDuplicateTsn(30000000);
 		chunk->AddDuplicateTsn(40000000);
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 44,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::SACK,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -295,12 +285,11 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 
 		delete chunk;
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ parsedChunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ 44,
 		  /*length*/ 44,
-		  /*frozen*/ true,
 		  /*chunkType*/ Chunk::ChunkType::SACK,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,

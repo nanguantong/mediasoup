@@ -1,8 +1,8 @@
 #include "common.hpp"
 #include "MediaSoupErrors.hpp"
-#include "RTC/SCTP/common.hpp" // in worker/test/include/
 #include "RTC/SCTP/packet/Chunk.hpp"
 #include "RTC/SCTP/packet/chunks/ForwardTsnChunk.hpp"
+#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 
@@ -31,12 +31,11 @@ SCENARIO("Forward Cumulative TSN Chunk (192)", "[sctp][serializable]")
 
 		auto* chunk = ForwardTsnChunk::Parse(buffer, sizeof(buffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 16,
-		  /*frozen*/ true,
 		  /*chunkType*/ Chunk::ChunkType::FORWARD_TSN,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
@@ -53,23 +52,17 @@ SCENARIO("Forward Cumulative TSN Chunk (192)", "[sctp][serializable]")
 		REQUIRE(chunk->GetStreamAt(1) == 22136);
 		REQUIRE(chunk->GetStreamSequenceAt(1) == 34661);
 
-		/* Should throw if modifications are attempted when it's frozen. */
-
-		REQUIRE_THROWS_AS(chunk->SetNewCumulativeTsn(1234), MediaSoupError);
-		REQUIRE_THROWS_AS(chunk->AddStream(1111, 3333), MediaSoupError);
-
 		/* Serialize it. */
 
 		chunk->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ SerializeBuffer,
 		  /*bufferLength*/ sizeof(SerializeBuffer),
 		  /*length*/ 16,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::FORWARD_TSN,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
@@ -94,12 +87,11 @@ SCENARIO("Forward Cumulative TSN Chunk (192)", "[sctp][serializable]")
 
 		delete chunk;
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ clonedChunk,
 		  /*buffer*/ CloneBuffer,
 		  /*bufferLength*/ sizeof(CloneBuffer),
 		  /*length*/ 16,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::FORWARD_TSN,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
@@ -143,12 +135,11 @@ SCENARIO("Forward Cumulative TSN Chunk (192)", "[sctp][serializable]")
 	{
 		auto* chunk = ForwardTsnChunk::Factory(FactoryBuffer, sizeof(FactoryBuffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 8,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::FORWARD_TSN,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
@@ -168,12 +159,11 @@ SCENARIO("Forward Cumulative TSN Chunk (192)", "[sctp][serializable]")
 		chunk->AddStream(2222, 22220);
 		chunk->AddStream(3333, 33330);
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 20,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::FORWARD_TSN,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
@@ -198,12 +188,11 @@ SCENARIO("Forward Cumulative TSN Chunk (192)", "[sctp][serializable]")
 
 		delete chunk;
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ parsedChunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ 20,
 		  /*length*/ 20,
-		  /*frozen*/ true,
 		  /*chunkType*/ Chunk::ChunkType::FORWARD_TSN,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,

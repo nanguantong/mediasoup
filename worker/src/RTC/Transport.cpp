@@ -698,10 +698,10 @@ namespace RTC
 					  producerRtpHeaderExtensionIds.transportWideCc01;
 				}
 
-				if (producerRtpHeaderExtensionIds.absCaptureTime != 0u)
+				if (producerRtpHeaderExtensionIds.dependencyDescriptor != 0u)
 				{
-					this->recvRtpHeaderExtensionIds.absCaptureTime =
-					  producerRtpHeaderExtensionIds.absCaptureTime;
+					this->recvRtpHeaderExtensionIds.dependencyDescriptor =
+					  producerRtpHeaderExtensionIds.dependencyDescriptor;
 				}
 
 				// Create status response.
@@ -1555,7 +1555,7 @@ namespace RTC
 #endif
 	}
 
-	void Transport::ReceiveRtpPacket(RTC::RtpPacket* packet)
+	void Transport::ReceiveRtpPacket(RTC::RTP::Packet* packet)
 	{
 		MS_TRACE();
 
@@ -1563,13 +1563,9 @@ namespace RTC
 		packet->logger.recvTransportId = this->id;
 #endif
 
-		// Apply the Transport RTP header extension ids so the RTP listener can use them.
-		packet->SetMidExtensionId(this->recvRtpHeaderExtensionIds.mid);
-		packet->SetRidExtensionId(this->recvRtpHeaderExtensionIds.rid);
-		packet->SetRepairedRidExtensionId(this->recvRtpHeaderExtensionIds.rrid);
-		packet->SetAbsSendTimeExtensionId(this->recvRtpHeaderExtensionIds.absSendTime);
-		packet->SetTransportWideCc01ExtensionId(this->recvRtpHeaderExtensionIds.transportWideCc01);
-		packet->SetAbsCaptureTimeExtensionId(this->recvRtpHeaderExtensionIds.absCaptureTime);
+		// Apply the Transport RTP header extension ids so the RTP listener can use
+		// them.
+		packet->AssignExtensionIds(this->recvRtpHeaderExtensionIds);
 
 		auto nowMs = DepLibUV::GetTimeMs();
 
@@ -1585,7 +1581,7 @@ namespace RTC
 		if (!producer)
 		{
 #ifdef MS_RTC_LOGGER_RTP
-			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::PRODUCER_NOT_FOUND);
+			packet->logger.Discarded(RTC::RtcLogger::RtpPacket::DiscardReason::PRODUCER_NOT_FOUND);
 #endif
 
 			MS_WARN_TAG(
@@ -1794,7 +1790,7 @@ namespace RTC
 					if (!consumer)
 					{
 						// Special case for the RTP probator.
-						if (report->GetSsrc() == RTC::RtpProbationSsrc)
+						if (report->GetSsrc() == RTC::RTP::ProbationGenerator::Ssrc)
 						{
 							continue;
 						}
@@ -1849,7 +1845,7 @@ namespace RTC
 					{
 						auto* consumer = GetConsumerByMediaSsrc(feedback->GetMediaSsrc());
 
-						if (feedback->GetMediaSsrc() == RTC::RtpProbationSsrc)
+						if (feedback->GetMediaSsrc() == RTC::RTP::ProbationGenerator::Ssrc)
 						{
 							break;
 						}
@@ -1888,7 +1884,7 @@ namespace RTC
 							auto& item     = *it;
 							auto* consumer = GetConsumerByMediaSsrc(item->GetSsrc());
 
-							if (item->GetSsrc() == RTC::RtpProbationSsrc)
+							if (item->GetSsrc() == RTC::RTP::ProbationGenerator::Ssrc)
 							{
 								continue;
 							}
@@ -1983,7 +1979,7 @@ namespace RTC
 					!consumer &&
 					feedback->GetMessageType() != RTC::RTCP::FeedbackRtp::MessageType::TCC &&
 					(
-						feedback->GetMediaSsrc() != RTC::RtpProbationSsrc ||
+						feedback->GetMediaSsrc() != RTC::RTP::ProbationGenerator::Ssrc ||
 						!GetConsumerByRtxSsrc(feedback->GetMediaSsrc())
 					)
 				)
@@ -2350,7 +2346,7 @@ namespace RTC
 		this->tccClient->SetDesiredBitrate(totalDesiredBitrate, forceBitrate);
 	}
 
-	inline void Transport::EmitTraceEventProbationType(RTC::RtpPacket* /*packet*/) const
+	inline void Transport::EmitTraceEventProbationType(RTC::RTP::Packet* /*packet*/) const
 	{
 		MS_TRACE();
 
@@ -2449,7 +2445,7 @@ namespace RTC
 		this->listener->OnTransportProducerRtcpSenderReport(this, producer, rtpStream, first);
 	}
 
-	inline void Transport::OnProducerRtpPacketReceived(RTC::Producer* producer, RTC::RtpPacket* packet)
+	inline void Transport::OnProducerRtpPacketReceived(RTC::Producer* producer, RTC::RTP::Packet* packet)
 	{
 		MS_TRACE();
 
@@ -2472,7 +2468,7 @@ namespace RTC
 		  this, producer, mappedSsrc, worstRemoteFractionLost);
 	}
 
-	inline void Transport::OnConsumerSendRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet)
+	inline void Transport::OnConsumerSendRtpPacket(RTC::Consumer* consumer, RTC::RTP::Packet* packet)
 	{
 		MS_TRACE();
 
@@ -2501,7 +2497,7 @@ namespace RTC
 			packetInfo.transport_sequence_number = this->transportWideCcSeq;
 			packetInfo.has_rtp_sequence_number   = true;
 			packetInfo.rtp_sequence_number       = packet->GetSequenceNumber();
-			packetInfo.length                    = packet->GetSize();
+			packetInfo.length                    = packet->GetLength();
 			packetInfo.pacing_info               = this->tccClient->GetPacingInfo();
 
 			// Indicate the pacer (and prober) that a packet is to be sent.
@@ -2519,7 +2515,7 @@ namespace RTC
 			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
 
 			sentInfo.wideSeq     = this->transportWideCcSeq;
-			sentInfo.size        = packet->GetSize();
+			sentInfo.size        = packet->GetLength();
 			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
 
 			auto* cb = new onSendCallback(
@@ -2571,7 +2567,7 @@ namespace RTC
 		this->sendRtpTransmission.Update(packet);
 	}
 
-	inline void Transport::OnConsumerRetransmitRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet)
+	inline void Transport::OnConsumerRetransmitRtpPacket(RTC::Consumer* consumer, RTC::RTP::Packet* packet)
 	{
 		MS_TRACE();
 
@@ -2595,7 +2591,7 @@ namespace RTC
 			packetInfo.transport_sequence_number = this->transportWideCcSeq;
 			packetInfo.has_rtp_sequence_number   = true;
 			packetInfo.rtp_sequence_number       = packet->GetSequenceNumber();
-			packetInfo.length                    = packet->GetSize();
+			packetInfo.length                    = packet->GetLength();
 			packetInfo.pacing_info               = this->tccClient->GetPacingInfo();
 
 			// Indicate the pacer (and prober) that a packet is to be sent.
@@ -2608,7 +2604,7 @@ namespace RTC
 			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
 
 			sentInfo.wideSeq     = this->transportWideCcSeq;
-			sentInfo.size        = packet->GetSize();
+			sentInfo.size        = packet->GetLength();
 			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
 
 			auto* cb = new onSendCallback(
@@ -2971,7 +2967,7 @@ namespace RTC
 
 	inline void Transport::OnTransportCongestionControlClientSendRtpPacket(
 	  RTC::TransportCongestionControlClient* /*tccClient*/,
-	  RTC::RtpPacket* packet,
+	  RTC::RTP::Packet* packet,
 	  const webrtc::PacedPacketInfo& pacingInfo)
 	{
 		MS_TRACE();
@@ -2998,7 +2994,7 @@ namespace RTC
 			packetInfo.transport_sequence_number = this->transportWideCcSeq;
 			packetInfo.has_rtp_sequence_number   = true;
 			packetInfo.rtp_sequence_number       = packet->GetSequenceNumber();
-			packetInfo.length                    = packet->GetSize();
+			packetInfo.length                    = packet->GetLength();
 			packetInfo.pacing_info               = pacingInfo;
 
 			// Indicate the pacer (and prober) that a packet is to be sent.
@@ -3011,7 +3007,7 @@ namespace RTC
 			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
 
 			sentInfo.wideSeq     = this->transportWideCcSeq;
-			sentInfo.size        = packet->GetSize();
+			sentInfo.size        = packet->GetLength();
 			sentInfo.isProbation = true;
 			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
 
@@ -3070,7 +3066,7 @@ namespace RTC
 		  "probation sent [seq:%" PRIu16 ", wideSeq:%" PRIu16 ", size:%zu, bitrate:%" PRIu32 "]",
 		  packet->GetSequenceNumber(),
 		  this->transportWideCcSeq,
-		  packet->GetSize(),
+		  packet->GetLength(),
 		  this->sendProbationTransmission.GetBitrate(DepLibUV::GetTimeMs()));
 	}
 

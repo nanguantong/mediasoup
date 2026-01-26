@@ -1,8 +1,8 @@
 #include "common.hpp"
 #include "MediaSoupErrors.hpp"
-#include "RTC/SCTP/common.hpp" // in worker/test/include/
 #include "RTC/SCTP/packet/Parameter.hpp"
 #include "RTC/SCTP/packet/parameters/OutgoingSsnResetRequestParameter.hpp"
+#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 
@@ -36,12 +36,11 @@ SCENARIO("Outgoing SSN Reset Request Parameter (13)", "[sctp][serializable]")
 
 		auto* parameter = OutgoingSsnResetRequestParameter::Parse(buffer, sizeof(buffer));
 
-		CHECK_PARAMETER(
+		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 24,
-		  /*frozen*/ true,
 		  /*parameterType*/ Parameter::ParameterType::OUTGOING_SSN_RESET_REQUEST,
 		  /*unknownType*/ false,
 		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
@@ -54,25 +53,17 @@ SCENARIO("Outgoing SSN Reset Request Parameter (13)", "[sctp][serializable]")
 		REQUIRE(parameter->GetStreamAt(1) == 0x5002);
 		REQUIRE(parameter->GetStreamAt(2) == 0x5003);
 
-		/* Should throw if modifications are attempted when it's frozen. */
-
-		REQUIRE_THROWS_AS(parameter->SetReconfigurationRequestSequenceNumber(111), MediaSoupError);
-		REQUIRE_THROWS_AS(parameter->SetReconfigurationResponseSequenceNumber(222), MediaSoupError);
-		REQUIRE_THROWS_AS(parameter->SetSenderLastAssignedTsn(333), MediaSoupError);
-		REQUIRE_THROWS_AS(parameter->AddStream(444), MediaSoupError);
-
 		/* Serialize it. */
 
 		parameter->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
-		CHECK_PARAMETER(
+		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
 		  /*buffer*/ SerializeBuffer,
 		  /*bufferLength*/ sizeof(SerializeBuffer),
 		  /*length*/ 24,
-		  /*frozen*/ false,
 		  /*parameterType*/ Parameter::ParameterType::OUTGOING_SSN_RESET_REQUEST,
 		  /*unknownType*/ false,
 		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
@@ -93,12 +84,11 @@ SCENARIO("Outgoing SSN Reset Request Parameter (13)", "[sctp][serializable]")
 
 		delete parameter;
 
-		CHECK_PARAMETER(
+		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ clonedParameter,
 		  /*buffer*/ CloneBuffer,
 		  /*bufferLength*/ sizeof(CloneBuffer),
 		  /*length*/ 24,
-		  /*frozen*/ false,
 		  /*parameterType*/ Parameter::ParameterType::OUTGOING_SSN_RESET_REQUEST,
 		  /*unknownType*/ false,
 		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
@@ -118,12 +108,11 @@ SCENARIO("Outgoing SSN Reset Request Parameter (13)", "[sctp][serializable]")
 	{
 		auto* parameter = OutgoingSsnResetRequestParameter::Factory(FactoryBuffer, sizeof(FactoryBuffer));
 
-		CHECK_PARAMETER(
+		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 16,
-		  /*frozen*/ false,
 		  /*parameterType*/ Parameter::ParameterType::OUTGOING_SSN_RESET_REQUEST,
 		  /*unknownType*/ false,
 		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
@@ -144,12 +133,11 @@ SCENARIO("Outgoing SSN Reset Request Parameter (13)", "[sctp][serializable]")
 		parameter->AddStream(4447);
 		parameter->AddStream(4448);
 
-		CHECK_PARAMETER(
+		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 28,
-		  /*frozen*/ false,
 		  /*parameterType*/ Parameter::ParameterType::OUTGOING_SSN_RESET_REQUEST,
 		  /*unknownType*/ false,
 		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
@@ -171,12 +159,11 @@ SCENARIO("Outgoing SSN Reset Request Parameter (13)", "[sctp][serializable]")
 
 		delete parameter;
 
-		CHECK_PARAMETER(
+		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parsedParameter,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ 28,
 		  /*length*/ 28,
-		  /*frozen*/ true,
 		  /*parameterType*/ Parameter::ParameterType::OUTGOING_SSN_RESET_REQUEST,
 		  /*unknownType*/ false,
 		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);

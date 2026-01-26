@@ -1,8 +1,8 @@
 #include "common.hpp"
 #include "MediaSoupErrors.hpp"
-#include "RTC/SCTP/common.hpp" // in worker/test/include/
 #include "RTC/SCTP/packet/ErrorCause.hpp"
 #include "RTC/SCTP/packet/errorCauses/UnrecognizedParametersErrorCause.hpp"
+#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 
@@ -29,12 +29,11 @@ SCENARIO("Unrecognized Parameters Error Cause (8)", "[sctp][serializable]")
 
 		auto* errorCause = UnrecognizedParametersErrorCause::Parse(buffer, sizeof(buffer));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 12,
-		  /*frozen*/ true,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::UNRECOGNIZED_PARAMETERS,
 		  /*unknownCode*/ false);
 
@@ -50,22 +49,17 @@ SCENARIO("Unrecognized Parameters Error Cause (8)", "[sctp][serializable]")
 		// This should be padding.
 		REQUIRE(errorCause->GetUnrecognizedParameters()[7] == 0x00);
 
-		/* Should throw if modifications are attempted when it's frozen. */
-
-		REQUIRE_THROWS_AS(errorCause->SetUnrecognizedParameters(DataBuffer, 3), MediaSoupError);
-
 		/* Serialize it. */
 
 		errorCause->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause,
 		  /*buffer*/ SerializeBuffer,
 		  /*bufferLength*/ sizeof(SerializeBuffer),
 		  /*length*/ 12,
-		  /*frozen*/ false,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::UNRECOGNIZED_PARAMETERS,
 		  /*unknownCode*/ false);
 
@@ -89,12 +83,11 @@ SCENARIO("Unrecognized Parameters Error Cause (8)", "[sctp][serializable]")
 
 		delete errorCause;
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ clonedErrorCause,
 		  /*buffer*/ CloneBuffer,
 		  /*bufferLength*/ sizeof(CloneBuffer),
 		  /*length*/ 12,
-		  /*frozen*/ false,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::UNRECOGNIZED_PARAMETERS,
 		  /*unknownCode*/ false);
 
@@ -118,12 +111,11 @@ SCENARIO("Unrecognized Parameters Error Cause (8)", "[sctp][serializable]")
 		auto* errorCause =
 		  UnrecognizedParametersErrorCause::Factory(FactoryBuffer, sizeof(FactoryBuffer));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 4,
-		  /*frozen*/ false,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::UNRECOGNIZED_PARAMETERS,
 		  /*unknownCode*/ false);
 
@@ -148,12 +140,11 @@ SCENARIO("Unrecognized Parameters Error Cause (8)", "[sctp][serializable]")
 		// 6 bytes + 2 bytes of padding.
 		errorCause->SetUnrecognizedParameters(DataBuffer, 6);
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 12,
-		  /*frozen*/ false,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::UNRECOGNIZED_PARAMETERS,
 		  /*unknownCode*/ false);
 
@@ -176,12 +167,11 @@ SCENARIO("Unrecognized Parameters Error Cause (8)", "[sctp][serializable]")
 
 		delete errorCause;
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ parsedErrorCause,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ 12,
 		  /*length*/ 12,
-		  /*frozen*/ true,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::UNRECOGNIZED_PARAMETERS,
 		  /*unknownCode*/ false);
 

@@ -6,7 +6,7 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
-#include "RTC/Codecs/Tools.hpp"
+#include "RTC/RTP/Codecs/Tools.hpp"
 #include "RTC/SimpleConsumer.hpp"
 #ifdef MS_RTC_LOGGER_RTP
 #include "RTC/RtcLogger.hpp"
@@ -40,7 +40,7 @@ namespace RTC
 		auto& encoding         = this->rtpParameters.encodings[0];
 		const auto* mediaCodec = this->rtpParameters.GetCodecForEncoding(encoding);
 
-		this->keyFrameSupported = RTC::Codecs::Tools::CanBeKeyFrame(mediaCodec->mimeType);
+		this->keyFrameSupported = RTC::RTP::Codecs::Tools::CanBeKeyFrame(mediaCodec->mimeType);
 
 		// Create RtpStreamSend instance for sending a single stream to the remote.
 		CreateRtpStream();
@@ -51,7 +51,7 @@ namespace RTC
 		const uint16_t initialOutputSeq =
 		  Utils::Crypto::GetRandomUInt(1000u, std::numeric_limits<uint16_t>::max() / 2);
 
-		this->rtpSeqManager.reset(new RTC::SeqManager<uint16_t>(initialOutputSeq));
+		this->rtpSeqManager = RTC::SeqManager<uint16_t>(initialOutputSeq);
 
 		// Create the encoding context for Opus.
 		if (
@@ -59,10 +59,10 @@ namespace RTC
 		  (mediaCodec->mimeType.subtype == RTC::RtpCodecMimeType::Subtype::OPUS ||
 		   mediaCodec->mimeType.subtype == RTC::RtpCodecMimeType::Subtype::MULTIOPUS))
 		{
-			RTC::Codecs::EncodingContext::Params params;
+			RTC::RTP::Codecs::EncodingContext::Params params;
 
 			this->encodingContext.reset(
-			  RTC::Codecs::Tools::GetEncodingContext(mediaCodec->mimeType, params));
+			  RTC::RTP::Codecs::Tools::GetEncodingContext(mediaCodec->mimeType, params));
 
 			// ignoreDtx is set to false by default.
 			this->encodingContext->SetIgnoreDtx(data->ignoreDtx());
@@ -313,7 +313,7 @@ namespace RTC
 	}
 
 	// NOLINTNEXTLINE (misc-no-recursion)
-	void SimpleConsumer::SendRtpPacket(RTC::RtpPacket* packet, RTC::SharedRtpPacket& sharedPacket)
+	void SimpleConsumer::SendRtpPacket(RTC::RTP::Packet* packet, RTC::RTP::SharedPacket& sharedPacket)
 	{
 		MS_TRACE();
 
@@ -324,10 +324,10 @@ namespace RTC
 		if (!IsActive())
 		{
 #ifdef MS_RTC_LOGGER_RTP
-			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::CONSUMER_INACTIVE);
+			packet->logger.Discarded(RTC::RtcLogger::RtpPacket::DiscardReason::CONSUMER_INACTIVE);
 #endif
 
-			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
+			this->rtpSeqManager.Drop(packet->GetSequenceNumber());
 
 			return;
 		}
@@ -337,7 +337,7 @@ namespace RTC
 		if (this->syncRequired && this->keyFrameSupported && !packet->IsKeyFrame())
 		{
 #ifdef MS_RTC_LOGGER_RTP
-			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::NOT_A_KEYFRAME);
+			packet->logger.Discarded(RTC::RtcLogger::RtpPacket::DiscardReason::NOT_A_KEYFRAME);
 #endif
 
 			// NOTE: No need to drop the packet in the RTP sequence manager since here
@@ -360,10 +360,10 @@ namespace RTC
 			MS_WARN_DEV("payload type not supported [payloadType:%" PRIu8 "]", payloadType);
 
 #ifdef MS_RTC_LOGGER_RTP
-			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::UNSUPPORTED_PAYLOAD_TYPE);
+			packet->logger.Discarded(RTC::RtcLogger::RtpPacket::DiscardReason::UNSUPPORTED_PAYLOAD_TYPE);
 #endif
 
-			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
+			this->rtpSeqManager.Drop(packet->GetSequenceNumber());
 
 			return;
 		}
@@ -372,10 +372,10 @@ namespace RTC
 		if (packet->GetPayloadLength() == 0)
 		{
 #ifdef MS_RTC_LOGGER_RTP
-			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::EMPTY_PAYLOAD);
+			packet->logger.Discarded(RTC::RtcLogger::RtpPacket::DiscardReason::EMPTY_PAYLOAD);
 #endif
 
-			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
+			this->rtpSeqManager.Drop(packet->GetSequenceNumber());
 
 			return;
 		}
@@ -392,10 +392,10 @@ namespace RTC
 			  packet->GetTimestamp());
 
 #ifdef MS_RTC_LOGGER_RTP
-			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::DROPPED_BY_CODEC);
+			packet->logger.Discarded(RTC::RtcLogger::RtpPacket::DiscardReason::DROPPED_BY_CODEC);
 #endif
 
-			this->rtpSeqManager->Drop(packet->GetSequenceNumber());
+			this->rtpSeqManager.Drop(packet->GetSequenceNumber());
 
 			return;
 		}
@@ -422,7 +422,7 @@ namespace RTC
 				sendPacketsInTargetLayerRetransmissionBuffer = true;
 			}
 
-			this->rtpSeqManager->Sync(packet->GetSequenceNumber() - 1);
+			this->rtpSeqManager.Sync(packet->GetSequenceNumber() - 1);
 
 			this->syncRequired = false;
 		}
@@ -430,7 +430,7 @@ namespace RTC
 		// Update RTP seq number and timestamp.
 		uint16_t seq;
 
-		this->rtpSeqManager->Input(packet->GetSequenceNumber(), seq);
+		this->rtpSeqManager.Input(packet->GetSequenceNumber(), seq);
 
 		// Save original packet fields.
 		auto origSsrc = packet->GetSsrc();
@@ -480,7 +480,7 @@ namespace RTC
 			  origSeq);
 
 #ifdef MS_RTC_LOGGER_RTP
-			packet->logger.Discarded(RtcLogger::RtpPacket::DiscardReason::SEND_RTP_STREAM_DISCARDED);
+			packet->logger.Discarded(RTC::RtcLogger::RtpPacket::DiscardReason::SEND_RTP_STREAM_DISCARDED);
 #endif
 		}
 
@@ -812,7 +812,7 @@ namespace RTC
 	}
 
 	void SimpleConsumer::StorePacketInTargetLayerRetransmissionBuffer(
-	  RTC::RtpPacket* packet, RTC::SharedRtpPacket& sharedPacket)
+	  RTC::RTP::Packet* packet, RTC::RTP::SharedPacket& sharedPacket)
 	{
 		MS_TRACE();
 
@@ -870,7 +870,7 @@ namespace RTC
 	}
 
 	void SimpleConsumer::OnRtpStreamRetransmitRtpPacket(
-	  RTC::RtpStreamSend* /*rtpStream*/, RTC::RtpPacket* packet)
+	  RTC::RtpStreamSend* /*rtpStream*/, RTC::RTP::Packet* packet)
 	{
 		MS_TRACE();
 

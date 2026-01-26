@@ -1,10 +1,10 @@
 #include "common.hpp"
 #include "MediaSoupErrors.hpp"
-#include "RTC/SCTP/common.hpp" // in worker/test/include/
 #include "RTC/SCTP/packet/Chunk.hpp"
 #include "RTC/SCTP/packet/ErrorCause.hpp"
 #include "RTC/SCTP/packet/chunks/AbortAssociationChunk.hpp"
 #include "RTC/SCTP/packet/errorCauses/StaleCookieErrorCause.hpp"
+#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 
@@ -31,12 +31,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 
 		auto* chunk = AbortAssociationChunk::Parse(buffer, sizeof(buffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 12,
-		  /*frozen*/ true,
 		  /*chunkType*/ Chunk::ChunkType::ABORT,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -50,20 +49,15 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 
 		auto* errorCause1 = reinterpret_cast<const StaleCookieErrorCause*>(chunk->GetErrorCauseAt(0));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause1,
 		  /*buffer*/ nullptr,
 		  /*bufferLength*/ 8,
 		  /*length*/ 8,
-		  /*frozen*/ true,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::STALE_COOKIE,
 		  /*unknownType*/ false);
 
 		REQUIRE(errorCause1->GetMeasureOfStaleness() == 0x12345678);
-
-		/* Should throw if modifications are attempted when it's frozen. */
-
-		REQUIRE_THROWS_AS(chunk->BuildErrorCauseInPlace<StaleCookieErrorCause>(), MediaSoupError);
 
 		/* Serialize it. */
 
@@ -71,12 +65,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ SerializeBuffer,
 		  /*bufferLength*/ sizeof(SerializeBuffer),
 		  /*length*/ 12,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::ABORT,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -88,12 +81,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 
 		errorCause1 = reinterpret_cast<const StaleCookieErrorCause*>(chunk->GetErrorCauseAt(0));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause1,
 		  /*buffer*/ nullptr,
 		  /*bufferLength*/ 8,
 		  /*length*/ 8,
-		  /*frozen*/ true,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::STALE_COOKIE,
 		  /*unknownType*/ false);
 
@@ -107,12 +99,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 
 		delete chunk;
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ clonedChunk,
 		  /*buffer*/ CloneBuffer,
 		  /*bufferLength*/ sizeof(CloneBuffer),
 		  /*length*/ 12,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::ABORT,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -124,12 +115,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 
 		errorCause1 = reinterpret_cast<const StaleCookieErrorCause*>(clonedChunk->GetErrorCauseAt(0));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause1,
 		  /*buffer*/ nullptr,
 		  /*bufferLength*/ 8,
 		  /*length*/ 8,
-		  /*frozen*/ true,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::STALE_COOKIE,
 		  /*unknownType*/ false);
 
@@ -142,12 +132,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 	{
 		auto* chunk = AbortAssociationChunk::Factory(FactoryBuffer, sizeof(FactoryBuffer));
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 4,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::ABORT,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -168,12 +157,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 		errorCause1->SetMeasureOfStaleness(666);
 		errorCause1->Consolidate();
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 4 + (4 + 4),
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::ABORT,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -188,12 +176,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 		const auto* addedErrorCause1 =
 		  reinterpret_cast<const StaleCookieErrorCause*>(chunk->GetErrorCauseAt(0));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ addedErrorCause1,
 		  /*buffer*/ nullptr,
 		  /*bufferLength*/ 8,
 		  /*length*/ 8,
-		  /*frozen*/ true,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::STALE_COOKIE,
 		  /*unknownCode*/ false);
 
@@ -205,12 +192,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 
 		delete chunk;
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ parsedChunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ 4 + (4 + 4),
 		  /*length*/ 4 + (4 + 4),
-		  /*frozen*/ true,
 		  /*chunkType*/ Chunk::ChunkType::ABORT,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -225,12 +211,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 		const auto* parsedErrorCause1 =
 		  reinterpret_cast<const StaleCookieErrorCause*>(parsedChunk->GetErrorCauseAt(0));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ parsedErrorCause1,
 		  /*buffer*/ nullptr,
 		  /*bufferLength*/ 8,
 		  /*length*/ 8,
-		  /*frozen*/ true,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::STALE_COOKIE,
 		  /*unknownCode*/ false);
 
@@ -260,12 +245,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 		// - Error Cause 1: 8
 		// - Total: 12
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 12,
-		  /*frozen*/ false,
 		  /*chunkType*/ Chunk::ChunkType::ABORT,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -280,12 +264,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 		auto* obtainedErrorCause1 =
 		  reinterpret_cast<const StaleCookieErrorCause*>(chunk->GetErrorCauseAt(0));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ obtainedErrorCause1,
 		  /*buffer*/ nullptr,
 		  /*bufferLength*/ 8,
 		  /*length*/ 8,
-		  /*frozen*/ true,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::STALE_COOKIE,
 		  /*unknownCode*/ false);
 
@@ -297,12 +280,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 
 		delete chunk;
 
-		CHECK_CHUNK(
+		CHECK_SCTP_CHUNK(
 		  /*chunk*/ parsedChunk,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ 12,
 		  /*length*/ 12,
-		  /*frozen*/ true,
 		  /*chunkType*/ Chunk::ChunkType::ABORT,
 		  /*unknownType*/ false,
 		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
@@ -317,12 +299,11 @@ SCENARIO("SCTP Abort Association Chunk (6)", "[sctp][serializable]")
 		obtainedErrorCause1 =
 		  reinterpret_cast<const StaleCookieErrorCause*>(parsedChunk->GetErrorCauseAt(0));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ obtainedErrorCause1,
 		  /*buffer*/ nullptr,
 		  /*bufferLength*/ 8,
 		  /*length*/ 8,
-		  /*frozen*/ true,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::STALE_COOKIE,
 		  /*unknownCode*/ false);
 

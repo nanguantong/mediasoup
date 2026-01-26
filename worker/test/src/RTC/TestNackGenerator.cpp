@@ -1,8 +1,10 @@
 #include "common.hpp"
 #include "DepLibUV.hpp"
-#include "RTC/Codecs/PayloadDescriptorHandler.hpp"
 #include "RTC/NackGenerator.hpp"
-#include "RTC/RtpPacket.hpp"
+#include "RTC/RTP/Codecs/PayloadDescriptorHandler.hpp"
+#include "RTC/RTP/Packet.hpp"
+#include "RTC/RTP/rtpCommon.hpp"
+#include "RTC/Serializable.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <vector>
 
@@ -33,7 +35,7 @@ struct TestNackGeneratorInput
 	size_t nackListSize{ 0 };
 };
 
-class TestPayloadDescriptorHandler : public Codecs::PayloadDescriptorHandler
+class TestPayloadDescriptorHandler : public RTP::Codecs::PayloadDescriptorHandler
 {
 public:
 	explicit TestPayloadDescriptorHandler(bool isKeyFrame) : isKeyFrame(isKeyFrame) {};
@@ -41,21 +43,21 @@ public:
 	void Dump(int indentation = 0) const override
 	{
 	}
-	bool Process(Codecs::EncodingContext* /*context*/, RTC::RtpPacket* /*packet*/, bool& /*marker*/) override
+	bool Process(RTP::Codecs::EncodingContext* /*context*/, RTP::Packet* /*packet*/, bool& /*marker*/) override
 	{
 		return true;
 	}
-	void RtpPacketCloned(RTC::RtpPacket* packet) override
+	void RtpPacketChanged(RTC::RTP::Packet* packet) override
 	{
 	}
-	std::unique_ptr<RTC::Codecs::PayloadDescriptor::Encoder> GetEncoder() const override
+	std::unique_ptr<RTP::Codecs::PayloadDescriptor::Encoder> GetEncoder() const override
 	{
 		return nullptr;
 	}
-	void Encode(RtpPacket* /*packet*/, RTC::Codecs::PayloadDescriptor::Encoder* /*encoder*/) override
+	void Encode(RTP::Packet* /*packet*/, RTP::Codecs::PayloadDescriptor::Encoder* /*encoder*/) override
 	{
 	}
-	void Restore(RtpPacket* /*packet*/) override
+	void Restore(RTP::Packet* /*packet*/) override
 	{
 	}
 	uint8_t GetSpatialLayer() const override
@@ -116,19 +118,7 @@ private:
 	bool keyFrameRequiredTriggered{ false };
 };
 
-// clang-format off
-uint8_t rtpBuffer[] =
-{
-	0x80, 0x7b, 0x52, 0x0e,
-	0x5b, 0x6b, 0xca, 0xb5,
-	0x00, 0x00, 0x00, 0x02
-};
-// clang-format on
-
-// [pt:123, seq:21006, timestamp:1533790901]
-std::unique_ptr<RtpPacket> packet(RtpPacket::Parse(rtpBuffer, sizeof(rtpBuffer)));
-
-void validate(std::vector<TestNackGeneratorInput>& inputs)
+void validate(std::unique_ptr<RTP::Packet>& packet, std::vector<TestNackGeneratorInput>& inputs)
 {
 	TestNackGeneratorListener listener;
 	NackGenerator nackGenerator = NackGenerator(&listener, SendNackDelay);
@@ -149,6 +139,20 @@ void validate(std::vector<TestNackGeneratorInput>& inputs)
 
 SCENARIO("NACK generator", "[rtp][rtcp]")
 {
+	// clang-format off
+	uint8_t rtpBuffer[] =
+	{
+		0x80, 0x7b, 0x52, 0x0e,
+		0x5b, 0x6b, 0xca, 0xb5,
+		0x00, 0x00, 0x00, 0x02
+	};
+	// clang-format on
+
+	// [pt:123, seq:21006, timestamp:1533790901]
+	std::unique_ptr<RTP::Packet> packet{ RTP::Packet::Parse(rtpBuffer, sizeof(rtpBuffer)) };
+
+	packet->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+
 	SECTION("no NACKs required")
 	{
 		// clang-format off
@@ -169,7 +173,7 @@ SCENARIO("NACK generator", "[rtp][rtcp]")
 		};
 		// clang-format on
 
-		validate(inputs);
+		validate(packet, inputs);
 	}
 
 	SECTION("generate NACK for missing ordered packet")
@@ -182,7 +186,7 @@ SCENARIO("NACK generator", "[rtp][rtcp]")
 		};
 		// clang-format on
 
-		validate(inputs);
+		validate(packet, inputs);
 	}
 
 	SECTION("sequence wrap generates no NACK")
@@ -196,7 +200,7 @@ SCENARIO("NACK generator", "[rtp][rtcp]")
 		};
 		// clang-format on
 
-		validate(inputs);
+		validate(packet, inputs);
 	}
 
 	SECTION("generate NACK after sequence wrap")
@@ -210,7 +214,7 @@ SCENARIO("NACK generator", "[rtp][rtcp]")
 		};
 		// clang-format on
 
-		validate(inputs);
+		validate(packet, inputs);
 	}
 
 	SECTION("generate NACK after sequence wrap, and yet another NACK")
@@ -227,7 +231,7 @@ SCENARIO("NACK generator", "[rtp][rtcp]")
 		};
 		// clang-format on
 
-		validate(inputs);
+		validate(packet, inputs);
 	}
 
 	SECTION("intercalated missing packets")
@@ -243,7 +247,7 @@ SCENARIO("NACK generator", "[rtp][rtcp]")
 		};
 		// clang-format on
 
-		validate(inputs);
+		validate(packet, inputs);
 	}
 
 	SECTION("non contiguous intercalated missing packets")
@@ -258,7 +262,7 @@ SCENARIO("NACK generator", "[rtp][rtcp]")
 		};
 		// clang-format on
 
-		validate(inputs);
+		validate(packet, inputs);
 	}
 
 	SECTION("big jump")
@@ -274,7 +278,7 @@ SCENARIO("NACK generator", "[rtp][rtcp]")
 		};
 		// clang-format on
 
-		validate(inputs);
+		validate(packet, inputs);
 	}
 
 	SECTION("Key Frame required. Nack list too large to be requested")
@@ -287,7 +291,7 @@ SCENARIO("NACK generator", "[rtp][rtcp]")
 		};
 		// clang-format on
 
-		validate(inputs);
+		validate(packet, inputs);
 	}
 
 	// Must run the loop to wait for UV timers and close them.

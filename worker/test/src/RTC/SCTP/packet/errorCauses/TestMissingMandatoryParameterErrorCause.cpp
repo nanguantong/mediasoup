@@ -1,9 +1,9 @@
 #include "common.hpp"
 #include "MediaSoupErrors.hpp"
-#include "RTC/SCTP/common.hpp" // in worker/test/include/
 #include "RTC/SCTP/packet/ErrorCause.hpp"
 #include "RTC/SCTP/packet/Parameter.hpp"
 #include "RTC/SCTP/packet/errorCauses/MissingMandatoryParameterErrorCause.hpp"
+#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 
@@ -33,12 +33,11 @@ SCENARIO("Invalid Stream Identifier Error Cause (2)", "[sctp][serializable]")
 
 		auto* errorCause = MissingMandatoryParameterErrorCause::Parse(buffer, sizeof(buffer));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 16,
-		  /*frozen*/ true,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::MISSING_MANDATORY_PARAMETER,
 		  /*unknownCode*/ false);
 
@@ -50,24 +49,17 @@ SCENARIO("Invalid Stream Identifier Error Cause (2)", "[sctp][serializable]")
 		REQUIRE(errorCause->GetBuffer()[14] == 0);
 		REQUIRE(errorCause->GetBuffer()[15] == 0);
 
-		/* Should throw if modifications are attempted when it's frozen. */
-
-		REQUIRE_THROWS_AS(
-		  errorCause->AddMissingParameterType(Parameter::ParameterType::COOKIE_PRESERVATIVE),
-		  MediaSoupError);
-
 		/* Serialize it. */
 
 		errorCause->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause,
 		  /*buffer*/ SerializeBuffer,
 		  /*bufferLength*/ sizeof(SerializeBuffer),
 		  /*length*/ 16,
-		  /*frozen*/ false,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::MISSING_MANDATORY_PARAMETER,
 		  /*unknownCode*/ false);
 
@@ -87,12 +79,11 @@ SCENARIO("Invalid Stream Identifier Error Cause (2)", "[sctp][serializable]")
 
 		delete errorCause;
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ clonedErrorCause,
 		  /*buffer*/ CloneBuffer,
 		  /*bufferLength*/ sizeof(CloneBuffer),
 		  /*length*/ 16,
-		  /*frozen*/ false,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::MISSING_MANDATORY_PARAMETER,
 		  /*unknownCode*/ false);
 
@@ -166,12 +157,11 @@ SCENARIO("Invalid Stream Identifier Error Cause (2)", "[sctp][serializable]")
 		auto* errorCause =
 		  MissingMandatoryParameterErrorCause::Factory(FactoryBuffer, sizeof(FactoryBuffer));
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 8,
-		  /*frozen*/ false,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::MISSING_MANDATORY_PARAMETER,
 		  /*unknownCode*/ false);
 
@@ -183,12 +173,11 @@ SCENARIO("Invalid Stream Identifier Error Cause (2)", "[sctp][serializable]")
 		errorCause->AddMissingParameterType(Parameter::ParameterType::IPV6_ADDRESS);
 		errorCause->AddMissingParameterType(Parameter::ParameterType::COOKIE_PRESERVATIVE);
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ sizeof(FactoryBuffer),
 		  /*length*/ 16,
-		  /*frozen*/ false,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::MISSING_MANDATORY_PARAMETER,
 		  /*unknownCode*/ false);
 
@@ -207,12 +196,11 @@ SCENARIO("Invalid Stream Identifier Error Cause (2)", "[sctp][serializable]")
 
 		delete errorCause;
 
-		CHECK_ERROR_CAUSE(
+		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ parsedErrorCause,
 		  /*buffer*/ FactoryBuffer,
 		  /*bufferLength*/ 16,
 		  /*length*/ 16,
-		  /*frozen*/ true,
 		  /*causeCode*/ ErrorCause::ErrorCauseCode::MISSING_MANDATORY_PARAMETER,
 		  /*unknownCode*/ false);
 
