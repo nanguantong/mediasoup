@@ -1,32 +1,37 @@
 #include "common.hpp"
 #include "Utils.hpp"
-#include "testHelpers.hpp" // IWYU pragma: export in worker/test/include/
+#include "testHelpers.hpp"
+#include "RTC/RTP/HeaderExtensionIds.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RTP/rtpCommon.hpp"
 #include "RTC/RtpDictionaries.hpp"
-#include "RTC/RtpHeaderExtensionIds.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 #include <string>
 
-using namespace RTC::RTP;
-
-// NOLINTNEXTLINE (clang-tidy readability-function-size)
 SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 {
-	ResetBuffers();
+	rtpCommon::ResetBuffers();
+
+	SECTION("alignof() RTP structs")
+	{
+		REQUIRE(alignof(RTC::RTP::Packet::FixedHeader) == 4);
+		REQUIRE(alignof(RTC::RTP::Packet::HeaderExtension) == 2);
+		REQUIRE(alignof(RTC::RTP::Packet::OneByteExtension) == 1);
+		REQUIRE(alignof(RTC::RTP::Packet::TwoBytesExtension) == 1);
+	}
 
 	SECTION("Packet::Parse() packet1.raw succeeds")
 	{
-		uint8_t buffer[65536];
+		alignas(4) uint8_t buffer[65536];
 		size_t bufferLength;
 
-		if (!helpers::ReadBinaryFile("data/packet1.raw", buffer, std::addressof(bufferLength)))
+		if (!helpers::readBinaryFile("data/packet1.raw", buffer, std::addressof(bufferLength)))
 		{
 			FAIL("cannot open file");
 		}
 
-		std::unique_ptr<Packet> packet{ Packet::Parse(buffer, bufferLength) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Parse(buffer, bufferLength) };
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
@@ -50,14 +55,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Serialize it. */
 
-		packet->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		packet->Serialize(rtpCommon::SerializeBuffer, sizeof(rtpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ rtpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::SerializeBuffer),
 		  /*length*/ bufferLength,
 		  /*payloadType*/ 111,
 		  /*hasMarker*/ false,
@@ -76,14 +81,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Clone it. */
 
-		packet.reset(packet->Clone(CloneBuffer, sizeof(CloneBuffer)));
+		packet.reset(packet->Clone(rtpCommon::CloneBuffer, sizeof(rtpCommon::CloneBuffer)));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(rtpCommon::SerializeBuffer, 0x00, sizeof(rtpCommon::SerializeBuffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ bufferLength,
 		  /*payloadType*/ 111,
 		  /*hasMarker*/ false,
@@ -102,12 +107,12 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Set payload. */
 
-		packet->SetPayload(DataBuffer, 16);
+		packet->SetPayload(rtpCommon::DataBuffer, 16);
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ bufferLength - 33 + 16,
 		  /*payloadType*/ 111,
 		  /*hasMarker*/ false,
@@ -125,21 +130,21 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		  /*paddingLength*/ 0);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 16) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 16) == true);
 	}
 
 	SECTION("Packet::Parse() packet2.raw succeeds")
 	{
-		uint8_t buffer[65536];
+		alignas(4) uint8_t buffer[65536];
 		size_t bufferLength;
 
-		if (!helpers::ReadBinaryFile("data/packet2.raw", buffer, std::addressof(bufferLength)))
+		if (!helpers::readBinaryFile("data/packet2.raw", buffer, std::addressof(bufferLength)))
 		{
 			FAIL("cannot open file");
 		}
 
-		std::unique_ptr<Packet> packet{ Packet::Parse(buffer, bufferLength) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Parse(buffer, bufferLength) };
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
@@ -163,14 +168,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Serialize it. */
 
-		packet->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		packet->Serialize(rtpCommon::SerializeBuffer, sizeof(rtpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ rtpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::SerializeBuffer),
 		  /*length*/ bufferLength,
 		  /*payloadType*/ 100,
 		  /*hasMarker*/ false,
@@ -189,14 +194,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Clone it. */
 
-		packet.reset(packet->Clone(CloneBuffer, sizeof(CloneBuffer)));
+		packet.reset(packet->Clone(rtpCommon::CloneBuffer, sizeof(rtpCommon::CloneBuffer)));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(rtpCommon::SerializeBuffer, 0x00, sizeof(rtpCommon::SerializeBuffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ bufferLength,
 		  /*payloadType*/ 100,
 		  /*hasMarker*/ false,
@@ -215,12 +220,12 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Set payload. */
 
-		packet->SetPayload(DataBuffer, 16);
+		packet->SetPayload(rtpCommon::DataBuffer, 16);
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ bufferLength - 78 + 16 - 149,
 		  /*payloadType*/ 100,
 		  /*hasMarker*/ false,
@@ -238,21 +243,21 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		  /*paddingLength*/ 0);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 16) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 16) == true);
 	}
 
 	SECTION("Packet::Parse() packet3.raw succeeds")
 	{
-		uint8_t buffer[65536];
+		alignas(4) uint8_t buffer[65536];
 		size_t bufferLength;
 
-		if (!helpers::ReadBinaryFile("data/packet3.raw", buffer, std::addressof(bufferLength)))
+		if (!helpers::readBinaryFile("data/packet3.raw", buffer, std::addressof(bufferLength)))
 		{
 			FAIL("cannot open file");
 		}
 
-		std::unique_ptr<Packet> packet{ Packet::Parse(buffer, bufferLength) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Parse(buffer, bufferLength) };
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
@@ -276,14 +281,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Serialize it. */
 
-		packet->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		packet->Serialize(rtpCommon::SerializeBuffer, sizeof(rtpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ rtpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::SerializeBuffer),
 		  /*length*/ bufferLength,
 		  /*payloadType*/ 111,
 		  /*hasMarker*/ false,
@@ -302,14 +307,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Clone it. */
 
-		packet.reset(packet->Clone(CloneBuffer, sizeof(CloneBuffer)));
+		packet.reset(packet->Clone(rtpCommon::CloneBuffer, sizeof(rtpCommon::CloneBuffer)));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(rtpCommon::SerializeBuffer, 0x00, sizeof(rtpCommon::SerializeBuffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ bufferLength,
 		  /*payloadType*/ 111,
 		  /*hasMarker*/ false,
@@ -328,12 +333,12 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Set payload. */
 
-		packet->SetPayload(DataBuffer, 16);
+		packet->SetPayload(rtpCommon::DataBuffer, 16);
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ bufferLength - 77 + 16,
 		  /*payloadType*/ 111,
 		  /*hasMarker*/ false,
@@ -351,14 +356,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		  /*paddingLength*/ 0);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 16) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 16) == true);
 	}
 
 	SECTION("Packet::Parse() without extensions or payload succeeds")
 	{
 		// clang-format off
-		uint8_t buffer[] =
+		alignas(4) uint8_t buffer[] =
 		{
 			0x80, 0x01, 0x00, 0x08,
 			0x00, 0x00, 0x00, 0x04,
@@ -366,7 +371,7 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		};
 		// clang-format on
 
-		std::unique_ptr<Packet> packet{ Packet::Parse(buffer, sizeof(buffer)) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Parse(buffer, sizeof(buffer)) };
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
@@ -392,14 +397,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Serialize it. */
 
-		packet->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		packet->Serialize(rtpCommon::SerializeBuffer, sizeof(rtpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ rtpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::SerializeBuffer),
 		  /*length*/ sizeof(buffer),
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -420,14 +425,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Clone it. */
 
-		packet.reset(packet->Clone(CloneBuffer, sizeof(CloneBuffer)));
+		packet.reset(packet->Clone(rtpCommon::CloneBuffer, sizeof(rtpCommon::CloneBuffer)));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(rtpCommon::SerializeBuffer, 0x00, sizeof(rtpCommon::SerializeBuffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ sizeof(buffer),
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -448,12 +453,12 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Set payload. */
 
-		packet->SetPayload(DataBuffer, 16);
+		packet->SetPayload(rtpCommon::DataBuffer, 16);
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ sizeof(buffer) + 16,
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -471,15 +476,15 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		  /*paddingLength*/ 0);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 16) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 16) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == true);
 	}
 
 	SECTION("Packet::Parse() with One-Byte extensions succeeds")
 	{
 		// clang-format off
-		uint8_t buffer[] =
+		alignas(4) uint8_t buffer[] =
 		{
 			0x90, 0x01, 0x00, 0x08,
 			0x00, 0x00, 0x00, 0x04,
@@ -492,7 +497,7 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		};
 		// clang-format on
 
-		std::unique_ptr<Packet> packet{ Packet::Parse(buffer, sizeof(buffer)) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Parse(buffer, sizeof(buffer)) };
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
@@ -520,17 +525,17 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		REQUIRE(packet->HasExtension(1) == true);
 		extensionValue = packet->GetExtensionValue(1, extensionLen);
 		REQUIRE(extensionLen == 1);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 1, buffer + 17, 1) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 1, buffer + 17, 1) == true);
 
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
 		REQUIRE(extensionLen == 2);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 2, buffer + 19, 2) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 2, buffer + 19, 2) == true);
 
 		REQUIRE(packet->HasExtension(3) == true);
 		extensionValue = packet->GetExtensionValue(3, extensionLen);
 		REQUIRE(extensionLen == 4);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 4, buffer + 24, 4) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 4, buffer + 24, 4) == true);
 
 		REQUIRE(packet->HasExtension(4) == false);
 		REQUIRE(packet->GetExtensionValue(4, extensionLen) == nullptr);
@@ -539,14 +544,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Serialize it. */
 
-		packet->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		packet->Serialize(rtpCommon::SerializeBuffer, sizeof(rtpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ rtpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::SerializeBuffer),
 		  /*length*/ sizeof(buffer),
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -566,17 +571,17 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		REQUIRE(packet->HasExtension(1) == true);
 		extensionValue = packet->GetExtensionValue(1, extensionLen);
 		REQUIRE(extensionLen == 1);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 1, SerializeBuffer + 17, 1) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 1, rtpCommon::SerializeBuffer + 17, 1) == true);
 
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
 		REQUIRE(extensionLen == 2);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 2, SerializeBuffer + 19, 2) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 2, rtpCommon::SerializeBuffer + 19, 2) == true);
 
 		REQUIRE(packet->HasExtension(3) == true);
 		extensionValue = packet->GetExtensionValue(3, extensionLen);
 		REQUIRE(extensionLen == 4);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 4, SerializeBuffer + 24, 4) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 4, rtpCommon::SerializeBuffer + 24, 4) == true);
 
 		REQUIRE(packet->HasExtension(4) == false);
 		REQUIRE(packet->GetExtensionValue(4, extensionLen) == nullptr);
@@ -585,14 +590,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Clone it. */
 
-		packet.reset(packet->Clone(CloneBuffer, sizeof(CloneBuffer)));
+		packet.reset(packet->Clone(rtpCommon::CloneBuffer, sizeof(rtpCommon::CloneBuffer)));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(rtpCommon::SerializeBuffer, 0x00, sizeof(rtpCommon::SerializeBuffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ sizeof(buffer),
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -612,17 +617,17 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		REQUIRE(packet->HasExtension(1) == true);
 		extensionValue = packet->GetExtensionValue(1, extensionLen);
 		REQUIRE(extensionLen == 1);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 1, CloneBuffer + 17, 1) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 1, rtpCommon::CloneBuffer + 17, 1) == true);
 
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
 		REQUIRE(extensionLen == 2);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 2, CloneBuffer + 19, 2) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 2, rtpCommon::CloneBuffer + 19, 2) == true);
 
 		REQUIRE(packet->HasExtension(3) == true);
 		extensionValue = packet->GetExtensionValue(3, extensionLen);
 		REQUIRE(extensionLen == 4);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 4, CloneBuffer + 24, 4) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 4, rtpCommon::CloneBuffer + 24, 4) == true);
 
 		REQUIRE(packet->HasExtension(4) == false);
 		REQUIRE(packet->GetExtensionValue(4, extensionLen) == nullptr);
@@ -631,12 +636,12 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Set payload. */
 
-		packet->SetPayload(DataBuffer, 16);
+		packet->SetPayload(rtpCommon::DataBuffer, 16);
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ sizeof(buffer) - 2 + 16,
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -654,15 +659,15 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		  /*paddingLength*/ 0);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 16) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 16) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == true);
 	}
 
 	SECTION("Packet::Parse() with Two-Bytes extensions succeeds")
 	{
 		// clang-format off
-		uint8_t buffer[] =
+		alignas(4) uint8_t buffer[] =
 		{
 			0x90, 0x01, 0x00, 0x08,
 			0x00, 0x00, 0x00, 0x04,
@@ -675,7 +680,7 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		};
 		// clang-format on
 
-		std::unique_ptr<Packet> packet{ Packet::Parse(buffer, sizeof(buffer)) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Parse(buffer, sizeof(buffer)) };
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
@@ -707,12 +712,12 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
 		REQUIRE(extensionLen == 1);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 1, buffer + 22, 1) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 1, buffer + 22, 1) == true);
 
 		REQUIRE(packet->HasExtension(3) == true);
 		extensionValue = packet->GetExtensionValue(3, extensionLen);
 		REQUIRE(extensionLen == 2);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 2, buffer + 26, 2) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 2, buffer + 26, 2) == true);
 
 		REQUIRE(packet->HasExtension(4) == true);
 		extensionValue = packet->GetExtensionValue(4, extensionLen);
@@ -725,14 +730,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Serialize it. */
 
-		packet->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		packet->Serialize(rtpCommon::SerializeBuffer, sizeof(rtpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ rtpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::SerializeBuffer),
 		  /*length*/ sizeof(buffer),
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -756,12 +761,12 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
 		REQUIRE(extensionLen == 1);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 1, SerializeBuffer + 22, 1) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 1, rtpCommon::SerializeBuffer + 22, 1) == true);
 
 		REQUIRE(packet->HasExtension(3) == true);
 		extensionValue = packet->GetExtensionValue(3, extensionLen);
 		REQUIRE(extensionLen == 2);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 2, SerializeBuffer + 26, 2) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 2, rtpCommon::SerializeBuffer + 26, 2) == true);
 
 		REQUIRE(packet->HasExtension(4) == true);
 		extensionValue = packet->GetExtensionValue(4, extensionLen);
@@ -774,14 +779,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Clone it. */
 
-		packet.reset(packet->Clone(CloneBuffer, sizeof(CloneBuffer)));
+		packet.reset(packet->Clone(rtpCommon::CloneBuffer, sizeof(rtpCommon::CloneBuffer)));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(rtpCommon::SerializeBuffer, 0x00, sizeof(rtpCommon::SerializeBuffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ sizeof(buffer),
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -805,12 +810,12 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
 		REQUIRE(extensionLen == 1);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 1, CloneBuffer + 22, 1) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 1, rtpCommon::CloneBuffer + 22, 1) == true);
 
 		REQUIRE(packet->HasExtension(3) == true);
 		extensionValue = packet->GetExtensionValue(3, extensionLen);
 		REQUIRE(extensionLen == 2);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, 2, CloneBuffer + 26, 2) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, 2, rtpCommon::CloneBuffer + 26, 2) == true);
 
 		REQUIRE(packet->HasExtension(4) == true);
 		extensionValue = packet->GetExtensionValue(4, extensionLen);
@@ -823,12 +828,12 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Set payload. */
 
-		packet->SetPayload(DataBuffer, 15);
+		packet->SetPayload(rtpCommon::DataBuffer, 15);
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ sizeof(buffer) + 15,
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -846,15 +851,15 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		  /*paddingLength*/ 0);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 15) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 15) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == false);
 	}
 
 	SECTION("Packet::Parse() padding-only packet succeeds")
 	{
 		// clang-format off
-		uint8_t buffer[] =
+		alignas(4) uint8_t buffer[] =
 		{
 			0xA0, 0x01, 0x00, 0x09,
 			0x00, 0x00, 0x00, 0x05,
@@ -864,7 +869,7 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		};
 		// clang-format on
 
-		std::unique_ptr<Packet> packet{ Packet::Parse(buffer, sizeof(buffer)) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Parse(buffer, sizeof(buffer)) };
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
@@ -890,14 +895,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Serialize it. */
 
-		packet->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		packet->Serialize(rtpCommon::SerializeBuffer, sizeof(rtpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ rtpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::SerializeBuffer),
 		  /*length*/ sizeof(buffer),
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -918,14 +923,14 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Clone it. */
 
-		packet.reset(packet->Clone(CloneBuffer, sizeof(CloneBuffer)));
+		packet.reset(packet->Clone(rtpCommon::CloneBuffer, sizeof(rtpCommon::CloneBuffer)));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(rtpCommon::SerializeBuffer, 0x00, sizeof(rtpCommon::SerializeBuffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ sizeof(buffer),
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -946,12 +951,12 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		/* Set payload. */
 
-		packet->SetPayload(DataBuffer, 1);
+		packet->SetPayload(rtpCommon::DataBuffer, 1);
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ packet->GetLength(),
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -969,8 +974,8 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		  /*paddingLength*/ 0);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 1) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 1) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == false);
 
 		/* Pad to 4 bytes. */
@@ -979,8 +984,8 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
 		  /*length*/ packet->GetLength(),
 		  /*payloadType*/ 1,
 		  /*hasMarker*/ false,
@@ -998,15 +1003,15 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		  /*paddingLength*/ 3);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 1) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 1) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == true);
 	}
 
 	SECTION("Packet::Parse() with wrong arguments fails")
 	{
 		// clang-format off
-		uint8_t buffer[] =
+		alignas(4) uint8_t buffer[] =
 		{
 			0x90, 0x01, 0x00, 0x08,
 			0x00, 0x00, 0x00, 0x04,
@@ -1019,23 +1024,25 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		};
 		// clang-format on
 
-		std::unique_ptr<Packet> packet{ nullptr };
+		std::unique_ptr<RTC::RTP::Packet> packet{ nullptr };
 
 		// bufferLength is lower than packetLen.
 		REQUIRE_THROWS_AS(
-		  packet.reset(Packet::Parse(buffer, sizeof(buffer), sizeof(buffer) - 1)), MediaSoupTypeError);
+		  packet.reset(RTC::RTP::Packet::Parse(buffer, sizeof(buffer), sizeof(buffer) - 1)),
+		  MediaSoupTypeError);
 		REQUIRE(!packet);
 	}
 
 	SECTION("Packet::Factory() succeeds")
 	{
-		std::unique_ptr<Packet> packet{ Packet::Factory(FactoryBuffer, sizeof(FactoryBuffer)) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(
+			rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)) };
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength,
+		  /*buffer*/ rtpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::FactoryBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength,
 		  /*payloadType*/ 0,
 		  /*hasMarker*/ false,
 		  /*seqNumber*/ 0,
@@ -1059,7 +1066,7 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		packet->SetTimestamp(987654321);
 		packet->SetSsrc(1234567890);
 
-		std::vector<Packet::Extension> extensions;
+		std::vector<RTC::RTP::Packet::Extension> extensions;
 
 		// Extensions:
 		//
@@ -1072,44 +1079,44 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		// - Header Extension length: 4 + 12 = 16
 		//
 		// Extension id 1.
-		DataBuffer[0] = 11;
+		rtpCommon::DataBuffer[0] = 11;
 		// Extension id 2.
-		DataBuffer[1] = 22;
-		DataBuffer[2] = 0xAA;
+		rtpCommon::DataBuffer[1] = 22;
+		rtpCommon::DataBuffer[2] = 0xAA;
 		// Extension id 14.
-		DataBuffer[3] = 14;
-		DataBuffer[4] = 0xBB;
-		DataBuffer[5] = 0xCC;
+		rtpCommon::DataBuffer[3] = 14;
+		rtpCommon::DataBuffer[4] = 0xBB;
+		rtpCommon::DataBuffer[5] = 0xCC;
 
 		extensions.emplace_back(
 		  /*type*/ RTC::RtpHeaderExtensionUri::Type::MID,
 		  /*id*/ 1,
 		  /*len*/ 1,
-		  /*value*/ DataBuffer + 0);
+		  /*value*/ rtpCommon::DataBuffer + 0);
 
 		extensions.emplace_back(
 		  /*type*/ RTC::RtpHeaderExtensionUri::Type::RTP_STREAM_ID,
 		  /*id*/ 2,
 		  /*len*/ 2,
-		  /*value*/ DataBuffer + 1);
+		  /*value*/ rtpCommon::DataBuffer + 1);
 
 		extensions.emplace_back(
 		  /*type*/ RTC::RtpHeaderExtensionUri::Type::REPAIRED_RTP_STREAM_ID,
 		  /*id*/ 14,
 		  /*len*/ 3,
-		  /*value*/ DataBuffer + 3);
+		  /*value*/ rtpCommon::DataBuffer + 3);
 
 		// Add One-Byte Extensions.
-		packet->SetExtensions(Packet::ExtensionsType::OneByte, extensions);
+		packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions);
 
-		packet->SetPayload(DataBuffer, 10);
+		packet->SetPayload(rtpCommon::DataBuffer, 10);
 		packet->PadTo4Bytes(); // payload + padding = 12.
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 16 + 10 + 2,
+		  /*buffer*/ rtpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::FactoryBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 16 + 10 + 2,
 		  /*payloadType*/ 100,
 		  /*hasMarker*/ true,
 		  /*seqNumber*/ 12345,
@@ -1130,35 +1137,35 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		REQUIRE(packet->HasExtension(1) == true);
 		extensionValue = packet->GetExtensionValue(1, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[0]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[0]);
 		REQUIRE(extensionLen == 1);
 
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[1]);
-		REQUIRE(extensionValue[1] == DataBuffer[2]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[1]);
+		REQUIRE(extensionValue[1] == rtpCommon::DataBuffer[2]);
 		REQUIRE(extensionLen == 2);
 
 		REQUIRE(packet->HasExtension(3) == false);
 
 		REQUIRE(packet->HasExtension(14) == true);
 		extensionValue = packet->GetExtensionValue(14, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[3]);
-		REQUIRE(extensionValue[1] == DataBuffer[4]);
-		REQUIRE(extensionValue[2] == DataBuffer[5]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[3]);
+		REQUIRE(extensionValue[1] == rtpCommon::DataBuffer[4]);
+		REQUIRE(extensionValue[2] == rtpCommon::DataBuffer[5]);
 		REQUIRE(extensionLen == 3);
 
 		REQUIRE(packet->IsPaddedTo4Bytes() == true);
 
 		/* Serialize it. */
 
-		packet->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		packet->Serialize(rtpCommon::SerializeBuffer, sizeof(rtpCommon::SerializeBuffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 16 + 10 + 2,
+		  /*buffer*/ rtpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::SerializeBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 16 + 10 + 2,
 		  /*payloadType*/ 100,
 		  /*hasMarker*/ true,
 		  /*seqNumber*/ 12345,
@@ -1176,37 +1183,37 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		REQUIRE(packet->HasExtension(1) == true);
 		extensionValue = packet->GetExtensionValue(1, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[0]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[0]);
 		REQUIRE(extensionLen == 1);
 
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[1]);
-		REQUIRE(extensionValue[1] == DataBuffer[2]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[1]);
+		REQUIRE(extensionValue[1] == rtpCommon::DataBuffer[2]);
 		REQUIRE(extensionLen == 2);
 
 		REQUIRE(packet->HasExtension(3) == false);
 
 		REQUIRE(packet->HasExtension(14) == true);
 		extensionValue = packet->GetExtensionValue(14, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[3]);
-		REQUIRE(extensionValue[1] == DataBuffer[4]);
-		REQUIRE(extensionValue[2] == DataBuffer[5]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[3]);
+		REQUIRE(extensionValue[1] == rtpCommon::DataBuffer[4]);
+		REQUIRE(extensionValue[2] == rtpCommon::DataBuffer[5]);
 		REQUIRE(extensionLen == 3);
 
 		REQUIRE(packet->IsPaddedTo4Bytes() == true);
 
 		/* Clone it. */
 
-		packet.reset(packet->Clone(CloneBuffer, sizeof(CloneBuffer)));
+		packet.reset(packet->Clone(rtpCommon::CloneBuffer, sizeof(rtpCommon::CloneBuffer)));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(rtpCommon::SerializeBuffer, 0x00, sizeof(rtpCommon::SerializeBuffer));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 16 + 10 + 2,
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 16 + 10 + 2,
 		  /*payloadType*/ 100,
 		  /*hasMarker*/ true,
 		  /*seqNumber*/ 12345,
@@ -1224,35 +1231,35 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		REQUIRE(packet->HasExtension(1) == true);
 		extensionValue = packet->GetExtensionValue(1, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[0]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[0]);
 		REQUIRE(extensionLen == 1);
 
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[1]);
-		REQUIRE(extensionValue[1] == DataBuffer[2]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[1]);
+		REQUIRE(extensionValue[1] == rtpCommon::DataBuffer[2]);
 		REQUIRE(extensionLen == 2);
 
 		REQUIRE(packet->HasExtension(3) == false);
 
 		REQUIRE(packet->HasExtension(14) == true);
 		extensionValue = packet->GetExtensionValue(14, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[3]);
-		REQUIRE(extensionValue[1] == DataBuffer[4]);
-		REQUIRE(extensionValue[2] == DataBuffer[5]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[3]);
+		REQUIRE(extensionValue[1] == rtpCommon::DataBuffer[4]);
+		REQUIRE(extensionValue[2] == rtpCommon::DataBuffer[5]);
 		REQUIRE(extensionLen == 3);
 
 		REQUIRE(packet->IsPaddedTo4Bytes() == true);
 
 		/* Set payload. */
 
-		packet->SetPayload(DataBuffer, 1);
+		packet->SetPayload(rtpCommon::DataBuffer, 1);
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 16 + 1,
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 16 + 1,
 		  /*payloadType*/ 100,
 		  /*hasMarker*/ true,
 		  /*seqNumber*/ 12345,
@@ -1270,27 +1277,27 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		REQUIRE(packet->HasExtension(1) == true);
 		extensionValue = packet->GetExtensionValue(1, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[0]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[0]);
 		REQUIRE(extensionLen == 1);
 
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[1]);
-		REQUIRE(extensionValue[1] == DataBuffer[2]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[1]);
+		REQUIRE(extensionValue[1] == rtpCommon::DataBuffer[2]);
 		REQUIRE(extensionLen == 2);
 
 		REQUIRE(packet->HasExtension(3) == false);
 
 		REQUIRE(packet->HasExtension(14) == true);
 		extensionValue = packet->GetExtensionValue(14, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[3]);
-		REQUIRE(extensionValue[1] == DataBuffer[4]);
-		REQUIRE(extensionValue[2] == DataBuffer[5]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[3]);
+		REQUIRE(extensionValue[1] == rtpCommon::DataBuffer[4]);
+		REQUIRE(extensionValue[2] == rtpCommon::DataBuffer[5]);
 		REQUIRE(extensionLen == 3);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 1) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 1) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == false);
 
 		/* Pad to 4 bytes. */
@@ -1299,9 +1306,9 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 16 + 1 + 3,
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 16 + 1 + 3,
 		  /*payloadType*/ 100,
 		  /*hasMarker*/ true,
 		  /*seqNumber*/ 12345,
@@ -1319,27 +1326,27 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		REQUIRE(packet->HasExtension(1) == true);
 		extensionValue = packet->GetExtensionValue(1, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[0]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[0]);
 		REQUIRE(extensionLen == 1);
 
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[1]);
-		REQUIRE(extensionValue[1] == DataBuffer[2]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[1]);
+		REQUIRE(extensionValue[1] == rtpCommon::DataBuffer[2]);
 		REQUIRE(extensionLen == 2);
 
 		REQUIRE(packet->HasExtension(3) == false);
 
 		REQUIRE(packet->HasExtension(14) == true);
 		extensionValue = packet->GetExtensionValue(14, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[3]);
-		REQUIRE(extensionValue[1] == DataBuffer[4]);
-		REQUIRE(extensionValue[2] == DataBuffer[5]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[3]);
+		REQUIRE(extensionValue[1] == rtpCommon::DataBuffer[4]);
+		REQUIRE(extensionValue[2] == rtpCommon::DataBuffer[5]);
 		REQUIRE(extensionLen == 3);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 1) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 1) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == true);
 
 		/* Remove Header Extension. */
@@ -1348,9 +1355,9 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 1 + 3,
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 1 + 3,
 		  /*payloadType*/ 100,
 		  /*hasMarker*/ true,
 		  /*seqNumber*/ 12345,
@@ -1372,18 +1379,18 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		REQUIRE(packet->HasExtension(14) == false);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 1) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 1) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == true);
 
 		// Add Two-Bytes Extensions.
-		packet->SetExtensions(Packet::ExtensionsType::TwoBytes, extensions);
+		packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::TwoBytes, extensions);
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 16 + 1 + 3,
+		  /*buffer*/ rtpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::CloneBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 16 + 1 + 3,
 		  /*payloadType*/ 100,
 		  /*hasMarker*/ true,
 		  /*seqNumber*/ 12345,
@@ -1401,65 +1408,77 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		REQUIRE(packet->HasExtension(1) == true);
 		extensionValue = packet->GetExtensionValue(1, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[0]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[0]);
 		REQUIRE(extensionLen == 1);
 
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[1]);
-		REQUIRE(extensionValue[1] == DataBuffer[2]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[1]);
+		REQUIRE(extensionValue[1] == rtpCommon::DataBuffer[2]);
 		REQUIRE(extensionLen == 2);
 
 		REQUIRE(packet->HasExtension(3) == false);
 
 		REQUIRE(packet->HasExtension(14) == true);
 		extensionValue = packet->GetExtensionValue(14, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[3]);
-		REQUIRE(extensionValue[1] == DataBuffer[4]);
-		REQUIRE(extensionValue[2] == DataBuffer[5]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[3]);
+		REQUIRE(extensionValue[1] == rtpCommon::DataBuffer[4]);
+		REQUIRE(extensionValue[2] == rtpCommon::DataBuffer[5]);
 		REQUIRE(extensionLen == 3);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 1) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 1) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == true);
 	}
 
 	SECTION("Packet::SetExtensions() with ExtensionsType::Auto selects best type")
 	{
-		std::unique_ptr<Packet> packet{ Packet::Factory(FactoryBuffer, sizeof(FactoryBuffer)) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(
+			rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)) };
 
-		std::vector<Packet::Extension> extensions;
+		std::vector<RTC::RTP::Packet::Extension> extensions;
 
 		// Can fit into One-Byte type Extensions.
 		extensions.assign(
-		  { { RTC::RtpHeaderExtensionUri::Type::MID, 1, 1, DataBuffer },
-		    { RTC::RtpHeaderExtensionUri::Type::RTP_STREAM_ID, 14, 16, DataBuffer } });
-		packet->SetExtensions(Packet::ExtensionsType::Auto, extensions);
+		  {
+		    { RTC::RtpHeaderExtensionUri::Type::MID,           1,  1,  rtpCommon::DataBuffer },
+		    { RTC::RtpHeaderExtensionUri::Type::RTP_STREAM_ID, 14, 16, rtpCommon::DataBuffer }
+    });
+		packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::Auto, extensions);
 		REQUIRE(packet->HasOneByteExtensions());
 
 		// Requires Two-Bytes type Extensions due to id > 14.
-		extensions.assign({ { RTC::RtpHeaderExtensionUri::Type::ABS_SEND_TIME, 15, 2, DataBuffer } });
-		packet->SetExtensions(Packet::ExtensionsType::Auto, extensions);
+		extensions.assign(
+		  {
+		    { RTC::RtpHeaderExtensionUri::Type::ABS_SEND_TIME, 15, 2, rtpCommon::DataBuffer }
+    });
+		packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::Auto, extensions);
 		REQUIRE(packet->HasTwoBytesExtensions());
 
 		// Requires Two-Bytes type Extensions due to length 0.
 		extensions.assign(
-		  { { RTC::RtpHeaderExtensionUri::Type::REPAIRED_RTP_STREAM_ID, 1, 0, DataBuffer } });
-		packet->SetExtensions(Packet::ExtensionsType::Auto, extensions);
+		  {
+		    { RTC::RtpHeaderExtensionUri::Type::REPAIRED_RTP_STREAM_ID, 1, 0, rtpCommon::DataBuffer }
+    });
+		packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::Auto, extensions);
 		REQUIRE(packet->HasTwoBytesExtensions());
 
 		// Requires Two-Bytes type Extensions due to length > 16.
-		extensions.assign({ { RTC::RtpHeaderExtensionUri::Type::TIME_OFFSET, 1, 17, DataBuffer } });
-		packet->SetExtensions(Packet::ExtensionsType::Auto, extensions);
+		extensions.assign(
+		  {
+		    { RTC::RtpHeaderExtensionUri::Type::TIME_OFFSET, 1, 17, rtpCommon::DataBuffer }
+    });
+		packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::Auto, extensions);
 		REQUIRE(packet->HasTwoBytesExtensions());
 	}
 
 	SECTION("Packet::SetExtensions() with supported extensions succeeds")
 	{
-		std::unique_ptr<Packet> packet{ Packet::Factory(FactoryBuffer, sizeof(FactoryBuffer)) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(
+			rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)) };
 
-		std::vector<Packet::Extension> extensions;
+		std::vector<RTC::RTP::Packet::Extension> extensions;
 
 		std::string mid{ "mid-€1" };
 		std::string rid{ "r1-ß" };
@@ -1502,7 +1521,7 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		);
 		// clang-format on
 
-		packet->SetExtensions(Packet::ExtensionsType::OneByte, extensions);
+		packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions);
 
 		REQUIRE(packet->HasOneByteExtensions());
 
@@ -1537,14 +1556,15 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		REQUIRE(packet->ReadTransportWideCc01(readWideSeqNumber));
 		REQUIRE(readWideSeqNumber == newWideSeqNumber);
 
-		std::unique_ptr<Packet> packet2{ Packet::Parse(packet->GetBuffer(), packet->GetLength()) };
+		std::unique_ptr<RTC::RTP::Packet> packet2{ RTC::RTP::Packet::Parse(
+			packet->GetBuffer(), packet->GetLength()) };
 
 		REQUIRE(packet2);
 		REQUIRE(packet2->Validate(/*storeExtensions*/ false));
 
-		packet2->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		packet2->Serialize(rtpCommon::SerializeBuffer, sizeof(rtpCommon::SerializeBuffer));
 
-		RTC::RtpHeaderExtensionIds headerExtensionIds{};
+		RTC::RTP::HeaderExtensionIds headerExtensionIds{};
 
 		headerExtensionIds.mid               = 1;
 		headerExtensionIds.rid               = 2;
@@ -1566,63 +1586,77 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 	SECTION("Packet::SetExtensions() fails if wrong extensions are given")
 	{
-		std::unique_ptr<Packet> packet{ Packet::Factory(FactoryBuffer, sizeof(FactoryBuffer)) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(
+			rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)) };
 
-		packet->SetPayload(DataBuffer, 10);
+		packet->SetPayload(rtpCommon::DataBuffer, 10);
 		packet->PadTo4Bytes();
 
-		std::vector<Packet::Extension> extensions;
-		auto* d = DataBuffer;
+		std::vector<RTC::RTP::Packet::Extension> extensions;
+		auto* d = rtpCommon::DataBuffer;
 
 		// Invalid Extension id 0.
 		extensions.assign(
-		  { { RTC::RtpHeaderExtensionUri::Type::MID, 0, 4, d },
-		    { RTC::RtpHeaderExtensionUri::Type::RTP_STREAM_ID, 1, 1, d } });
+		  {
+		    { RTC::RtpHeaderExtensionUri::Type::MID,           0, 4, d },
+		    { RTC::RtpHeaderExtensionUri::Type::RTP_STREAM_ID, 1, 1, d }
+    });
 
 		REQUIRE_THROWS_AS(
-		  packet->SetExtensions(Packet::ExtensionsType::OneByte, extensions), MediaSoupTypeError);
+		  packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions),
+		  MediaSoupTypeError);
 		REQUIRE_THROWS_AS(
-		  packet->SetExtensions(Packet::ExtensionsType::TwoBytes, extensions), MediaSoupTypeError);
+		  packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::TwoBytes, extensions),
+		  MediaSoupTypeError);
 
 		// Invalid Extension id > 14 in One-Byte.
 		extensions.assign(
-		  { { RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION, 15, 2, d },
-		    { RTC::RtpHeaderExtensionUri::Type::MID, 6, 6, d },
-		    { RTC::RtpHeaderExtensionUri::Type::SSRC_AUDIO_LEVEL, 7, 7, d } });
+		  {
+		    { RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION, 15, 2, d },
+		    { RTC::RtpHeaderExtensionUri::Type::MID,               6,  6, d },
+		    { RTC::RtpHeaderExtensionUri::Type::SSRC_AUDIO_LEVEL,  7,  7, d }
+    });
 
 		REQUIRE_THROWS_AS(
-		  packet->SetExtensions(Packet::ExtensionsType::OneByte, extensions), MediaSoupTypeError);
-		REQUIRE_NOTHROW(packet->SetExtensions(Packet::ExtensionsType::TwoBytes, extensions));
+		  packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions),
+		  MediaSoupTypeError);
+		REQUIRE_NOTHROW(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::TwoBytes, extensions));
 
 		// Invalid Extension length 0 in One-Byte.
 		extensions.assign(
-		  { { RTC::RtpHeaderExtensionUri::Type::MID, 3, 0, d },
+		  {
+		    { RTC::RtpHeaderExtensionUri::Type::MID,                    3, 0, d },
 		    { RTC::RtpHeaderExtensionUri::Type::REPAIRED_RTP_STREAM_ID, 6, 6, d },
-		    { RTC::RtpHeaderExtensionUri::Type::RTP_STREAM_ID, 7, 7, d },
-		    { RTC::RtpHeaderExtensionUri::Type::SSRC_AUDIO_LEVEL, 8, 8, d } });
+		    { RTC::RtpHeaderExtensionUri::Type::RTP_STREAM_ID,          7, 7, d },
+		    { RTC::RtpHeaderExtensionUri::Type::SSRC_AUDIO_LEVEL,       8, 8, d }
+    });
 
 		REQUIRE_THROWS_AS(
-		  packet->SetExtensions(Packet::ExtensionsType::OneByte, extensions), MediaSoupTypeError);
-		REQUIRE_NOTHROW(packet->SetExtensions(Packet::ExtensionsType::TwoBytes, extensions));
+		  packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions),
+		  MediaSoupTypeError);
+		REQUIRE_NOTHROW(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::TwoBytes, extensions));
 
 		// Invalid Extension length > 16 in One-Byte.
 		extensions.assign(
-		  { { RTC::RtpHeaderExtensionUri::Type::MEDIASOUP_PACKET_ID, 3, 17, d },
-		    { RTC::RtpHeaderExtensionUri::Type::MID, 6, 6, d },
-		    { RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION, 7, 7, d },
-		    { RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR, 8, 8, d },
-		    { RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY, 9, 9, d },
-		    { RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME, 100, 10, d } });
+		  {
+		    { RTC::RtpHeaderExtensionUri::Type::MEDIASOUP_PACKET_ID,   3,   17, d },
+		    { RTC::RtpHeaderExtensionUri::Type::MID,                   6,   6,  d },
+		    { RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION,     7,   7,  d },
+		    { RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR, 8,   8,  d },
+		    { RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY,         9,   9,  d },
+		    { RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME,      100, 10, d }
+    });
 
 		REQUIRE_THROWS_AS(
-		  packet->SetExtensions(Packet::ExtensionsType::OneByte, extensions), MediaSoupTypeError);
-		REQUIRE_NOTHROW(packet->SetExtensions(Packet::ExtensionsType::TwoBytes, extensions));
+		  packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions),
+		  MediaSoupTypeError);
+		REQUIRE_NOTHROW(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::TwoBytes, extensions));
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 4 + 72 + 10 + 2,
+		  /*buffer*/ rtpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::FactoryBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 4 + 72 + 10 + 2,
 		  /*payloadType*/ 0,
 		  /*hasMarker*/ false,
 		  /*seqNumber*/ 0,
@@ -1643,47 +1677,48 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		REQUIRE(packet->HasExtension(3) == true);
 		extensionValue = packet->GetExtensionValue(3, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[0]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[0]);
 		REQUIRE(extensionLen == 17);
 
 		REQUIRE(packet->HasExtension(1) == false);
 
 		REQUIRE(packet->HasExtension(6) == true);
 		extensionValue = packet->GetExtensionValue(6, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[0]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[0]);
 		REQUIRE(extensionLen == 6);
 
 		REQUIRE(packet->HasExtension(7) == true);
 		extensionValue = packet->GetExtensionValue(7, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[0]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[0]);
 		REQUIRE(extensionLen == 7);
 
 		REQUIRE(packet->HasExtension(8) == true);
 		extensionValue = packet->GetExtensionValue(8, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[0]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[0]);
 		REQUIRE(extensionLen == 8);
 
 		REQUIRE(packet->HasExtension(9) == true);
 		extensionValue = packet->GetExtensionValue(9, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[0]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[0]);
 		REQUIRE(extensionLen == 9);
 
 		REQUIRE(packet->HasExtension(100) == true);
 		extensionValue = packet->GetExtensionValue(100, extensionLen);
-		REQUIRE(extensionValue[0] == DataBuffer[0]);
+		REQUIRE(extensionValue[0] == rtpCommon::DataBuffer[0]);
 		REQUIRE(extensionLen == 10);
 
 		REQUIRE(packet->HasExtension(101) == false);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), DataBuffer, 10) ==
-		  true);
+		  helpers::areBuffersEqual(
+		    packet->GetPayload(), packet->GetPayloadLength(), rtpCommon::DataBuffer, 10) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == true);
 	}
 
 	SECTION("Packet::SetPayload(), SetPayloadLength() and packet::RemovePayload() succeed")
 	{
-		std::unique_ptr<Packet> packet{ Packet::Factory(FactoryBuffer, sizeof(FactoryBuffer)) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(
+			rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)) };
 
 		// clang-format off
 		uint8_t payload[] =
@@ -1701,9 +1736,9 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 10 + 2,
+		  /*buffer*/ rtpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::FactoryBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 10 + 2,
 		  /*payloadType*/ 0,
 		  /*hasMarker*/ false,
 		  /*seqNumber*/ 0,
@@ -1725,9 +1760,9 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 501,
+		  /*buffer*/ rtpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::FactoryBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 501,
 		  /*payloadType*/ 0,
 		  /*hasMarker*/ false,
 		  /*seqNumber*/ 0,
@@ -1750,9 +1785,9 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength,
+		  /*buffer*/ rtpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::FactoryBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength,
 		  /*payloadType*/ 0,
 		  /*hasMarker*/ false,
 		  /*seqNumber*/ 0,
@@ -1774,7 +1809,8 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 	SECTION("Packet::ShiftPayload() succeeds")
 	{
-		std::unique_ptr<Packet> packet{ Packet::Factory(FactoryBuffer, sizeof(FactoryBuffer)) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(
+			rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)) };
 
 		packet->SetSsrc(12344321);
 
@@ -1790,7 +1826,7 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		packet->SetPayload(payload, 10);
 		packet->PadTo4Bytes();
 
-		std::vector<Packet::Extension> extensions;
+		std::vector<RTC::RTP::Packet::Extension> extensions;
 
 		// One-Byte Extensions:
 		// - Header Extension value length: 1 + 1 + 1 + 2 + 1 + 3 = 9 => 12 (padded)
@@ -1812,17 +1848,19 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		// clang-format on
 
 		extensions.assign(
-		  { { RTC::RtpHeaderExtensionUri::Type::MID, 1, 1, extension1 },
-		    { RTC::RtpHeaderExtensionUri::Type::ABS_SEND_TIME, 2, 2, extension2 },
-		    { RTC::RtpHeaderExtensionUri::Type::TRANSPORT_WIDE_CC_01, 3, 3, extension3 } });
+		  {
+		    { RTC::RtpHeaderExtensionUri::Type::MID,                  1, 1, extension1 },
+		    { RTC::RtpHeaderExtensionUri::Type::ABS_SEND_TIME,        2, 2, extension2 },
+		    { RTC::RtpHeaderExtensionUri::Type::TRANSPORT_WIDE_CC_01, 3, 3, extension3 }
+    });
 
-		packet->SetExtensions(Packet::ExtensionsType::OneByte, extensions);
+		packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions);
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 16 + 10 + 2,
+		  /*buffer*/ rtpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::FactoryBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 16 + 10 + 2,
 		  /*payloadType*/ 0,
 		  /*hasMarker*/ false,
 		  /*seqNumber*/ 0,
@@ -1843,21 +1881,21 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		REQUIRE(packet->HasExtension(1) == true);
 		extensionValue = packet->GetExtensionValue(1, extensionLen);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, extensionLen, extension1, 1) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, extensionLen, extension1, 1) == true);
 		REQUIRE(extensionLen == 1);
 
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, extensionLen, extension2, 2) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, extensionLen, extension2, 2) == true);
 		REQUIRE(extensionLen == 2);
 
 		REQUIRE(packet->HasExtension(3) == true);
 		extensionValue = packet->GetExtensionValue(3, extensionLen);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, extensionLen, extension3, 3) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, extensionLen, extension3, 3) == true);
 		REQUIRE(extensionLen == 3);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), payload, 10) == true);
+		  helpers::areBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), payload, 10) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == true);
 
 		/* Shift payload. */
@@ -1881,9 +1919,9 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 16 + 10 + 1,
+		  /*buffer*/ rtpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::FactoryBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 16 + 10 + 1,
 		  /*payloadType*/ 0,
 		  /*hasMarker*/ false,
 		  /*seqNumber*/ 0,
@@ -1901,21 +1939,21 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		REQUIRE(packet->HasExtension(1) == true);
 		extensionValue = packet->GetExtensionValue(1, extensionLen);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, extensionLen, extension1, 1) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, extensionLen, extension1, 1) == true);
 		REQUIRE(extensionLen == 1);
 
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, extensionLen, extension2, 2) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, extensionLen, extension2, 2) == true);
 		REQUIRE(extensionLen == 2);
 
 		REQUIRE(packet->HasExtension(3) == true);
 		extensionValue = packet->GetExtensionValue(3, extensionLen);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, extensionLen, extension3, 3) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, extensionLen, extension3, 3) == true);
 		REQUIRE(extensionLen == 3);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(
+		  helpers::areBuffersEqual(
 		    packet->GetPayload(), packet->GetPayloadLength(), shiftedPayload, 11) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == false);
 
@@ -1940,9 +1978,9 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 16 + 10 - 2,
+		  /*buffer*/ rtpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::FactoryBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 16 + 10 - 2,
 		  /*payloadType*/ 0,
 		  /*hasMarker*/ false,
 		  /*seqNumber*/ 0,
@@ -1960,21 +1998,21 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		REQUIRE(packet->HasExtension(1) == true);
 		extensionValue = packet->GetExtensionValue(1, extensionLen);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, extensionLen, extension1, 1) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, extensionLen, extension1, 1) == true);
 		REQUIRE(extensionLen == 1);
 
 		REQUIRE(packet->HasExtension(2) == true);
 		extensionValue = packet->GetExtensionValue(2, extensionLen);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, extensionLen, extension2, 2) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, extensionLen, extension2, 2) == true);
 		REQUIRE(extensionLen == 2);
 
 		REQUIRE(packet->HasExtension(3) == true);
 		extensionValue = packet->GetExtensionValue(3, extensionLen);
-		REQUIRE(helpers::AreBuffersEqual(extensionValue, extensionLen, extension3, 3) == true);
+		REQUIRE(helpers::areBuffersEqual(extensionValue, extensionLen, extension3, 3) == true);
 		REQUIRE(extensionLen == 3);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(
+		  helpers::areBuffersEqual(
 		    packet->GetPayload(), packet->GetPayloadLength(), unshiftedPayload, 8) == true);
 		REQUIRE(packet->IsPaddedTo4Bytes() == true);
 
@@ -1988,12 +2026,13 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		packet->ShiftPayload(/*payloadOffset*/ 3, /*delta*/ -5);
 
 		REQUIRE(
-		  helpers::AreBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), payload, 10) == true);
+		  helpers::areBuffersEqual(packet->GetPayload(), packet->GetPayloadLength(), payload, 10) == true);
 	}
 
 	SECTION("Packet::ShiftPayload() fails if wrong values are given")
 	{
-		std::unique_ptr<Packet> packet{ Packet::Factory(FactoryBuffer, sizeof(FactoryBuffer)) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(
+			rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)) };
 
 		// clang-format off
 		uint8_t payload[] =
@@ -2020,7 +2059,8 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 	SECTION("Packet::RtxEncode() and packet::RtxDecode() succeed")
 	{
-		std::unique_ptr<Packet> packet{ Packet::Factory(FactoryBuffer, sizeof(FactoryBuffer)) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(
+			rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)) };
 
 		packet->SetPayloadType(100);
 		packet->SetSequenceNumber(12345);
@@ -2041,9 +2081,9 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 10 + 2,
+		  /*buffer*/ rtpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::FactoryBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 10 + 2,
 		  /*payloadType*/ 100,
 		  /*hasMarker*/ false,
 		  /*seqNumber*/ 12345,
@@ -2070,9 +2110,9 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 10 + 2,
+		  /*buffer*/ rtpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::FactoryBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 10 + 2,
 		  /*payloadType*/ 111,
 		  /*hasMarker*/ false,
 		  /*seqNumber*/ 666,
@@ -2099,9 +2139,9 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		CHECK_RTP_PACKET(
 		  /*packet*/ packet.get(),
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
-		  /*length*/ Packet::FixedHeaderMinLength + 10,
+		  /*buffer*/ rtpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(rtpCommon::FactoryBuffer),
+		  /*length*/ RTC::RTP::Packet::FixedHeaderMinLength + 10,
 		  /*payloadType*/ 100,
 		  /*hasMarker*/ false,
 		  /*seqNumber*/ 12345,
@@ -2122,26 +2162,19 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 	SECTION("Packet::SetBufferReleasedListener() when Packet is destroyed succeeds")
 	{
-		const size_t bufferLength{ 1200 };
-		auto* buffer = new uint8_t[bufferLength];
-
-		std::unique_ptr<Packet> packet{ Packet::Factory(buffer, bufferLength) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(
+			rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)) };
 
 		REQUIRE(packet);
 
 		bool packetBufferReleased{ false };
-		bool bufferDeallocated{ false };
 
-		::RTC::Serializable::BufferReleasedListener packetBufferReleasedListener =
-		  [&buffer, &packetBufferReleased, &bufferDeallocated](
-		    const ::RTC::Serializable* serializable, uint8_t* serializableBuffer)
+		RTC::Serializable::BufferReleasedListener packetBufferReleasedListener =
+		  [&packetBufferReleased](const RTC::Serializable* serializable, const uint8_t* serializableBuffer)
 		{
-			packetBufferReleased = true;
-
-			if (serializable->GetBuffer() == buffer)
+			if (serializable->GetBuffer() == rtpCommon::FactoryBuffer && serializable->GetBuffer() == serializableBuffer)
 			{
-				delete[] serializableBuffer;
-				bufferDeallocated = true;
+				packetBufferReleased = true;
 			}
 		};
 
@@ -2151,31 +2184,23 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 		packet.reset(nullptr);
 
 		REQUIRE(packetBufferReleased == true);
-		REQUIRE(bufferDeallocated == true);
 	}
 
 	SECTION("Packet::SetBufferReleasedListener() when Packet is serialized into another buffer succeeds")
 	{
-		const size_t bufferLength{ 1200 };
-		auto* buffer = new uint8_t[bufferLength];
-
-		std::unique_ptr<Packet> packet{ Packet::Factory(buffer, bufferLength) };
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(
+			rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)) };
 
 		REQUIRE(packet);
 
 		bool packetBufferReleased{ false };
-		bool bufferDeallocated{ false };
 
-		::RTC::Serializable::BufferReleasedListener packetBufferReleasedListener =
-		  [&buffer, &packetBufferReleased, &bufferDeallocated](
-		    const ::RTC::Serializable* serializable, uint8_t* serializableBuffer)
+		RTC::Serializable::BufferReleasedListener packetBufferReleasedListener =
+		  [&packetBufferReleased](const RTC::Serializable* serializable, const uint8_t* serializableBuffer)
 		{
-			packetBufferReleased = true;
-
-			if (serializable->GetBuffer() == buffer)
+			if (serializable->GetBuffer() == rtpCommon::FactoryBuffer && serializable->GetBuffer() == serializableBuffer)
 			{
-				delete[] serializableBuffer;
-				bufferDeallocated = true;
+				packetBufferReleased = true;
 			}
 		};
 
@@ -2183,10 +2208,9 @@ SCENARIO("RTP Packet", "[serializable][rtp][packet]")
 
 		// If we serialize the Packet into another buffer it should invoke the
 		// listener.
-		packet->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		packet->Serialize(rtpCommon::SerializeBuffer, sizeof(rtpCommon::SerializeBuffer));
 
 		REQUIRE(packetBufferReleased == true);
-		REQUIRE(bufferDeallocated == true);
 
 		// NOTE: We need to unset the buffer released listener because once the
 		// unique_ptr of the Packet gets out of the scope, the Packet will be

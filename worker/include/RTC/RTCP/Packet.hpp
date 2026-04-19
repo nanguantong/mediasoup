@@ -10,8 +10,8 @@ namespace RTC
 	namespace RTCP
 	{
 		// Internal buffer for RTCP serialization.
-		constexpr size_t BufferSize{ 65536 };
-		extern uint8_t Buffer[BufferSize];
+		constexpr size_t SerializationBufferSize{ 65536 };
+		extern uint8_t SerializationBuffer[SerializationBufferSize];
 
 		// Maximum interval for regular RTCP mode.
 		constexpr uint16_t MaxAudioIntervalMs{ 5000 };
@@ -32,7 +32,12 @@ namespace RTC
 		class Packet
 		{
 		public:
-			/* Struct for RTCP common header. */
+			/**
+			 * Struct for RTCP common header.
+			 *
+			 * @remarks
+			 * - This struct is guaranteed to be aligned to 2 bytes.
+			 */
 			struct CommonHeader
 			{
 #if defined(MS_LITTLE_ENDIAN)
@@ -69,10 +74,10 @@ namespace RTC
 				// clang-format on
 			}
 			static Packet* Parse(const uint8_t* data, size_t len);
-			static const std::string& Type2String(Type type);
+			static const std::string& TypeToString(Type type);
 
 		private:
-			static absl::flat_hash_map<Type, std::string> type2String;
+			static const absl::flat_hash_map<Type, std::string> Type2String;
 
 		public:
 			explicit Packet(Type type) : type(type)

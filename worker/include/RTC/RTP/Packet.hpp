@@ -6,8 +6,8 @@
 #include "FBS/rtpPacket.h"
 #include "RTC/RTP/Codecs/DependencyDescriptor.hpp"
 #include "RTC/RTP/Codecs/PayloadDescriptorHandler.hpp"
+#include "RTC/RTP/HeaderExtensionIds.hpp"
 #include "RTC/RtpDictionaries.hpp"
-#include "RTC/RtpHeaderExtensionIds.hpp"
 #include "RTC/Serializable.hpp"
 #ifdef MS_RTC_LOGGER_RTP
 #include "RTC/RtcLogger.hpp"
@@ -47,6 +47,9 @@ namespace RTC
 			 * |            contributing source (CSRC) identifiers             |
 			 * |                             ....                              |
 			 * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+			 *
+			 * @remarks
+			 * - This struct is guaranteed to be aligned to 4 bytes.
 			 */
 			struct FixedHeader
 			{
@@ -70,7 +73,11 @@ namespace RTC
 				uint32_t ssrc;
 			};
 
+#ifdef MS_TEST
+		public:
+#else
 		private:
+#endif
 			/**
 			 * RTP Header Extension.
 			 *
@@ -83,6 +90,9 @@ namespace RTC
 			 * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 			 * |                        header extension                       |
 			 * |                             ....                              |
+			 *
+			 * @remarks
+			 * - This struct is guaranteed to be aligned to 2 bytes.
 			 */
 			struct HeaderExtension
 			{
@@ -115,7 +125,15 @@ namespace RTC
 				TwoBytes = 2
 			};
 
+#ifdef MS_TEST
+		public:
+#else
 		private:
+#endif
+			/**
+			 * @remarks
+			 * - This struct is guaranteed to be aligned to 1 byte.
+			 */
 			struct OneByteExtension
 			{
 #if defined(MS_LITTLE_ENDIAN)
@@ -128,7 +146,15 @@ namespace RTC
 				uint8_t value[];
 			};
 
+#ifdef MS_TEST
+		public:
+#else
 		private:
+#endif
+			/**
+			 * @remarks
+			 * - This struct is guaranteed to be aligned to 1 byte.
+			 */
 			struct TwoBytesExtension
 			{
 				uint8_t id;
@@ -139,6 +165,11 @@ namespace RTC
 		public:
 			/**
 			 * Struct for setting and replacing Extensions.
+			 *
+			 * @remarks
+			 * - This struct is NOT guaranteed to be aligned to any fixed number of
+			 *   bytes because it contains a pointer, which is 4 or 8 bytes depending
+			 *   on the architecture. Anyway we never cast any buffer to this struct.
 			 */
 			struct Extension
 			{
@@ -380,7 +411,7 @@ namespace RTC
 
 					// `-1` because we have 14 elements total 0..13 and `id` is in the
 					// range 1..14.
-					auto offset = this->oneByteExtensions[id - 1];
+					const auto offset = this->oneByteExtensions[id - 1];
 
 					return offset != -1;
 				}
@@ -479,7 +510,7 @@ namespace RTC
 			 *
 			 * @see RFC 8285.
 			 */
-			void AssignExtensionIds(RTC::RtpHeaderExtensionIds& headerExtensionIds);
+			void AssignExtensionIds(RTP::HeaderExtensionIds& headerExtensionIds);
 
 			bool ReadMid(std::string& mid) const;
 
@@ -926,7 +957,7 @@ namespace RTC
 			// Extension value to the beginning of the Extension.
 			std::map<uint8_t, ssize_t> twoBytesExtensions;
 			// Extension ids.
-			RTC::RtpHeaderExtensionIds headerExtensionIds{};
+			RTP::HeaderExtensionIds headerExtensionIds{};
 			// Codec related.
 			std::shared_ptr<Codecs::PayloadDescriptorHandler> payloadDescriptorHandler;
 		};

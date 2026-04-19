@@ -10,7 +10,7 @@ namespace Utils
 {
 	/* Static variables. */
 
-	thread_local uint32_t Crypto::seed;
+	thread_local std::mt19937_64 Crypto::rng;
 	thread_local EVP_MAC* Crypto::mac{ nullptr };
 	thread_local EVP_MAC_CTX* Crypto::hmacSha1Ctx{ nullptr };
 	thread_local uint8_t Crypto::hmacSha1Buffer[SHA_DIGEST_LENGTH];
@@ -95,9 +95,10 @@ namespace Utils
 	{
 		MS_TRACE();
 
-		// Init the crypto seed with a random number taken from the address
-		// of the seed variable itself (which is random).
-		Crypto::seed = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(std::addressof(Crypto::seed)));
+		std::random_device rd;
+		const uint64_t seed = (uint64_t(rd()) << 32) | uint64_t(rd());
+
+		Crypto::rng.seed(seed);
 
 		// Create an OpenSSL HMAC_CTX context for HMAC SHA1 calculation.
 		Crypto::mac         = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
@@ -119,28 +120,6 @@ namespace Utils
 		}
 	}
 
-	uint32_t Crypto::GetRandomUInt(uint32_t min, uint32_t max)
-	{
-		MS_TRACE();
-
-		// NOTE: This is the original, but produces very small values.
-		// Crypto::seed = (214013 * Crypto::seed) + 2531011;
-		// return (((Crypto::seed>>16)&0x7FFF) % (max - min + 1)) + min;
-
-		// This seems to produce better results.
-		Crypto::seed = uint32_t{ ((214013 * Crypto::seed) + 2531011) };
-
-		// Special case.
-		if (max == 4294967295)
-		{
-			--max;
-		}
-
-		min = std::min(min, max);
-
-		return (((Crypto::seed >> 4) & 0x7FFF7FFF) % (max - min + 1)) + min;
-	}
-
 	std::string Crypto::GetRandomString(size_t len)
 	{
 		MS_TRACE();
@@ -154,7 +133,7 @@ namespace Utils
 
 		for (size_t i{ 0 }; i < len; ++i)
 		{
-			buffer[i] = Chars[GetRandomUInt(0, sizeof(Chars) - 1)];
+			buffer[i] = Chars[GetRandomUInt<size_t>(0, sizeof(Chars) - 1)];
 		}
 
 		return { buffer, len };
@@ -200,33 +179,33 @@ namespace Utils
 		return crc32;
 	}
 
-	const uint8_t* Crypto::GetHmacSha1(const std::string& key, const uint8_t* data, size_t len)
+	const uint8_t* Crypto::GetHmacSha1(const char* key, size_t keyLen, const uint8_t* data, size_t len)
 	{
 		MS_TRACE();
 
 		int ret;
 
-		OSSL_PARAM sha1[] = { { "digest", OSSL_PARAM_UTF8_STRING, (void*)"sha1", 4, 0 }, OSSL_PARAM_END };
+		OSSL_PARAM sha1[] = {
+			{ "digest", OSSL_PARAM_UTF8_STRING, (void*)"sha1", 4, 0 },
+      OSSL_PARAM_END
+		};
 
-		ret = EVP_MAC_init(
-		  Crypto::hmacSha1Ctx, reinterpret_cast<const unsigned char*>(key.c_str()), key.length(), sha1);
+		ret =
+		  EVP_MAC_init(Crypto::hmacSha1Ctx, reinterpret_cast<const unsigned char*>(key), keyLen, sha1);
 
-		MS_ASSERT(ret == 1, "OpenSSL EVP_MAC_init() failed with key '%s'", key.c_str());
+		MS_ASSERT(ret == 1, "OpenSSL EVP_MAC_init() failed with key '%s'", key);
 
 		ret = EVP_MAC_update(Crypto::hmacSha1Ctx, data, len);
 
 		MS_ASSERT(
-		  ret == 1,
-		  "OpenSSL EVP_MAC_update() failed with key '%s' and data length %zu bytes",
-		  key.c_str(),
-		  len);
+		  ret == 1, "OpenSSL EVP_MAC_update() failed with key '%s' and data length %zu bytes", key, len);
 
 		size_t resultLen;
 
 		ret = EVP_MAC_final(Crypto::hmacSha1Ctx, Crypto::hmacSha1Buffer, &resultLen, SHA_DIGEST_LENGTH);
 
 		MS_ASSERT(
-		  ret == 1, "OpenSSL HMAC_Final() failed with key '%s' and data length %zu bytes", key.c_str(), len);
+		  ret == 1, "OpenSSL HMAC_Final() failed with key '%s' and data length %zu bytes", key, len);
 		MS_ASSERT(
 		  resultLen == SHA_DIGEST_LENGTH, "OpenSSL HMAC_Final() resultLen is %zu instead of 20", resultLen);
 

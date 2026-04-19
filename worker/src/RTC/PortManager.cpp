@@ -6,8 +6,7 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
-#include <tuple>   // std:make_tuple()
-#include <utility> // std::piecewise_construct
+#include <tuple> // std:make_tuple()
 
 /* Static methods for UV callbacks. */
 
@@ -132,7 +131,7 @@ namespace RTC
 			{
 				uvHandle = reinterpret_cast<uv_handle_t*>(new uv_udp_t());
 				err      = uv_udp_init_ex(
-          DepLibUV::GetLoop(), reinterpret_cast<uv_udp_t*>(uvHandle), UV_UDP_RECVMMSG);
+				  DepLibUV::GetLoop(), reinterpret_cast<uv_udp_t*>(uvHandle), UV_UDP_RECVMMSG);
 
 				break;
 			}
@@ -330,8 +329,8 @@ namespace RTC
 		const uint8_t bitFlags = ConvertSocketFlags(flags, protocol, family);
 
 		// Choose a random port index to start from.
-		portIdx = static_cast<size_t>(
-		  Utils::Crypto::GetRandomUInt(static_cast<uint32_t>(0), static_cast<uint32_t>(numPorts - 1)));
+		portIdx = Utils::Crypto::GetRandomUInt<size_t>(
+		  static_cast<uint32_t>(0), static_cast<uint32_t>(numPorts - 1));
 
 		// Iterate all ports until getting one available. Fail if none found and also
 		// if bind() fails N times in theoretically available ports.
@@ -412,7 +411,7 @@ namespace RTC
 				{
 					uvHandle = reinterpret_cast<uv_handle_t*>(new uv_udp_t());
 					err      = uv_udp_init_ex(
-            DepLibUV::GetLoop(), reinterpret_cast<uv_udp_t*>(uvHandle), UV_UDP_RECVMMSG);
+					  DepLibUV::GetLoop(), reinterpret_cast<uv_udp_t*>(uvHandle), UV_UDP_RECVMMSG);
 
 					break;
 				}

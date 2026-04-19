@@ -4,7 +4,11 @@
 #include "RTC/PipeTransport.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
+#include "Settings.hpp"
 #include "Utils.hpp"
+#ifdef MS_SCTP_STACK
+#include "RTC/SCTP/packet/Packet.hpp"
+#endif
 #include <cstring> // std::memcpy()
 
 namespace RTC
@@ -40,14 +44,12 @@ namespace RTC
 		// This may throw.
 		Utils::IP::NormalizeIp(this->listenInfo.ip);
 
-		if (flatbuffers::IsFieldPresent(
-		      options->listenInfo(), FBS::Transport::ListenInfo::VT_ANNOUNCEDADDRESS))
+		if (flatbuffers::IsFieldPresent(options->listenInfo(), FBS::Transport::ListenInfo::VT_ANNOUNCEDADDRESS))
 		{
 			this->listenInfo.announcedAddress.assign(options->listenInfo()->announcedAddress()->str());
 		}
 
-		if (flatbuffers::IsFieldPresent(
-		      options->listenInfo(), FBS::Transport::ListenInfo::VT_ANNOUNCEDADDRESS))
+		if (flatbuffers::IsFieldPresent(options->listenInfo(), FBS::Transport::ListenInfo::VT_ANNOUNCEDADDRESS))
 		{
 			this->listenInfo.announcedAddress.assign(options->listenInfo()->announcedAddress()->str());
 		}
@@ -388,7 +390,7 @@ namespace RTC
 						MS_THROW_TYPE_ERROR("missing port");
 					}
 
-					// NOLINTNEXTLINE (bugprone-unchecked-optional-access)
+					// NOLINTNEXTLINE(bugprone-unchecked-optional-access)
 					port = body->port().value();
 
 					int err;
@@ -486,7 +488,7 @@ namespace RTC
 
 	inline bool PipeTransport::IsConnected() const
 	{
-		return this->tuple;
+		return this->tuple ? true : false;
 	}
 
 	inline bool PipeTransport::HasSrtp() const
@@ -562,7 +564,7 @@ namespace RTC
 			return;
 		}
 
-		packet->Serialize(RTC::RTCP::Buffer);
+		packet->Serialize(RTC::RTCP::SerializationBuffer);
 
 		const uint8_t* data = packet->GetData();
 		auto len            = packet->GetSize();
@@ -583,22 +585,28 @@ namespace RTC
 	{
 		MS_TRACE();
 
+#ifdef MS_SCTP_STACK
+		// TODO: SCTP
+#else
 		this->sctpAssociation->SendSctpMessage(dataConsumer, msg, len, ppid, cb);
+#endif
 	}
 
-	void PipeTransport::SendSctpData(const uint8_t* data, size_t len)
+	bool PipeTransport::SendSctpData(const uint8_t* data, size_t len)
 	{
 		MS_TRACE();
 
 		if (!IsConnected())
 		{
-			return;
+			return false;
 		}
 
 		this->tuple->Send(data, len);
 
 		// Increase send transmission.
 		RTC::Transport::DataSent(len);
+
+		return true;
 	}
 
 	void PipeTransport::RecvStreamClosed(uint32_t ssrc)
@@ -640,7 +648,11 @@ namespace RTC
 			OnRtpDataReceived(tuple, data, len, bufferLen);
 		}
 		// Check if it's SCTP.
+#ifdef MS_SCTP_STACK
+		else if (RTC::SCTP::Packet::IsSctp(data, len))
+#else
 		else if (RTC::SctpAssociation::IsSctp(data, len))
+#endif
 		{
 			OnSctpDataReceived(tuple, data, len);
 		}

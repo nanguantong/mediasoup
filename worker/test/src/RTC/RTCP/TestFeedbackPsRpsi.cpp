@@ -3,14 +3,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memcmp()
 
-using namespace RTC::RTCP;
-
-namespace TestFeedbackPsRpsi
+SCENARIO("RTCP Feedback PS RPSI", "[rtcp][feedback-ps][rpsi]")
 {
 	// RTCP RPSI packet.
 
 	// clang-format off
-	uint8_t buffer[] =
+	alignas(4) uint8_t buffer[] =
 	{
 		0x83, 0xce, 0x00, 0x04, // Type: 206 (Payload Specific), Count: 3 (RPSI), Length: 4
 		0xfa, 0x17, 0xfa, 0x17, // Sender SSRC: 0xfa17fa17
@@ -23,33 +21,35 @@ namespace TestFeedbackPsRpsi
 	// clang-format on
 
 	// RPSI values.
-	uint32_t senderSsrc{ 0xfa17fa17 };
-	uint32_t mediaSsrc{ 0 };
-	uint8_t payloadType{ 2 };
-	uint8_t payloadMask{ 1 };
-	size_t length{ 5 };
+	const uint32_t senderSsrc{ 0xfa17fa17 };
+	const uint32_t mediaSsrc{ 0 };
+	const uint8_t payloadType{ 2 };
+	const uint8_t payloadMask{ 1 };
+	const size_t length{ 5 };
 
-	void verify(FeedbackPsRpsiPacket* packet)
+	// NOTE: No need to pass const integers to the lambda.
+	auto verify = [](RTC::RTCP::FeedbackPsRpsiPacket* packet)
 	{
 		REQUIRE(packet->GetSenderSsrc() == senderSsrc);
 		REQUIRE(packet->GetMediaSsrc() == mediaSsrc);
 
-		FeedbackPsRpsiItem* item = *(packet->Begin());
+		const RTC::RTCP::FeedbackPsRpsiItem* item = *(packet->Begin());
 
 		REQUIRE(item);
 		REQUIRE(item->GetPayloadType() == payloadType);
 		REQUIRE(item->GetLength() == length);
 		REQUIRE((item->GetBitString()[item->GetLength() - 1] & 1) == payloadMask);
-	}
-} // namespace TestFeedbackPsRpsi
+	};
 
-SCENARIO("RTCP Feedback PS RPSI parsing", "[parser][rtcp][feedback-ps][rpsi]")
-{
-	using namespace TestFeedbackPsRpsi;
+	SECTION("alignof() RTCP structs")
+	{
+		REQUIRE(alignof(RTC::RTCP::FeedbackPsRpsiItem::Header) == 1);
+	}
 
 	SECTION("parse FeedbackPsRpsiPacket")
 	{
-		std::unique_ptr<FeedbackPsRpsiPacket> packet{ FeedbackPsRpsiPacket::Parse(buffer, sizeof(buffer)) };
+		std::unique_ptr<RTC::RTCP::FeedbackPsRpsiPacket> packet{ RTC::RTCP::FeedbackPsRpsiPacket::Parse(
+			buffer, sizeof(buffer)) };
 
 		REQUIRE(packet);
 
@@ -57,7 +57,7 @@ SCENARIO("RTCP Feedback PS RPSI parsing", "[parser][rtcp][feedback-ps][rpsi]")
 
 		SECTION("serialize packet instance")
 		{
-			uint8_t serialized[sizeof(buffer)] = { 0 };
+			alignas(4) uint8_t serialized[sizeof(buffer)] = { 0 };
 
 			packet->Serialize(serialized);
 

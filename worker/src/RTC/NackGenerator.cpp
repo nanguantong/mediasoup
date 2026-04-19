@@ -18,7 +18,9 @@ namespace RTC
 	/* Instance methods. */
 
 	NackGenerator::NackGenerator(Listener* listener, unsigned int sendNackDelayMs)
-	  : listener(listener), sendNackDelayMs(sendNackDelayMs), timer(new TimerHandle(this)),
+	  : listener(listener),
+	    sendNackDelayMs(sendNackDelayMs),
+	    timer(new TimerHandle(this)),
 	    rtt(DefaultRtt)
 	{
 		MS_TRACE();
@@ -179,12 +181,8 @@ namespace RTC
 
 		if (static_cast<uint16_t>(this->nackList.size()) + numNewNacks > MaxNackPackets)
 		{
-			// clang-format off
-			while (
-				RemoveNackItemsUntilKeyFrame() &&
-				static_cast<uint16_t>(this->nackList.size()) + numNewNacks > MaxNackPackets
-			)
-			// clang-format on
+			while (RemoveNackItemsUntilKeyFrame() &&
+			       static_cast<uint16_t>(this->nackList.size()) + numNewNacks > MaxNackPackets)
 			{
 			}
 
@@ -265,16 +263,10 @@ namespace RTC
 				continue;
 			}
 
-			// clang-format off
 			if (
-				filter == NackFilter::SEQ &&
-				nackInfo.sentAtMs == 0 &&
-				(
-					nackInfo.sendAtSeq == this->lastSeq ||
-					SeqManager<uint16_t>::IsSeqHigherThan(this->lastSeq, nackInfo.sendAtSeq)
-				)
-			)
-			// clang-format on
+			  filter == NackFilter::SEQ && nackInfo.sentAtMs == 0 &&
+			  (nackInfo.sendAtSeq == this->lastSeq ||
+			   SeqManager<uint16_t>::IsSeqHigherThan(this->lastSeq, nackInfo.sendAtSeq)))
 			{
 				nackBatch.emplace_back(seq);
 				nackInfo.retries++;

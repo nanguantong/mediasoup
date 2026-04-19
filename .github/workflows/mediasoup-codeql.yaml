@@ -1,0 +1,90 @@
+name: mediasoup-codeql
+
+on:
+  push:
+    branches: [v3]
+    paths:
+      - 'worker/**'
+      - 'node/src/**'
+      - 'rust/src/**'
+  pull_request:
+    paths:
+      - 'worker/**'
+      - 'node/src/**'
+      - 'rust/src/**'
+  workflow_dispatch:
+
+concurrency:
+  # Cancel a currently running workflow from the same PR, branch or tag when a
+  # new workflow is triggered.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['c-cpp', 'javascript-typescript', 'python']
+
+    env:
+      MEDIASOUP_SKIP_WORKER_PREBUILT_DOWNLOAD: 'true'
+      MEDIASOUP_LOCAL_DEV: 'true'
+      MEDIASOUP_BUILDTYPE: 'Release'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      # Initializes the CodeQL tools for scanning.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          config: |
+            paths-ignore:
+              - 'art/**'
+              - 'doc/**'
+              - 'node_modules/**'
+              - 'node/lib/**'
+              - 'node/src/fbs/**'
+              - 'rust/benches/**'
+              - 'rust/examples/**'
+              - 'rust/examples-frontend/**'
+              - 'worker/deps/**'
+              - 'worker/subprojects/**'
+              - 'worker/fuzzer/new-corpus/**'
+              - 'worker/fuzzer/reports/**'
+              - 'worker/out/**'
+          # If you wish to specify custom queries, you can do so here or in a
+          # config file. By default, queries listed here will override any
+          # specified in a config file. Prefix the list here with "+" to use
+          # these queries and those in the config file.
+          #
+          # Details on CodeQL's query packs refer to:
+          # https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/configuring-code-scanning#using-queries-in-ql-packs
+          #
+          # queries: security-extended,security-and-quality
+
+      # Use `npm ci` to build mediasoup Node and worker instead of relying on
+      # built-in Autobuild.
+      - name: npm ci
+        run: npm ci --foreground-scripts
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{matrix.language}}'

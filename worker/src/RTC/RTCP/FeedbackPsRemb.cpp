@@ -54,8 +54,8 @@ namespace RTC
 			}
 
 			// Make data point to the 4 bytes that must containt the "REMB" identifier.
-			auto* data = reinterpret_cast<uint8_t*>(commonHeader) + Packet::CommonHeaderSize +
-			             FeedbackPacket::HeaderSize;
+			auto* data            = reinterpret_cast<uint8_t*>(commonHeader) + Packet::CommonHeaderSize +
+			                        FeedbackPacket::HeaderSize;
 			const size_t numSsrcs = data[4];
 
 			// Ensure there is space for the the announced number of SSRC feedbacks.
@@ -110,7 +110,7 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			// NOLINTNEXTLINE (bugprone-parent-virtual-call)
+			// NOLINTNEXTLINE(bugprone-parent-virtual-call)
 			size_t offset     = FeedbackPsPacket::Serialize(buffer);
 			uint64_t mantissa = this->bitrate;
 			uint8_t exponent{ 0u };
@@ -147,7 +147,7 @@ namespace RTC
 			MS_TRACE();
 
 			MS_DUMP_CLEAN(indentation, "<FeedbackPsRembPacket>");
-			// NOLINTNEXTLINE (bugprone-parent-virtual-call)
+			// NOLINTNEXTLINE(bugprone-parent-virtual-call)
 			FeedbackPsPacket::Dump();
 			MS_DUMP_CLEAN(indentation, "  bitrate (bps): %" PRIu64, this->bitrate);
 			for (auto ssrc : this->ssrcs)

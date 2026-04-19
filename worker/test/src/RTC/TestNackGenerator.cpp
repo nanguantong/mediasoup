@@ -8,139 +8,146 @@
 #include <catch2/catch_test_macros.hpp>
 #include <vector>
 
-using namespace RTC;
-
-static constexpr unsigned int SendNackDelay{ 0u }; // In ms.
-
-struct TestNackGeneratorInput
+SCENARIO("NACK generator", "[rtp][rtcp][nack]")
 {
-	TestNackGeneratorInput() = default;
-	TestNackGeneratorInput(
-	  uint16_t seq,
-	  bool isKeyFrame,
-	  uint16_t firstNacked,
-	  size_t numNacked,
-	  bool keyFrameRequired = false,
-	  size_t nackListSize   = 0)
-	  : seq(seq), isKeyFrame(isKeyFrame), firstNacked(firstNacked), numNacked(numNacked),
-	    keyFrameRequired(keyFrameRequired), nackListSize(nackListSize)
-	{
-	}
+	constexpr unsigned int SendNackDelay{ 0u }; // In ms.
 
-	uint16_t seq{ 0 };
-	bool isKeyFrame{ false };
-	uint16_t firstNacked{ 0 };
-	size_t numNacked{ 0 };
-	bool keyFrameRequired{ false };
-	size_t nackListSize{ 0 };
-};
+	struct TestNackGeneratorInput
+	{
+		TestNackGeneratorInput() = default;
+		TestNackGeneratorInput(
+		  uint16_t seq,
+		  bool isKeyFrame,
+		  uint16_t firstNacked,
+		  size_t numNacked,
+		  bool keyFrameRequired = false,
+		  size_t nackListSize   = 0)
+		  : seq(seq),
+		    isKeyFrame(isKeyFrame),
+		    firstNacked(firstNacked),
+		    numNacked(numNacked),
+		    keyFrameRequired(keyFrameRequired),
+		    nackListSize(nackListSize)
+		{
+		}
 
-class TestPayloadDescriptorHandler : public RTP::Codecs::PayloadDescriptorHandler
-{
-public:
-	explicit TestPayloadDescriptorHandler(bool isKeyFrame) : isKeyFrame(isKeyFrame) {};
-	~TestPayloadDescriptorHandler() override = default;
-	void Dump(int indentation = 0) const override
-	{
-	}
-	bool Process(RTP::Codecs::EncodingContext* /*context*/, RTP::Packet* /*packet*/, bool& /*marker*/) override
-	{
-		return true;
-	}
-	void RtpPacketChanged(RTC::RTP::Packet* packet) override
-	{
-	}
-	std::unique_ptr<RTP::Codecs::PayloadDescriptor::Encoder> GetEncoder() const override
-	{
-		return nullptr;
-	}
-	void Encode(RTP::Packet* /*packet*/, RTP::Codecs::PayloadDescriptor::Encoder* /*encoder*/) override
-	{
-	}
-	void Restore(RTP::Packet* /*packet*/) override
-	{
-	}
-	uint8_t GetSpatialLayer() const override
-	{
-		return 0;
-	}
-	uint8_t GetTemporalLayer() const override
-	{
-		return 0;
-	}
-	bool IsKeyFrame() const override
-	{
-		return this->isKeyFrame;
-	}
-
-private:
-	bool isKeyFrame{ false };
-};
-
-class TestNackGeneratorListener : public NackGenerator::Listener
-{
-	void OnNackGeneratorNackRequired(const std::vector<uint16_t>& seqNumbers) override
-	{
-		this->nackRequiredTriggered = true;
-
-		auto it          = seqNumbers.begin();
-		auto firstNacked = *it;
-		auto numNacked   = seqNumbers.size();
-
-		REQUIRE(this->currentInput.firstNacked == firstNacked);
-		REQUIRE(this->currentInput.numNacked == numNacked);
+		uint16_t seq{ 0 };
+		bool isKeyFrame{ false };
+		uint16_t firstNacked{ 0 };
+		size_t numNacked{ 0 };
+		bool keyFrameRequired{ false };
+		size_t nackListSize{ 0 };
 	};
 
-	void OnNackGeneratorKeyFrameRequired() override
+	class TestPayloadDescriptorHandler : public RTC::RTP::Codecs::PayloadDescriptorHandler
 	{
-		this->keyFrameRequiredTriggered = true;
+	public:
+		explicit TestPayloadDescriptorHandler(bool isKeyFrame) : isKeyFrame(isKeyFrame) {};
+		~TestPayloadDescriptorHandler() override = default;
+		void Dump(int indentation = 0) const override
+		{
+		}
+		bool Process(
+		  RTC::RTP::Codecs::EncodingContext* /*context*/,
+		  RTC::RTP::Packet* /*packet*/,
+		  bool& /*marker*/) override
+		{
+			return true;
+		}
+		void RtpPacketChanged(RTC::RTP::Packet* packet) override
+		{
+		}
+		std::unique_ptr<RTC::RTP::Codecs::PayloadDescriptor::Encoder> GetEncoder() const override
+		{
+			return nullptr;
+		}
+		void Encode(
+		  RTC::RTP::Packet* /*packet*/, RTC::RTP::Codecs::PayloadDescriptor::Encoder* /*encoder*/) override
+		{
+		}
+		void Restore(RTC::RTP::Packet* /*packet*/) override
+		{
+		}
+		uint8_t GetSpatialLayer() const override
+		{
+			return 0;
+		}
+		uint8_t GetTemporalLayer() const override
+		{
+			return 0;
+		}
+		bool IsKeyFrame() const override
+		{
+			return this->isKeyFrame;
+		}
 
-		REQUIRE(this->currentInput.keyFrameRequired);
-	}
+	private:
+		bool isKeyFrame{ false };
+	};
 
-public:
-	void Reset(TestNackGeneratorInput& input)
+	class TestNackGeneratorListener : public RTC::NackGenerator::Listener
 	{
-		this->currentInput              = input;
-		this->nackRequiredTriggered     = false;
-		this->keyFrameRequiredTriggered = false;
-	}
+		void OnNackGeneratorNackRequired(const std::vector<uint16_t>& seqNumbers) override
+		{
+			this->nackRequiredTriggered = true;
 
-	void Check(NackGenerator& nackGenerator)
+			auto it          = seqNumbers.begin();
+			auto firstNacked = *it;
+			auto numNacked   = seqNumbers.size();
+
+			REQUIRE(this->currentInput.firstNacked == firstNacked);
+			REQUIRE(this->currentInput.numNacked == numNacked);
+		};
+
+		void OnNackGeneratorKeyFrameRequired() override
+		{
+			this->keyFrameRequiredTriggered = true;
+
+			REQUIRE(this->currentInput.keyFrameRequired);
+		}
+
+	public:
+		void Reset(TestNackGeneratorInput& input)
+		{
+			this->currentInput              = input;
+			this->nackRequiredTriggered     = false;
+			this->keyFrameRequiredTriggered = false;
+		}
+
+		void Check(RTC::NackGenerator& nackGenerator)
+		{
+			REQUIRE(this->nackRequiredTriggered == static_cast<bool>(this->currentInput.numNacked));
+			REQUIRE(this->keyFrameRequiredTriggered == this->currentInput.keyFrameRequired);
+		}
+
+	private:
+		TestNackGeneratorInput currentInput{};
+		bool nackRequiredTriggered{ false };
+		bool keyFrameRequiredTriggered{ false };
+	};
+
+	auto validate =
+	  [](std::unique_ptr<RTC::RTP::Packet>& packet, std::vector<TestNackGeneratorInput>& inputs)
 	{
-		REQUIRE(this->nackRequiredTriggered == static_cast<bool>(this->currentInput.numNacked));
-		REQUIRE(this->keyFrameRequiredTriggered == this->currentInput.keyFrameRequired);
-	}
+		TestNackGeneratorListener listener;
+		auto nackGenerator = RTC::NackGenerator(&listener, SendNackDelay);
 
-private:
-	TestNackGeneratorInput currentInput{};
-	bool nackRequiredTriggered{ false };
-	bool keyFrameRequiredTriggered{ false };
-};
+		for (auto input : inputs)
+		{
+			listener.Reset(input);
 
-void validate(std::unique_ptr<RTP::Packet>& packet, std::vector<TestNackGeneratorInput>& inputs)
-{
-	TestNackGeneratorListener listener;
-	NackGenerator nackGenerator = NackGenerator(&listener, SendNackDelay);
+			auto* tpdh = new TestPayloadDescriptorHandler(input.isKeyFrame);
 
-	for (auto input : inputs)
-	{
-		listener.Reset(input);
+			packet->SetPayloadDescriptorHandler(tpdh);
+			packet->SetSequenceNumber(input.seq);
+			nackGenerator.ReceivePacket(packet.get(), /*isRecovered*/ false);
 
-		auto* tpdh = new TestPayloadDescriptorHandler(input.isKeyFrame);
+			listener.Check(nackGenerator);
+		}
+	};
 
-		packet->SetPayloadDescriptorHandler(tpdh);
-		packet->SetSequenceNumber(input.seq);
-		nackGenerator.ReceivePacket(packet.get(), /*isRecovered*/ false);
-
-		listener.Check(nackGenerator);
-	}
-};
-
-SCENARIO("NACK generator", "[rtp][rtcp]")
-{
 	// clang-format off
-	uint8_t rtpBuffer[] =
+	alignas(4) uint8_t rtpBuffer[] =
 	{
 		0x80, 0x7b, 0x52, 0x0e,
 		0x5b, 0x6b, 0xca, 0xb5,
@@ -149,9 +156,9 @@ SCENARIO("NACK generator", "[rtp][rtcp]")
 	// clang-format on
 
 	// [pt:123, seq:21006, timestamp:1533790901]
-	std::unique_ptr<RTP::Packet> packet{ RTP::Packet::Parse(rtpBuffer, sizeof(rtpBuffer)) };
+	std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Parse(rtpBuffer, sizeof(rtpBuffer)) };
 
-	packet->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+	packet->Serialize(rtpCommon::SerializeBuffer, sizeof(rtpCommon::SerializeBuffer));
 
 	SECTION("no NACKs required")
 	{

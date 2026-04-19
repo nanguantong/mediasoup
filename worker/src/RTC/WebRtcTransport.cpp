@@ -7,10 +7,6 @@
 #include "Settings.hpp"
 #include "Utils.hpp"
 #include "FBS/webRtcTransport.h"
-// TODO: For testing purposes. Must be removed.
-#ifdef MS_SCTP_STACK
-#include "RTC/SCTP/packet/Packet.hpp"
-#endif
 #include <cmath> // std::pow()
 
 namespace RTC
@@ -284,7 +280,8 @@ namespace RTC
 	  const std::vector<RTC::ICE::IceCandidate>& iceCandidates,
 	  const FBS::WebRtcTransport::WebRtcTransportOptions* options)
 	  : RTC::Transport::Transport(shared, id, listener, options->base()),
-	    webRtcTransportListener(webRtcTransportListener), iceCandidates(iceCandidates)
+	    webRtcTransportListener(webRtcTransportListener),
+	    iceCandidates(iceCandidates)
 	{
 		MS_TRACE();
 
@@ -657,20 +654,21 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		// clang-format off
 		return (
-			(
-				this->iceServer->GetState() == RTC::ICE::IceServer::IceState::CONNECTED ||
-				this->iceServer->GetState() == RTC::ICE::IceServer::IceState::COMPLETED
-			) &&
-			this->dtlsTransport->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED
-		);
-		// clang-format on
+		  (this->iceServer->GetState() == RTC::ICE::IceServer::IceState::CONNECTED ||
+		   this->iceServer->GetState() == RTC::ICE::IceServer::IceState::COMPLETED) &&
+		  this->dtlsTransport->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED);
 	}
 
 	void WebRtcTransport::MayRunDtlsTransport()
 	{
 		MS_TRACE();
+
+		// Dont' start DTLS handshake if ICE is not connected/completed.
+		if (!this->iceServer->GetSelectedTuple())
+		{
+			return;
+		}
 
 		// Do nothing if we have the same local DTLS role as the DTLS transport.
 		// NOTE: local role in DTLS transport can be NONE, but not ours.
@@ -686,12 +684,9 @@ namespace RTC
 			// 'completed'.
 			case RTC::DtlsTransport::Role::AUTO:
 			{
-				// clang-format off
 				if (
-					this->iceServer->GetState() == RTC::ICE::IceServer::IceState::CONNECTED ||
-					this->iceServer->GetState() == RTC::ICE::IceServer::IceState::COMPLETED
-				)
-				// clang-format on
+				  this->iceServer->GetState() == RTC::ICE::IceServer::IceState::CONNECTED ||
+				  this->iceServer->GetState() == RTC::ICE::IceServer::IceState::COMPLETED)
 				{
 					MS_DEBUG_TAG(
 					  dtls, "transition from DTLS local role 'auto' to 'server' and running DTLS transport");
@@ -712,12 +707,9 @@ namespace RTC
 			//   https://bugs.chromium.org/p/webrtc/issues/detail?id=3661
 			case RTC::DtlsTransport::Role::CLIENT:
 			{
-				// clang-format off
 				if (
-					this->iceServer->GetState() == RTC::ICE::IceServer::IceState::CONNECTED ||
-					this->iceServer->GetState() == RTC::ICE::IceServer::IceState::COMPLETED
-				)
-				// clang-format on
+				  this->iceServer->GetState() == RTC::ICE::IceServer::IceState::CONNECTED ||
+				  this->iceServer->GetState() == RTC::ICE::IceServer::IceState::COMPLETED)
 				{
 					MS_DEBUG_TAG(dtls, "running DTLS transport in local role 'client'");
 
@@ -731,12 +723,9 @@ namespace RTC
 			// USE-CANDIDATE) or 'completed'.
 			case RTC::DtlsTransport::Role::SERVER:
 			{
-				// clang-format off
 				if (
-					this->iceServer->GetState() == RTC::ICE::IceServer::IceState::CONNECTED ||
-					this->iceServer->GetState() == RTC::ICE::IceServer::IceState::COMPLETED
-				)
-				// clang-format on
+				  this->iceServer->GetState() == RTC::ICE::IceServer::IceState::CONNECTED ||
+				  this->iceServer->GetState() == RTC::ICE::IceServer::IceState::COMPLETED)
 				{
 					MS_DEBUG_TAG(dtls, "running DTLS transport in local role 'server'");
 
@@ -838,7 +827,7 @@ namespace RTC
 			return;
 		}
 
-		packet->Serialize(RTC::RTCP::Buffer);
+		packet->Serialize(RTC::RTCP::SerializationBuffer);
 
 		const uint8_t* data = packet->GetData();
 		auto len            = packet->GetSize();
@@ -867,40 +856,25 @@ namespace RTC
 	{
 		MS_TRACE();
 
+#ifdef MS_SCTP_STACK
+		// TODO: SCTP
+#else
 		this->sctpAssociation->SendSctpMessage(dataConsumer, msg, len, ppid, cb);
+#endif
 	}
 
-	void WebRtcTransport::SendSctpData(const uint8_t* data, size_t len)
+	bool WebRtcTransport::SendSctpData(const uint8_t* data, size_t len)
 	{
 		MS_TRACE();
 
-		// clang-format on
 		if (!IsConnected())
 		{
 			MS_WARN_TAG(sctp, "DTLS not connected, cannot send SCTP data");
 
-			return;
+			return false;
 		}
 
-// TODO: For testing purposes. Must be removed.
-#ifdef MS_SCTP_STACK
-		MS_DUMP(">>> sending SCTP packet...");
-
-		const auto* packet = RTC::SCTP::Packet::Parse(data, len);
-
-		if (!packet)
-		{
-			MS_WARN_TAG(sctp, "data to be sent is not a valid SCTP packet");
-
-			return;
-		}
-
-		packet->Dump();
-
-		delete packet;
-#endif
-
-		this->dtlsTransport->SendApplicationData(data, len);
+		return this->dtlsTransport->SendApplicationData(data, len);
 	}
 
 	void WebRtcTransport::RecvStreamClosed(uint32_t ssrc)
@@ -1466,24 +1440,6 @@ namespace RTC
 	  const RTC::DtlsTransport* /*dtlsTransport*/, const uint8_t* data, size_t len)
 	{
 		MS_TRACE();
-
-// TODO: For testing purposes. Must be removed.
-#ifdef MS_SCTP_STACK
-		MS_DUMP("<<< receiving SCTP packet...");
-
-		const auto* packet = RTC::SCTP::Packet::Parse(data, len);
-
-		if (!packet)
-		{
-			MS_WARN_TAG(sctp, "received data is not a valid SCTP packet");
-
-			return;
-		}
-
-		packet->Dump();
-
-		delete packet;
-#endif
 
 		// Pass it to the parent transport.
 		RTC::Transport::ReceiveSctpData(data, len);

@@ -366,18 +366,11 @@ namespace RTC
 		}
 
 		// In case this is the first unlimited REMB packet, send it fast.
-		// clang-format off
 		if (
-			(
-				(this->bweType != RTC::BweType::REMB && this->maxIncomingBitrate != 0u) ||
-				this->unlimitedRembCounter > 0u
-			) &&
-			(
-				nowMs - this->limitationRembSentAtMs > LimitationRembInterval ||
-				this->unlimitedRembCounter == UnlimitedRembNumPackets
-			)
-		)
-		// clang-format on
+		  ((this->bweType != RTC::BweType::REMB && this->maxIncomingBitrate != 0u) ||
+		   this->unlimitedRembCounter > 0u) &&
+		  (nowMs - this->limitationRembSentAtMs > LimitationRembInterval ||
+		   this->unlimitedRembCounter == UnlimitedRembNumPackets))
 		{
 			MS_DEBUG_DEV(
 			  "sending limitation RTCP REMB packet [bitrate:%" PRIu32 "]", this->maxIncomingBitrate);
@@ -385,7 +378,7 @@ namespace RTC
 			RTC::RTCP::FeedbackPsRembPacket packet(0u, 0u);
 
 			packet.SetBitrate(this->maxIncomingBitrate);
-			packet.Serialize(RTC::RTCP::Buffer);
+			packet.Serialize(RTC::RTCP::SerializationBuffer);
 
 			// Notify the listener.
 			this->listener->OnTransportCongestionControlServerSendRtcpPacket(this, &packet);
@@ -469,7 +462,7 @@ namespace RTC
 
 		packet.SetBitrate(availableBitrate);
 		packet.SetSsrcs(ssrcs);
-		packet.Serialize(RTC::RTCP::Buffer);
+		packet.Serialize(RTC::RTCP::SerializationBuffer);
 
 		// Notify the listener.
 		this->listener->OnTransportCongestionControlServerSendRtcpPacket(this, &packet);

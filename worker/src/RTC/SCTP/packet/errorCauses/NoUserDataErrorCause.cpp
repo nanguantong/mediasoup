@@ -4,6 +4,7 @@
 #include "RTC/SCTP/packet/errorCauses/NoUserDataErrorCause.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
+#include <string>
 
 namespace RTC
 {
@@ -130,6 +131,13 @@ namespace RTC
 			SoftCloneInto(softClonedErrorCause);
 
 			return softClonedErrorCause;
+		}
+
+		const std::string NoUserDataErrorCause::ContentToString() const
+		{
+			MS_TRACE();
+
+			return "tsn:[" + std::to_string(GetTsn()) + "]";
 		}
 	} // namespace SCTP
 } // namespace RTC

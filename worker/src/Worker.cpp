@@ -7,7 +7,9 @@
 #include "DepLibUring.hpp"
 #endif
 #include "DepLibUV.hpp"
+#ifndef MS_SCTP_STACK
 #include "DepUsrSCTP.hpp"
+#endif
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Settings.hpp"
@@ -40,8 +42,10 @@ Worker::Worker(::Channel::ChannelSocket* channel) : channel(channel)
 	}
 #endif
 
+#ifndef MS_SCTP_STACK
 	// Create the Checker instance in DepUsrSCTP.
 	DepUsrSCTP::CreateChecker();
+#endif
 
 #ifdef MS_LIBURING_SUPPORTED
 	if (DepLibUring::IsEnabled())
@@ -53,7 +57,7 @@ Worker::Worker(::Channel::ChannelSocket* channel) : channel(channel)
 
 	// Tell the Node process that we are running.
 	this->shared->channelNotifier->Emit(
-	  std::to_string(Logger::Pid), FBS::Notification::Event::WORKER_RUNNING);
+	  std::to_string(Logger::pid), FBS::Notification::Event::WORKER_RUNNING);
 
 	MS_DEBUG_DEV("starting libuv loop");
 	DepLibUV::RunLoop();
@@ -105,8 +109,10 @@ void Worker::Close()
 	// Delete the RTC::Shared singleton.
 	delete this->shared;
 
+#ifndef MS_SCTP_STACK
 	// Close the Checker instance in DepUsrSCTP.
 	DepUsrSCTP::CloseChecker();
+#endif
 
 #ifdef MS_LIBURING_SUPPORTED
 	if (DepLibUring::IsEnabled())
@@ -153,7 +159,7 @@ flatbuffers::Offset<FBS::Worker::DumpResponse> Worker::FillBuffer(
 	{
 		return FBS::Worker::CreateDumpResponseDirect(
 		  builder,
-		  Logger::Pid,
+		  Logger::pid,
 		  &webRtcServerIds,
 		  &routerIds,
 		  channelMessageHandlers,
@@ -162,11 +168,11 @@ flatbuffers::Offset<FBS::Worker::DumpResponse> Worker::FillBuffer(
 	else
 	{
 		return FBS::Worker::CreateDumpResponseDirect(
-		  builder, Logger::Pid, &webRtcServerIds, &routerIds, channelMessageHandlers);
+		  builder, Logger::pid, &webRtcServerIds, &routerIds, channelMessageHandlers);
 	}
 #else
 	return FBS::Worker::CreateDumpResponseDirect(
-	  builder, Logger::Pid, &webRtcServerIds, &routerIds, channelMessageHandlers);
+	  builder, Logger::pid, &webRtcServerIds, &routerIds, channelMessageHandlers);
 #endif
 }
 
@@ -283,22 +289,6 @@ void Worker::HandleRequest(Channel::ChannelRequest* request)
 
 	switch (request->method)
 	{
-		case Channel::ChannelRequest::Method::WORKER_CLOSE:
-		{
-			if (this->closed)
-			{
-				return;
-			}
-
-			MS_DEBUG_DEV("closing Worker");
-
-			request->Accept();
-
-			Close();
-
-			break;
-		}
-
 		case Channel::ChannelRequest::Method::WORKER_DUMP:
 		{
 			auto dumpOffset = FillBuffer(request->GetBufferBuilder());
@@ -356,7 +346,7 @@ void Worker::HandleRequest(Channel::ChannelRequest* request)
 
 		case Channel::ChannelRequest::Method::WORKER_WEBRTCSERVER_CLOSE:
 		{
-			RTC::WebRtcServer* webRtcServer{ nullptr };
+			const RTC::WebRtcServer* webRtcServer{ nullptr };
 
 			const auto* body = request->data->body_as<FBS::Worker::CloseWebRtcServerRequest>();
 
@@ -411,7 +401,7 @@ void Worker::HandleRequest(Channel::ChannelRequest* request)
 
 		case Channel::ChannelRequest::Method::WORKER_CLOSE_ROUTER:
 		{
-			RTC::Router* router{ nullptr };
+			const RTC::Router* router{ nullptr };
 
 			const auto* body = request->data->body_as<FBS::Worker::CloseRouterRequest>();
 
@@ -473,26 +463,46 @@ void Worker::HandleNotification(Channel::ChannelNotification* notification)
 
 	MS_DEBUG_DEV("Channel notification received [event:%s]", notification->eventCStr);
 
-	try
+	switch (notification->event)
 	{
-		auto* handler =
-		  this->shared->channelMessageRegistrator->GetChannelNotificationHandler(notification->handlerId);
-
-		if (handler == nullptr)
+		case Channel::ChannelNotification::Event::WORKER_CLOSE:
 		{
-			MS_THROW_ERROR(
-			  "Channel notification handler with ID %s not found", notification->handlerId.c_str());
+			if (this->closed)
+			{
+				return;
+			}
+
+			MS_DEBUG_DEV("closing Worker");
+
+			Close();
+
+			break;
 		}
 
-		handler->HandleNotification(notification);
-	}
-	catch (const MediaSoupTypeError& error)
-	{
-		MS_THROW_TYPE_ERROR("%s [event:%s]", error.what(), notification->eventCStr);
-	}
-	catch (const MediaSoupError& error)
-	{
-		MS_THROW_ERROR("%s [method:%s]", error.what(), notification->eventCStr);
+		default:
+		{
+			try
+			{
+				auto* handler = this->shared->channelMessageRegistrator->GetChannelNotificationHandler(
+				  notification->handlerId);
+
+				if (handler == nullptr)
+				{
+					MS_THROW_ERROR(
+					  "Channel notification handler with ID %s not found", notification->handlerId.c_str());
+				}
+
+				handler->HandleNotification(notification);
+			}
+			catch (const MediaSoupTypeError& error)
+			{
+				MS_THROW_TYPE_ERROR("%s [event:%s]", error.what(), notification->eventCStr);
+			}
+			catch (const MediaSoupError& error)
+			{
+				MS_THROW_ERROR("%s [event:%s]", error.what(), notification->eventCStr);
+			}
+		}
 	}
 }
 
@@ -547,9 +557,9 @@ RTC::WebRtcServer* Worker::OnRouterNeedWebRtcServer(RTC::Router* /*router*/, std
 {
 	MS_TRACE();
 
-	RTC::WebRtcServer* webRtcServer{ nullptr };
+	RTC::WebRtcServer* webRtcServer{ nullptr }; // NOLINT(misc-const-correctness)
 
-	auto it = this->mapWebRtcServers.find(webRtcServerId);
+	const auto it = this->mapWebRtcServers.find(webRtcServerId);
 
 	if (it != this->mapWebRtcServers.end())
 	{

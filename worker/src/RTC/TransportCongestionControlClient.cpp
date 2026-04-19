@@ -28,11 +28,13 @@ namespace RTC
 	  uint32_t initialAvailableBitrate,
 	  uint32_t maxOutgoingBitrate,
 	  uint32_t minOutgoingBitrate)
-	  : listener(listener), bweType(bweType),
+	  : listener(listener),
+	    bweType(bweType),
 	    initialAvailableBitrate(
 	      std::max<uint32_t>(
 	        initialAvailableBitrate, RTC::TransportCongestionControlMinOutgoingBitrate)),
-	    maxOutgoingBitrate(maxOutgoingBitrate), minOutgoingBitrate(minOutgoingBitrate)
+	    maxOutgoingBitrate(maxOutgoingBitrate),
+	    minOutgoingBitrate(minOutgoingBitrate)
 	{
 		MS_TRACE();
 
@@ -75,14 +77,12 @@ namespace RTC
 
 		this->processTimer = new TimerHandle(this);
 
-		// clang-format off
-		this->processTimer->Start(std::min(
-			// Depends on probation being done and WebRTC-Pacer-MinPacketLimitMs field trial.
-			this->rtpTransportControllerSend->packet_sender()->TimeUntilNextProcess(),
-			// Fixed value (25ms), libwebrtc/api/transport/goog_cc_factory.cc.
-			this->controllerFactory->GetProcessInterval().ms()
-		));
-		// clang-format on
+		this->processTimer->Start(
+		  std::min(
+		    // Depends on probation being done and WebRTC-Pacer-MinPacketLimitMs field trial.
+		    this->rtpTransportControllerSend->packet_sender()->TimeUntilNextProcess(),
+		    // Fixed value (25ms), libwebrtc/api/transport/goog_cc_factory.cc.
+		    this->controllerFactory->GetProcessInterval().ms()));
 	}
 
 	void TransportCongestionControlClient::DestroyController()
@@ -508,15 +508,10 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		// NOTE: The same value as 'this->initialAvailableBitrate' is received periodically
-		// regardless of the real available bitrate. Skip such value except for the first time
-		// this event is called.
-		// clang-format off
-		if (
-			this->availableBitrateEventCalled &&
-			targetTransferRate.target_rate.bps() == this->initialAvailableBitrate
-		)
-		// clang-format on
+		// NOTE: The same value as 'this->initialAvailableBitrate' is received
+		// periodically regardless of the real available bitrate. Skip such value
+		// except for the first time this event is called.
+		if (this->availableBitrateEventCalled && targetTransferRate.target_rate.bps() == this->initialAvailableBitrate)
 		{
 			return;
 		}
@@ -569,14 +564,12 @@ namespace RTC
 			// Time to call PacedSender::Process().
 			this->rtpTransportControllerSend->packet_sender()->Process();
 
-			/* clang-format off */
-			this->processTimer->Start(std::min<uint64_t>(
-				// Depends on probation being done and WebRTC-Pacer-MinPacketLimitMs field trial.
-				this->rtpTransportControllerSend->packet_sender()->TimeUntilNextProcess(),
-				// Fixed value (25ms), libwebrtc/api/transport/goog_cc_factory.cc.
-				this->controllerFactory->GetProcessInterval().ms()
-			));
-			/* clang-format on */
+			this->processTimer->Start(
+			  std::min<uint64_t>(
+			    // Depends on probation being done and WebRTC-Pacer-MinPacketLimitMs field trial.
+			    this->rtpTransportControllerSend->packet_sender()->TimeUntilNextProcess(),
+			    // Fixed value (25ms), libwebrtc/api/transport/goog_cc_factory.cc.
+			    this->controllerFactory->GetProcessInterval().ms()));
 
 			MayEmitAvailableBitrateEvent(this->bitrates.availableBitrate);
 		}

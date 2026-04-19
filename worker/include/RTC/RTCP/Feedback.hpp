@@ -13,7 +13,12 @@ namespace RTC
 		class FeedbackPacket : public Packet
 		{
 		public:
-			/* Struct for RTP Feedback message. */
+			/**
+			 * Struct for RTP Feedback message.
+			 *
+			 * @remarks
+			 * - This struct is guaranteed to be aligned to 4 bytes.
+			 */
 			struct Header
 			{
 				uint32_t senderSsrc;
@@ -24,10 +29,10 @@ namespace RTC
 			static const size_t HeaderSize{ 8 };
 			static RTCP::Type rtcpType;
 			static FeedbackPacket<T>* Parse(const uint8_t* data, size_t len);
-			static const std::string& MessageType2String(typename T::MessageType type);
+			static const std::string& MessageTypeToString(typename T::MessageType type);
 
 		private:
-			static absl::flat_hash_map<typename T::MessageType, std::string> type2String;
+			static const absl::flat_hash_map<typename T::MessageType, std::string> MessageType2String;
 
 		public:
 			typename T::MessageType GetMessageType() const

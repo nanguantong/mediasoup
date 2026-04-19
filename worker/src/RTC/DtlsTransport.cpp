@@ -13,7 +13,7 @@
 #include <cstring> // std::memcpy(), std::strcmp()
 
 // clang-format off
-// NOLINTNEXTLINE (cppcoreguidelines-macro-usage)
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define LOG_OPENSSL_ERROR(desc) \
 	do \
 	{ \
@@ -102,7 +102,6 @@ namespace RTC
 {
 	/* Static. */
 
-	// clang-format off
 	static constexpr int DtlsMtu{ 1350 };
 	static constexpr int SslReadBufferSize{ 65536 };
 	// AES-HMAC: http://tools.ietf.org/html/rfc3711
@@ -112,11 +111,12 @@ namespace RTC
 	// AES-GCM: http://tools.ietf.org/html/rfc7714
 	static constexpr size_t SrtpAesGcm256MasterKeyLength{ 32u };
 	static constexpr size_t SrtpAesGcm256MasterSaltLength{ 12u };
-	static constexpr size_t SrtpAesGcm256MasterLength{ SrtpAesGcm256MasterKeyLength + SrtpAesGcm256MasterSaltLength };
+	static constexpr size_t SrtpAesGcm256MasterLength{ SrtpAesGcm256MasterKeyLength +
+		                                                 SrtpAesGcm256MasterSaltLength };
 	static constexpr size_t SrtpAesGcm128MasterKeyLength{ 16u };
 	static constexpr size_t SrtpAesGcm128MasterSaltLength{ 12u };
-	static constexpr size_t SrtpAesGcm128MasterLength{ SrtpAesGcm128MasterKeyLength + SrtpAesGcm128MasterSaltLength };
-	// clang-format on
+	static constexpr size_t SrtpAesGcm128MasterLength{ SrtpAesGcm128MasterKeyLength +
+		                                                 SrtpAesGcm128MasterSaltLength };
 
 	/* Class variables. */
 
@@ -124,38 +124,34 @@ namespace RTC
 	thread_local EVP_PKEY* DtlsTransport::privateKey{ nullptr };
 	thread_local SSL_CTX* DtlsTransport::sslCtx{ nullptr };
 	thread_local uint8_t DtlsTransport::sslReadBuffer[SslReadBufferSize];
-	// clang-format off
-	absl::flat_hash_map<std::string, DtlsTransport::FingerprintAlgorithm> DtlsTransport::string2FingerprintAlgorithm =
-	{
-		{ "sha-1",   DtlsTransport::FingerprintAlgorithm::SHA1   },
-		{ "sha-224", DtlsTransport::FingerprintAlgorithm::SHA224 },
-		{ "sha-256", DtlsTransport::FingerprintAlgorithm::SHA256 },
-		{ "sha-384", DtlsTransport::FingerprintAlgorithm::SHA384 },
-		{ "sha-512", DtlsTransport::FingerprintAlgorithm::SHA512 }
-	};
-	absl::flat_hash_map<DtlsTransport::FingerprintAlgorithm, std::string> DtlsTransport::fingerprintAlgorithm2String =
-	{
-		{ DtlsTransport::FingerprintAlgorithm::SHA1,   "sha-1"   },
-		{ DtlsTransport::FingerprintAlgorithm::SHA224, "sha-224" },
-		{ DtlsTransport::FingerprintAlgorithm::SHA256, "sha-256" },
-		{ DtlsTransport::FingerprintAlgorithm::SHA384, "sha-384" },
-		{ DtlsTransport::FingerprintAlgorithm::SHA512, "sha-512" }
-	};
-	absl::flat_hash_map<std::string, DtlsTransport::Role> DtlsTransport::string2Role =
-	{
+	const absl::flat_hash_map<std::string, DtlsTransport::FingerprintAlgorithm>
+	  DtlsTransport::String2FingerprintAlgorithm = {
+		  { "sha-1",   DtlsTransport::FingerprintAlgorithm::SHA1   },
+		  { "sha-224", DtlsTransport::FingerprintAlgorithm::SHA224 },
+		  { "sha-256", DtlsTransport::FingerprintAlgorithm::SHA256 },
+		  { "sha-384", DtlsTransport::FingerprintAlgorithm::SHA384 },
+		  { "sha-512", DtlsTransport::FingerprintAlgorithm::SHA512 }
+  };
+	const absl::flat_hash_map<DtlsTransport::FingerprintAlgorithm, std::string>
+	  DtlsTransport::FingerprintAlgorithm2String = {
+		  { DtlsTransport::FingerprintAlgorithm::SHA1,   "sha-1"   },
+		  { DtlsTransport::FingerprintAlgorithm::SHA224, "sha-224" },
+		  { DtlsTransport::FingerprintAlgorithm::SHA256, "sha-256" },
+		  { DtlsTransport::FingerprintAlgorithm::SHA384, "sha-384" },
+		  { DtlsTransport::FingerprintAlgorithm::SHA512, "sha-512" }
+  };
+	const absl::flat_hash_map<std::string, DtlsTransport::Role> DtlsTransport::String2Role = {
 		{ "auto",   DtlsTransport::Role::AUTO   },
 		{ "client", DtlsTransport::Role::CLIENT },
 		{ "server", DtlsTransport::Role::SERVER }
 	};
 	thread_local std::vector<DtlsTransport::Fingerprint> DtlsTransport::localFingerprints;
-	std::vector<DtlsTransport::SrtpCryptoSuiteMapEntry> DtlsTransport::srtpCryptoSuites =
-	{
+	const std::vector<DtlsTransport::SrtpCryptoSuiteMapEntry> DtlsTransport::SrtpCryptoSuites = {
 		{ RTC::SrtpSession::CryptoSuite::AEAD_AES_256_GCM,        "SRTP_AEAD_AES_256_GCM"  },
 		{ RTC::SrtpSession::CryptoSuite::AEAD_AES_128_GCM,        "SRTP_AEAD_AES_128_GCM"  },
 		{ RTC::SrtpSession::CryptoSuite::AES_CM_128_HMAC_SHA1_80, "SRTP_AES128_CM_SHA1_80" },
 		{ RTC::SrtpSession::CryptoSuite::AES_CM_128_HMAC_SHA1_32, "SRTP_AES128_CM_SHA1_32" }
 	};
-	// clang-format on
 
 	/* Class methods. */
 
@@ -356,10 +352,11 @@ namespace RTC
 		int ret{ 0 };
 		X509_NAME* certName{ nullptr };
 		const std::string subject =
-		  std::string("mediasoup") + std::to_string(Utils::Crypto::GetRandomUInt(100000, 999999));
+		  std::string("mediasoup") +
+		  std::to_string(Utils::Crypto::GetRandomUInt<uint32_t>(100000, 999999));
 
 		// Create key with curve.
-		// NOLINTNEXTLINE (cppcoreguidelines-pro-type-cstyle-cast)
+		// NOLINTNEXTLINE(cppcoreguidelines-pro-type-cstyle-cast)
 		DtlsTransport::privateKey = EVP_EC_gen(SN_X9_62_prime256v1);
 
 		if (!DtlsTransport::privateKey)
@@ -385,7 +382,7 @@ namespace RTC
 		// Set serial number (avoid default 0).
 		ASN1_INTEGER_set(
 		  X509_get_serialNumber(DtlsTransport::certificate),
-		  static_cast<uint64_t>(Utils::Crypto::GetRandomUInt(1000000, 9999999)));
+		  Utils::Crypto::GetRandomUInt<uint64_t>(1000000, 9999999));
 
 		// Set valid period.
 		X509_gmtime_adj(X509_get_notBefore(DtlsTransport::certificate), -315360000); // -10 years.
@@ -588,20 +585,22 @@ namespace RTC
 		// not call SSL_CTX_set_ecdh_auto() or similar APIs anymore."
 
 		// Set the "use_srtp" DTLS extension.
-		for (auto it = DtlsTransport::srtpCryptoSuites.begin();
-		     it != DtlsTransport::srtpCryptoSuites.end();
+		for (auto it = DtlsTransport::SrtpCryptoSuites.begin();
+		     it != DtlsTransport::SrtpCryptoSuites.end();
 		     ++it)
 		{
-			if (it != DtlsTransport::srtpCryptoSuites.begin())
+			if (it != DtlsTransport::SrtpCryptoSuites.begin())
 			{
 				dtlsSrtpCryptoSuites += ":";
 			}
 
-			SrtpCryptoSuiteMapEntry* cryptoSuiteEntry = std::addressof(*it);
+			const SrtpCryptoSuiteMapEntry* cryptoSuiteEntry = std::addressof(*it);
+
 			dtlsSrtpCryptoSuites += cryptoSuiteEntry->name;
 		}
 
-		MS_DEBUG_2TAGS(dtls, srtp, "setting SRTP cryptoSuites for DTLS: %s", dtlsSrtpCryptoSuites.c_str());
+		MS_DEBUG_2TAGS(
+		  dtls, srtp, "setting SRTP crypto suites for DTLS: %s", dtlsSrtpCryptoSuites.c_str());
 
 		// NOTE: This function returns 0 on success.
 		ret = SSL_CTX_set_tlsext_use_srtp(DtlsTransport::sslCtx, dtlsSrtpCryptoSuites.c_str());
@@ -632,7 +631,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		for (auto& kv : DtlsTransport::string2FingerprintAlgorithm)
+		for (const auto& kv : DtlsTransport::String2FingerprintAlgorithm)
 		{
 			const std::string& algorithmString   = kv.first;
 			const FingerprintAlgorithm algorithm = kv.second;
@@ -680,7 +679,8 @@ namespace RTC
 				}
 			}
 
-			ret = X509_digest(DtlsTransport::certificate, hashFunction, binaryFingerprint, &size);
+			ret = X509_digest(
+			  DtlsTransport::certificate, hashFunction, binaryFingerprint, std::addressof(size));
 
 			if (ret == 0 || size == 0)
 			{
@@ -1018,11 +1018,11 @@ namespace RTC
 
 			// Notify the listener.
 			this->listener->OnDtlsTransportApplicationDataReceived(
-			  this, (uint8_t*)DtlsTransport::sslReadBuffer, static_cast<size_t>(read));
+			  this, static_cast<const uint8_t*>(DtlsTransport::sslReadBuffer), static_cast<size_t>(read));
 		}
 	}
 
-	void DtlsTransport::SendApplicationData(const uint8_t* data, size_t len)
+	bool DtlsTransport::SendApplicationData(const uint8_t* data, size_t len)
 	{
 		MS_TRACE();
 
@@ -1032,19 +1032,17 @@ namespace RTC
 		{
 			MS_WARN_TAG(dtls, "cannot send application data while DTLS is not fully connected");
 
-			return;
+			return false;
 		}
 
 		if (len == 0)
 		{
 			MS_WARN_TAG(dtls, "ignoring 0 length data");
 
-			return;
+			return false;
 		}
 
-		int written;
-
-		written = SSL_write(this->ssl, static_cast<const void*>(data), static_cast<int>(len));
+		const int written = SSL_write(this->ssl, static_cast<const void*>(data), static_cast<int>(len));
 
 		if (written < 0)
 		{
@@ -1052,14 +1050,18 @@ namespace RTC
 
 			if (!CheckStatus(written))
 			{
-				return;
+				return false;
 			}
 		}
 		else if (written != static_cast<int>(len))
 		{
 			MS_WARN_TAG(
 			  dtls, "OpenSSL SSL_write() wrote less (%d bytes) than given data (%zu bytes)", written, len);
+
+			return false;
 		}
+
+		return true;
 	}
 
 	/**
@@ -1131,8 +1133,7 @@ namespace RTC
 		MS_TRACE();
 
 		const bool wasHandshakeDone = this->handshakeDone;
-
-		const int err = SSL_get_error(this->ssl, returnCode);
+		const int err               = SSL_get_error(this->ssl, returnCode);
 
 		switch (err)
 		{
@@ -1242,7 +1243,7 @@ namespace RTC
 		}
 	}
 
-	// NOLINTNEXTLINE (misc-no-recursion)
+	// NOLINTNEXTLINE(misc-no-recursion)
 	bool DtlsTransport::SetTimeout()
 	{
 		MS_TRACE();
@@ -1258,7 +1259,7 @@ namespace RTC
 		// DTLSv1_get_timeout queries the next DTLS handshake timeout. If there is
 		// a timeout in progress, it sets *out to the time remaining and returns
 		// one. Otherwise, it returns zero.
-		DTLSv1_get_timeout(this->ssl, static_cast<void*>(&dtlsTimeout)); // NOLINT
+		DTLSv1_get_timeout(this->ssl, static_cast<void*>(std::addressof(dtlsTimeout)));
 
 		timeoutMs = (dtlsTimeout.tv_sec * static_cast<uint64_t>(1000)) + (dtlsTimeout.tv_usec / 1000);
 
@@ -1394,7 +1395,7 @@ namespace RTC
 		}
 
 		// Compare the remote fingerprint with the value given via signaling.
-		ret = X509_digest(certificate, hashFunction, binaryFingerprint, &size);
+		ret = X509_digest(certificate, hashFunction, binaryFingerprint, std::addressof(size));
 
 		if (ret == 0 || size == 0)
 		{
@@ -1450,7 +1451,7 @@ namespace RTC
 
 		BUF_MEM* mem;
 
-		BIO_get_mem_ptr(bio, &mem); // NOLINT[cppcoreguidelines-pro-type-cstyle-cast]
+		BIO_get_mem_ptr(bio, std::addressof(mem));
 
 		if (!mem || !mem->data || mem->length == 0u)
 		{
@@ -1591,9 +1592,9 @@ namespace RTC
 		}
 
 		// Get the negotiated SRTP crypto suite.
-		for (auto& srtpCryptoSuite : DtlsTransport::srtpCryptoSuites)
+		for (const auto& srtpCryptoSuite : DtlsTransport::SrtpCryptoSuites)
 		{
-			SrtpCryptoSuiteMapEntry* cryptoSuiteEntry = std::addressof(srtpCryptoSuite);
+			const SrtpCryptoSuiteMapEntry* cryptoSuiteEntry = std::addressof(srtpCryptoSuite);
 
 			if (std::strcmp(sslSrtpCryptoSuite->name, cryptoSuiteEntry->name) == 0)
 			{
@@ -1697,7 +1698,7 @@ namespace RTC
 		// callback).
 	}
 
-	// NOLINTNEXTLINE (misc-no-recursion)
+	// NOLINTNEXTLINE(misc-no-recursion)
 	void DtlsTransport::OnTimer(TimerHandle* /*timer*/)
 	{
 		MS_TRACE();

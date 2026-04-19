@@ -3,7 +3,13 @@ name: mediasoup-worker-fuzzer
 on:
   push:
     branches: [v3]
+    paths:
+      - 'worker/**'
+      - '.github/workflows/mediasoup-worker-fuzzer.yaml'
   pull_request:
+    paths:
+      - 'worker/**'
+      - '.github/workflows/mediasoup-worker-fuzzer.yaml'
   workflow_dispatch:
 
 concurrency:
@@ -31,6 +37,8 @@ jobs:
 
     runs-on: ${{ matrix.build.os }}
 
+    timeout-minutes: 60
+
     env:
       CC: ${{ matrix.build.cc }}
       CXX: ${{ matrix.build.cxx }}
@@ -40,7 +48,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # We need to install pip invoke manually.
       - if: ${{ !matrix.build.pip-break-system-packages }}

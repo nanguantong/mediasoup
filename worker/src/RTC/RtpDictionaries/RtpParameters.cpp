@@ -11,7 +11,8 @@ namespace RTC
 {
 	/* Class variables. */
 
-	absl::flat_hash_map<RtpParameters::Type, std::string> RtpParameters::type2String = {
+	// clang-format off
+	const absl::flat_hash_map<RtpParameters::Type, std::string> RtpParameters::Type2String = {
 		{ RtpParameters::Type::SIMPLE, "simple" },
 		{ RtpParameters::Type::SIMULCAST, "simulcast" },
 		{ RtpParameters::Type::SVC, "svc" },
@@ -35,13 +36,13 @@ namespace RTC
 
 			if (encoding.spatialLayers > 1 || encoding.temporalLayers > 1)
 			{
-				if (RTC::RTP::Codecs::Tools::IsValidTypeForCodec(
-				      RtpParameters::Type::SVC, mediaCodec->mimeType))
+				if (RTC::RTP::Codecs::Tools::IsValidTypeForCodec(RtpParameters::Type::SVC, mediaCodec->mimeType))
 				{
 					type.emplace(RtpParameters::Type::SVC);
 				}
-				else if (RTC::RTP::Codecs::Tools::IsValidTypeForCodec(
-				           RtpParameters::Type::SIMULCAST, mediaCodec->mimeType))
+				else if (
+				  RTC::RTP::Codecs::Tools::IsValidTypeForCodec(
+				    RtpParameters::Type::SIMULCAST, mediaCodec->mimeType))
 				{
 					type.emplace(RtpParameters::Type::SIMULCAST);
 				}
@@ -59,11 +60,11 @@ namespace RTC
 		return type;
 	}
 
-	std::string& RtpParameters::GetTypeString(RtpParameters::Type type)
+	const std::string& RtpParameters::GetTypeString(RtpParameters::Type type)
 	{
 		MS_TRACE();
 
-		return RtpParameters::type2String.at(type);
+		return RtpParameters::Type2String.at(type);
 	}
 
 	FBS::RtpParameters::Type RtpParameters::TypeToFbs(RtpParameters::Type type)

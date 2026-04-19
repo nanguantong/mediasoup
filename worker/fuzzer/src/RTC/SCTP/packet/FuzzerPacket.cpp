@@ -1,12 +1,12 @@
 #include "RTC/SCTP/packet/FuzzerPacket.hpp"
 #include "RTC/SCTP/packet/Packet.hpp"
 
-thread_local static uint8_t PacketSerializeBuffer[65536];
-thread_local static uint8_t PacketCloneBuffer[65536];
+thread_local uint8_t PacketSerializeBuffer[65536];
+thread_local uint8_t PacketCloneBuffer[65536];
 
-void Fuzzer::RTC::SCTP::Packet::Fuzz(const uint8_t* data, size_t len)
+void FuzzerRtcSctpPacket::Fuzz(const uint8_t* data, size_t len)
 {
-	::RTC::SCTP::Packet* packet = ::RTC::SCTP::Packet::Parse(data, len);
+	RTC::SCTP::Packet* packet = RTC::SCTP::Packet::Parse(data, len);
 
 	if (!packet)
 	{
@@ -36,7 +36,7 @@ void Fuzzer::RTC::SCTP::Packet::Fuzz(const uint8_t* data, size_t len)
 	packet->GetChecksum();
 	packet->ValidateCRC32cChecksum();
 	packet->SetChecksum(999999);
-	packet->SetCRC32cChecksum();
+	packet->WriteCRC32cChecksum();
 	packet->ValidateCRC32cChecksum();
 	packet->HasChunks();
 	packet->GetChunksCount();
@@ -58,7 +58,7 @@ void Fuzzer::RTC::SCTP::Packet::Fuzz(const uint8_t* data, size_t len)
 	clonedPacket->GetChecksum();
 	clonedPacket->ValidateCRC32cChecksum();
 	clonedPacket->SetChecksum(999999);
-	clonedPacket->SetCRC32cChecksum();
+	clonedPacket->WriteCRC32cChecksum();
 	clonedPacket->ValidateCRC32cChecksum();
 	clonedPacket->HasChunks();
 	clonedPacket->GetChunksCount();

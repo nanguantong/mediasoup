@@ -4,7 +4,6 @@
 #include "common.hpp"
 #include "Utils.hpp"
 #include "RTC/Serializable.hpp"
-#include <cstdint>
 #include <string_view>
 #include <unordered_map>
 
@@ -81,7 +80,8 @@ namespace RTC
 				REQUEST          = 0,
 				INDICATION       = 1,
 				SUCCESS_RESPONSE = 2,
-				ERROR_RESPONSE   = 3
+				ERROR_RESPONSE   = 3,
+				UNSET            = 255
 			};
 
 			/**
@@ -89,7 +89,8 @@ namespace RTC
 			 */
 			enum class Method : uint16_t
 			{
-				BINDING = 1
+				BINDING = 1,
+				UNSET   = 255
 			};
 
 			/**
@@ -124,6 +125,12 @@ namespace RTC
 			};
 
 		private:
+			/**
+			 * @remarks
+			 * - This struct is NOT guaranteed to be aligned to any fixed number of
+			 *   bytes because it contains a `size_t`, which is 4 or 8 bytes depending
+			 *   on the architecture. Anyway we never cast any buffer to this struct.
+			 */
 			struct Attribute
 			{
 				Attribute(AttributeType type, uint16_t len, size_t offset)
@@ -328,7 +335,7 @@ namespace RTC
 
 				const uint8_t errorClass  = Utils::Byte::Get1Byte(attributeValue, 2) & 0b00000111;
 				const uint8_t errorNumber = Utils::Byte::Get1Byte(attributeValue, 3);
-				auto errorCode            = static_cast<uint16_t>((errorClass * 100) + errorNumber);
+				const auto errorCode      = static_cast<uint16_t>((errorClass * 100) + errorNumber);
 
 				// Reason Phrase comes after the first 4 bytes (it could be zero
 				// length).
@@ -475,7 +482,7 @@ namespace RTC
 
 			const StunPacket::Attribute* GetAttribute(StunPacket::AttributeType type) const
 			{
-				auto it = this->attributes.find(type);
+				const auto it = this->attributes.find(type);
 
 				if (it != this->attributes.end())
 				{
@@ -523,8 +530,8 @@ namespace RTC
 			void AssertNotProtected() const;
 
 		private:
-			StunPacket::Class klass;
-			StunPacket::Method method;
+			StunPacket::Class klass{ StunPacket::Class::UNSET };
+			StunPacket::Method method{ StunPacket::Method::UNSET };
 			// Map of STUN Attributes indexed by Attribute type.
 			std::unordered_map<StunPacket::AttributeType, StunPacket::Attribute> attributes;
 		};

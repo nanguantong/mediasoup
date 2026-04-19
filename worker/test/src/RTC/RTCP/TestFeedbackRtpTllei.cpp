@@ -3,14 +3,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memcmp()
 
-using namespace RTC::RTCP;
-
-namespace TestFeedbackRtpTllei
+SCENARIO("RTCP Feedback RTP TLLEI", "[rtcp][feedback-rtp][tllei]")
 {
 	// RTCP TLLEI packet.
 
 	// clang-format off
-	uint8_t buffer[] =
+	alignas(4) uint8_t buffer[] =
 	{
 		0x87, 0xcd, 0x00, 0x03, // Type: 205 (Generic RTP Feedback), Count: 7 (TLLEI) Length: 3
 		0x00, 0x00, 0x00, 0x01, // Sender SSRC: 0x00000001
@@ -20,33 +18,35 @@ namespace TestFeedbackRtpTllei
 	// clang-format on
 
 	// TLLEI values.
-	uint32_t senderSsrc{ 0x00000001 };
-	uint32_t mediaSsrc{ 0x0330bdee };
-	uint16_t packetId{ 1 };
-	uint16_t lostPacketBitmask{ 0b1010101001010101 };
+	const uint32_t senderSsrc{ 0x00000001 };
+	const uint32_t mediaSsrc{ 0x0330bdee };
+	const uint16_t packetId{ 1 };
+	const uint16_t lostPacketBitmask{ 0b1010101001010101 };
 
-	void verify(FeedbackRtpTlleiPacket* packet)
+	// NOTE: No need to pass const integers to the lambda.
+	auto verify = [](RTC::RTCP::FeedbackRtpTlleiPacket* packet)
 	{
 		REQUIRE(packet->GetSenderSsrc() == senderSsrc);
 		REQUIRE(packet->GetMediaSsrc() == mediaSsrc);
 
-		auto it   = packet->Begin();
-		auto item = *it;
+		auto it          = packet->Begin();
+		const auto* item = *it;
 
 		REQUIRE(item);
 		REQUIRE(item->GetPacketId() == packetId);
 		REQUIRE(item->GetLostPacketBitmask() == lostPacketBitmask);
-	}
-} // namespace TestFeedbackRtpTllei
+	};
 
-SCENARIO("RTCP Feeback RTP TLLEI parsing", "[parser][rtcp][feedback-rtp][tllei]")
-{
-	SECTION("parse FeedbackRtpTlleiPacket")
+	SECTION("alignof() RTCP structs")
 	{
-		using namespace TestFeedbackRtpTllei;
+		REQUIRE(alignof(RTC::RTCP::FeedbackRtpTlleiItem::Header) == 2);
+	}
 
-		std::unique_ptr<FeedbackRtpTlleiPacket> packet{ FeedbackRtpTlleiPacket::Parse(
-			buffer, sizeof(buffer)) };
+	SECTION("parse RTC::RTCP::FeedbackRtpTlleiPacket")
+	{
+		std::unique_ptr<RTC::RTCP::FeedbackRtpTlleiPacket> packet{
+			RTC::RTCP::FeedbackRtpTlleiPacket::Parse(buffer, sizeof(buffer))
+		};
 
 		REQUIRE(packet);
 
@@ -54,7 +54,7 @@ SCENARIO("RTCP Feeback RTP TLLEI parsing", "[parser][rtcp][feedback-rtp][tllei]"
 
 		SECTION("serialize packet instance")
 		{
-			uint8_t serialized[sizeof(buffer)] = { 0 };
+			alignas(4) uint8_t serialized[sizeof(buffer)] = { 0 };
 
 			packet->Serialize(serialized);
 

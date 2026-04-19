@@ -1,19 +1,21 @@
 #include "common.hpp"
 #include "MediaSoupErrors.hpp"
 #include "RTC/SCTP/packet/Chunk.hpp"
+#include "RTC/SCTP/packet/chunks/AnyForwardTsnChunk.hpp"
 #include "RTC/SCTP/packet/chunks/IForwardTsnChunk.hpp"
-#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
+#include "RTC/SCTP/sctpCommon.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
+#include <vector>
 
-SCENARIO("I-Forward Cumulative TSN Chunk (194)", "[sctp][serializable]")
+SCENARIO("I-Forward Cumulative TSN Chunk (194)", "[serializable][sctp][chunk]")
 {
-	ResetBuffers();
+	sctpCommon::ResetBuffers();
 
 	SECTION("IForwardTsnChunk::Parse() succeeds")
 	{
 		// clang-format off
-		uint8_t buffer[] =
+		alignas(4) uint8_t buffer[] =
 		{
 			// Type:194 (I_FORWARD_TSN), Flags: 0b00000000, Length: 32
 			0xC2, 0b00000000, 0x00, 0x20,
@@ -37,16 +39,16 @@ SCENARIO("I-Forward Cumulative TSN Chunk (194)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		auto* chunk = IForwardTsnChunk::Parse(buffer, sizeof(buffer));
+		auto* chunk = RTC::SCTP::IForwardTsnChunk::Parse(buffer, sizeof(buffer));
 
 		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 32,
-		  /*chunkType*/ Chunk::ChunkType::I_FORWARD_TSN,
+		  /*chunkType*/ RTC::SCTP::Chunk::ChunkType::I_FORWARD_TSN,
 		  /*unknownType*/ false,
-		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
+		  /*actionForUnknownChunkType*/ RTC::SCTP::Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
 		  /*flags*/ 0b00000000,
 		  /*canHaveParameters*/ false,
 		  /*parametersCount*/ 0,
@@ -54,31 +56,30 @@ SCENARIO("I-Forward Cumulative TSN Chunk (194)", "[sctp][serializable]")
 		  /*errorCausesCount*/ 0);
 
 		REQUIRE(chunk->GetNewCumulativeTsn() == 287454020);
-		REQUIRE(chunk->GetNumberOfStreams() == 3);
-		REQUIRE(chunk->GetStreamAt(0) == 4097);
-		REQUIRE(chunk->GetUFlagAt(0) == true);
-		REQUIRE(chunk->GetMessageIdentifierAt(0) == 285212689);
-		REQUIRE(chunk->GetStreamAt(1) == 8194);
-		REQUIRE(chunk->GetUFlagAt(1) == false);
-		REQUIRE(chunk->GetMessageIdentifierAt(1) == 570425378);
-		REQUIRE(chunk->GetStreamAt(2) == 12291);
-		REQUIRE(chunk->GetUFlagAt(2) == true);
-		REQUIRE(chunk->GetMessageIdentifierAt(2) == 855638067);
+		REQUIRE(chunk->GetNumberOfSkippedStreams() == 3);
+
+		const std::vector<RTC::SCTP::AnyForwardTsnChunk::SkippedStream> expectedSkippedStreams{
+			{ 4097,  true,  285212689 },
+			{ 8194,  false, 570425378 },
+			{ 12291, true,  855638067 },
+		};
+
+		REQUIRE(chunk->GetSkippedStreams() == expectedSkippedStreams);
 
 		/* Serialize it. */
 
-		chunk->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		chunk->Serialize(sctpCommon::SerializeBuffer, sizeof(sctpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ sctpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::SerializeBuffer),
 		  /*length*/ 32,
-		  /*chunkType*/ Chunk::ChunkType::I_FORWARD_TSN,
+		  /*chunkType*/ RTC::SCTP::Chunk::ChunkType::I_FORWARD_TSN,
 		  /*unknownType*/ false,
-		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
+		  /*actionForUnknownChunkType*/ RTC::SCTP::Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
 		  /*flags*/ 0b00000000,
 		  /*canHaveParameters*/ false,
 		  /*parametersCount*/ 0,
@@ -86,33 +87,25 @@ SCENARIO("I-Forward Cumulative TSN Chunk (194)", "[sctp][serializable]")
 		  /*errorCausesCount*/ 0);
 
 		REQUIRE(chunk->GetNewCumulativeTsn() == 287454020);
-		REQUIRE(chunk->GetNumberOfStreams() == 3);
-		REQUIRE(chunk->GetStreamAt(0) == 4097);
-		REQUIRE(chunk->GetUFlagAt(0) == true);
-		REQUIRE(chunk->GetMessageIdentifierAt(0) == 285212689);
-		REQUIRE(chunk->GetStreamAt(1) == 8194);
-		REQUIRE(chunk->GetUFlagAt(1) == false);
-		REQUIRE(chunk->GetMessageIdentifierAt(1) == 570425378);
-		REQUIRE(chunk->GetStreamAt(2) == 12291);
-		REQUIRE(chunk->GetUFlagAt(2) == true);
-		REQUIRE(chunk->GetMessageIdentifierAt(2) == 855638067);
+		REQUIRE(chunk->GetNumberOfSkippedStreams() == 3);
+		REQUIRE(chunk->GetSkippedStreams() == expectedSkippedStreams);
 
 		/* Clone it. */
 
-		auto* clonedChunk = chunk->Clone(CloneBuffer, sizeof(CloneBuffer));
+		auto* clonedChunk = chunk->Clone(sctpCommon::CloneBuffer, sizeof(sctpCommon::CloneBuffer));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(sctpCommon::SerializeBuffer, 0x00, sizeof(sctpCommon::SerializeBuffer));
 
 		delete chunk;
 
 		CHECK_SCTP_CHUNK(
 		  /*chunk*/ clonedChunk,
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ sctpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::CloneBuffer),
 		  /*length*/ 32,
-		  /*chunkType*/ Chunk::ChunkType::I_FORWARD_TSN,
+		  /*chunkType*/ RTC::SCTP::Chunk::ChunkType::I_FORWARD_TSN,
 		  /*unknownType*/ false,
-		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
+		  /*actionForUnknownChunkType*/ RTC::SCTP::Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
 		  /*flags*/ 0b00000000,
 		  /*canHaveParameters*/ false,
 		  /*parametersCount*/ 0,
@@ -120,16 +113,8 @@ SCENARIO("I-Forward Cumulative TSN Chunk (194)", "[sctp][serializable]")
 		  /*errorCausesCount*/ 0);
 
 		REQUIRE(clonedChunk->GetNewCumulativeTsn() == 287454020);
-		REQUIRE(clonedChunk->GetNumberOfStreams() == 3);
-		REQUIRE(clonedChunk->GetStreamAt(0) == 4097);
-		REQUIRE(clonedChunk->GetUFlagAt(0) == true);
-		REQUIRE(clonedChunk->GetMessageIdentifierAt(0) == 285212689);
-		REQUIRE(clonedChunk->GetStreamAt(1) == 8194);
-		REQUIRE(clonedChunk->GetUFlagAt(1) == false);
-		REQUIRE(clonedChunk->GetMessageIdentifierAt(1) == 570425378);
-		REQUIRE(clonedChunk->GetStreamAt(2) == 12291);
-		REQUIRE(clonedChunk->GetUFlagAt(2) == true);
-		REQUIRE(clonedChunk->GetMessageIdentifierAt(2) == 855638067);
+		REQUIRE(clonedChunk->GetNumberOfSkippedStreams() == 3);
+		REQUIRE(clonedChunk->GetSkippedStreams() == expectedSkippedStreams);
 
 		delete clonedChunk;
 	}
@@ -138,7 +123,7 @@ SCENARIO("I-Forward Cumulative TSN Chunk (194)", "[sctp][serializable]")
 	{
 		// Length field is not multiple of 8.
 		// clang-format off
-		uint8_t buffer1[] =
+		alignas(4) uint8_t buffer1[] =
 		{
 			// Type:194 (I_FORWARD_TSN), Flags: 0b00000000, Length: 20 (should be 24)
 			0xC2, 0b00000000, 0x00, 0x14,
@@ -155,21 +140,22 @@ SCENARIO("I-Forward Cumulative TSN Chunk (194)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!IForwardTsnChunk::Parse(buffer1, sizeof(buffer1)));
+		REQUIRE(!RTC::SCTP::IForwardTsnChunk::Parse(buffer1, sizeof(buffer1)));
 	}
 
 	SECTION("IForwardTsnChunk::Factory() succeeds")
 	{
-		auto* chunk = IForwardTsnChunk::Factory(FactoryBuffer, sizeof(FactoryBuffer));
+		auto* chunk = RTC::SCTP::IForwardTsnChunk::Factory(
+		  sctpCommon::FactoryBuffer, sizeof(sctpCommon::FactoryBuffer));
 
 		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
+		  /*buffer*/ sctpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::FactoryBuffer),
 		  /*length*/ 8,
-		  /*chunkType*/ Chunk::ChunkType::I_FORWARD_TSN,
+		  /*chunkType*/ RTC::SCTP::Chunk::ChunkType::I_FORWARD_TSN,
 		  /*unknownType*/ false,
-		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
+		  /*actionForUnknownChunkType*/ RTC::SCTP::Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
 		  /*flags*/ 0b00000000,
 		  /*canHaveParameters*/ false,
 		  /*parametersCount*/ 0,
@@ -177,7 +163,11 @@ SCENARIO("I-Forward Cumulative TSN Chunk (194)", "[sctp][serializable]")
 		  /*errorCausesCount*/ 0);
 
 		REQUIRE(chunk->GetNewCumulativeTsn() == 0);
-		REQUIRE(chunk->GetNumberOfStreams() == 0);
+		REQUIRE(chunk->GetNumberOfSkippedStreams() == 0);
+
+		std::vector<RTC::SCTP::AnyForwardTsnChunk::SkippedStream> expectedSkippedStreams{};
+
+		REQUIRE(chunk->GetSkippedStreams() == expectedSkippedStreams);
 
 		/* Modify it. */
 
@@ -188,12 +178,12 @@ SCENARIO("I-Forward Cumulative TSN Chunk (194)", "[sctp][serializable]")
 
 		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
+		  /*buffer*/ sctpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::FactoryBuffer),
 		  /*length*/ 32,
-		  /*chunkType*/ Chunk::ChunkType::I_FORWARD_TSN,
+		  /*chunkType*/ RTC::SCTP::Chunk::ChunkType::I_FORWARD_TSN,
 		  /*unknownType*/ false,
-		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
+		  /*actionForUnknownChunkType*/ RTC::SCTP::Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
 		  /*flags*/ 0b00000000,
 		  /*canHaveParameters*/ false,
 		  /*parametersCount*/ 0,
@@ -201,31 +191,30 @@ SCENARIO("I-Forward Cumulative TSN Chunk (194)", "[sctp][serializable]")
 		  /*errorCausesCount*/ 0);
 
 		REQUIRE(chunk->GetNewCumulativeTsn() == 12345678);
-		REQUIRE(chunk->GetNumberOfStreams() == 3);
-		REQUIRE(chunk->GetStreamAt(0) == 1111);
-		REQUIRE(chunk->GetUFlagAt(0) == true);
-		REQUIRE(chunk->GetMessageIdentifierAt(0) == 11110001);
-		REQUIRE(chunk->GetStreamAt(1) == 2222);
-		REQUIRE(chunk->GetUFlagAt(1) == false);
-		REQUIRE(chunk->GetMessageIdentifierAt(1) == 22220002);
-		REQUIRE(chunk->GetStreamAt(2) == 3333);
-		REQUIRE(chunk->GetUFlagAt(2) == true);
-		REQUIRE(chunk->GetMessageIdentifierAt(2) == 33330003);
+		REQUIRE(chunk->GetNumberOfSkippedStreams() == 3);
+
+		expectedSkippedStreams = {
+			{ 1111, true,  11110001 },
+			{ 2222, false, 22220002 },
+			{ 3333, true,  33330003 },
+		};
+
+		REQUIRE(chunk->GetSkippedStreams() == expectedSkippedStreams);
 
 		/* Parse itself and compare. */
 
-		auto* parsedChunk = IForwardTsnChunk::Parse(chunk->GetBuffer(), chunk->GetLength());
+		auto* parsedChunk = RTC::SCTP::IForwardTsnChunk::Parse(chunk->GetBuffer(), chunk->GetLength());
 
 		delete chunk;
 
 		CHECK_SCTP_CHUNK(
 		  /*chunk*/ parsedChunk,
-		  /*buffer*/ FactoryBuffer,
+		  /*buffer*/ sctpCommon::FactoryBuffer,
 		  /*bufferLength*/ 32,
 		  /*length*/ 32,
-		  /*chunkType*/ Chunk::ChunkType::I_FORWARD_TSN,
+		  /*chunkType*/ RTC::SCTP::Chunk::ChunkType::I_FORWARD_TSN,
 		  /*unknownType*/ false,
-		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
+		  /*actionForUnknownChunkType*/ RTC::SCTP::Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT,
 		  /*flags*/ 0b00000000,
 		  /*canHaveParameters*/ false,
 		  /*parametersCount*/ 0,
@@ -233,16 +222,8 @@ SCENARIO("I-Forward Cumulative TSN Chunk (194)", "[sctp][serializable]")
 		  /*errorCausesCount*/ 0);
 
 		REQUIRE(parsedChunk->GetNewCumulativeTsn() == 12345678);
-		REQUIRE(parsedChunk->GetNumberOfStreams() == 3);
-		REQUIRE(parsedChunk->GetStreamAt(0) == 1111);
-		REQUIRE(parsedChunk->GetUFlagAt(0) == true);
-		REQUIRE(parsedChunk->GetMessageIdentifierAt(0) == 11110001);
-		REQUIRE(parsedChunk->GetStreamAt(1) == 2222);
-		REQUIRE(parsedChunk->GetUFlagAt(1) == false);
-		REQUIRE(parsedChunk->GetMessageIdentifierAt(1) == 22220002);
-		REQUIRE(parsedChunk->GetStreamAt(2) == 3333);
-		REQUIRE(parsedChunk->GetUFlagAt(2) == true);
-		REQUIRE(parsedChunk->GetMessageIdentifierAt(2) == 33330003);
+		REQUIRE(parsedChunk->GetNumberOfSkippedStreams() == 3);
+		REQUIRE(parsedChunk->GetSkippedStreams() == expectedSkippedStreams);
 
 		delete parsedChunk;
 	}

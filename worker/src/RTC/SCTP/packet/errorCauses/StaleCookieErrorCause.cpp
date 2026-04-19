@@ -4,6 +4,7 @@
 #include "RTC/SCTP/packet/errorCauses/StaleCookieErrorCause.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
+#include <string>
 
 namespace RTC
 {
@@ -130,6 +131,13 @@ namespace RTC
 			SoftCloneInto(softClonedErrorCause);
 
 			return softClonedErrorCause;
+		}
+
+		const std::string StaleCookieErrorCause::ContentToString() const
+		{
+			MS_TRACE();
+
+			return "staleness:" + std::to_string(GetMeasureOfStaleness());
 		}
 	} // namespace SCTP
 } // namespace RTC

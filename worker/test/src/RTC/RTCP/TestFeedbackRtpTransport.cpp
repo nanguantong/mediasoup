@@ -4,72 +4,71 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memcmp()
 
-using namespace RTC::RTCP;
-
-struct TestFeedbackRtpTransportInput
+SCENARIO("RTCP Feedback RTP Transport", "[rtcp][feedback-rtp][transport]")
 {
-	TestFeedbackRtpTransportInput(uint16_t sequenceNumber, uint64_t timestamp, size_t maxPacketSize)
-	  : sequenceNumber(sequenceNumber), timestamp(timestamp), maxPacketSize(maxPacketSize)
+	struct TestFeedbackRtpTransportInput
 	{
-	}
-
-	uint16_t sequenceNumber{ 0u };
-	uint64_t timestamp{ 0u };
-	size_t maxPacketSize{ 0u };
-};
-
-void validate(
-  const std::vector<struct TestFeedbackRtpTransportInput>& inputs,
-  std::vector<struct FeedbackRtpTransportPacket::PacketResult> packetResults)
-{
-	auto inputsIterator        = inputs.begin();
-	auto packetResultsIterator = packetResults.begin();
-	auto lastInput             = *inputsIterator;
-
-	for (++inputsIterator; inputsIterator != inputs.end(); ++inputsIterator, ++packetResultsIterator)
-	{
-		auto& input             = *inputsIterator;
-		auto& packetResult      = *packetResultsIterator;
-		uint16_t missingPackets = input.sequenceNumber - lastInput.sequenceNumber - 1;
-
-		if (missingPackets > 0)
+		TestFeedbackRtpTransportInput(uint16_t sequenceNumber, uint64_t timestamp, size_t maxPacketSize)
+		  : sequenceNumber(sequenceNumber), timestamp(timestamp), maxPacketSize(maxPacketSize)
 		{
-			// All missing packets must be represented in packetResults.
-			for (uint16_t i{ 0u }; i < missingPackets; ++i)
-			{
-				packetResult = *packetResultsIterator;
-
-				REQUIRE(packetResult.sequenceNumber == lastInput.sequenceNumber + i + 1);
-				REQUIRE(packetResult.received == false);
-
-				packetResultsIterator++;
-			}
-		}
-		else
-		{
-			REQUIRE(packetResult.sequenceNumber == lastInput.sequenceNumber + 1);
-			REQUIRE(packetResult.sequenceNumber == input.sequenceNumber);
-			REQUIRE(packetResult.received == true);
-			REQUIRE(
-			  static_cast<int32_t>(packetResult.receivedAtMs & 0x1FFFFFC0) / 64 ==
-			  static_cast<int32_t>(input.timestamp & 0x1FFFFFC0) / 64);
 		}
 
-		lastInput = input;
-	}
-}
+		uint16_t sequenceNumber{ 0u };
+		uint64_t timestamp{ 0u };
+		size_t maxPacketSize{ 0u };
+	};
 
-SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]")
-{
 	static constexpr size_t RtcpMtu{ 1200u };
 
-	uint32_t senderSsrc{ 1111u };
-	uint32_t mediaSsrc{ 2222u };
+	const uint32_t senderSsrc{ 1111u };
+	const uint32_t mediaSsrc{ 2222u };
+
+	auto verify =
+	  [](
+	    const std::vector<struct TestFeedbackRtpTransportInput>& inputs,
+	    std::vector<struct RTC::RTCP::FeedbackRtpTransportPacket::PacketResult> packetResults)
+	{
+		auto inputsIterator        = inputs.begin();
+		auto packetResultsIterator = packetResults.begin();
+		auto lastInput             = *inputsIterator;
+
+		for (++inputsIterator; inputsIterator != inputs.end(); ++inputsIterator, ++packetResultsIterator)
+		{
+			const auto& input             = *inputsIterator;
+			auto& packetResult            = *packetResultsIterator;
+			const uint16_t missingPackets = input.sequenceNumber - lastInput.sequenceNumber - 1;
+
+			if (missingPackets > 0)
+			{
+				// All missing packets must be represented in packetResults.
+				for (uint16_t i{ 0u }; i < missingPackets; ++i)
+				{
+					packetResult = *packetResultsIterator;
+
+					REQUIRE(packetResult.sequenceNumber == lastInput.sequenceNumber + i + 1);
+					REQUIRE(packetResult.received == false);
+
+					packetResultsIterator++;
+				}
+			}
+			else
+			{
+				REQUIRE(packetResult.sequenceNumber == lastInput.sequenceNumber + 1);
+				REQUIRE(packetResult.sequenceNumber == input.sequenceNumber);
+				REQUIRE(packetResult.received == true);
+				REQUIRE(
+				  static_cast<int32_t>(packetResult.receivedAtMs & 0x1FFFFFC0) / 64 ==
+				  static_cast<int32_t>(input.timestamp & 0x1FFFFFC0) / 64);
+			}
+
+			lastInput = input;
+		}
+	};
 
 	SECTION(
 	  "create FeedbackRtpTransportPacket, small delta run length chunk and single large delta status packet")
 	{
-		auto packet = std::make_unique<FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
+		auto packet = std::make_unique<RTC::RTCP::FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
 
 		REQUIRE(packet);
 
@@ -125,7 +124,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		REQUIRE(packet->GetLatestTimestamp() == 1000000015);
 
 		packet->Finish();
-		validate(inputs, packet->GetPacketResults());
+		verify(inputs, packet->GetPacketResults());
 
 		REQUIRE(packet->GetBaseSequenceNumber() == 1000);
 		REQUIRE(packet->GetPacketStatusCount() == 16);
@@ -134,15 +133,16 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 
 		SECTION("serialize packet instance")
 		{
-			uint8_t buffer[1024];
+			alignas(4) uint8_t buffer[1024];
 			auto len = packet->Serialize(buffer);
 
 			REQUIRE(packet->GetSize() == len);
 
 			SECTION("parse serialized buffer")
 			{
-				std::unique_ptr<FeedbackRtpTransportPacket> packet2{ FeedbackRtpTransportPacket::Parse(
-					buffer, len) };
+				std::unique_ptr<RTC::RTCP::FeedbackRtpTransportPacket> packet2{
+					RTC::RTCP::FeedbackRtpTransportPacket::Parse(buffer, len)
+				};
 
 				REQUIRE(packet2);
 				REQUIRE(packet2->GetBaseSequenceNumber() == 1000);
@@ -150,7 +150,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 				REQUIRE(packet2->GetFeedbackPacketCount() == 1);
 				REQUIRE(packet2->GetPacketFractionLost() == 0);
 
-				uint8_t buffer2[1024];
+				alignas(4) uint8_t buffer2[1024];
 				auto len2 = packet2->Serialize(buffer2);
 
 				REQUIRE(len == len2);
@@ -162,7 +162,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 
 	SECTION("create FeedbackRtpTransportPacket, run length chunk (2)")
 	{
-		auto packet = std::make_unique<FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
+		auto packet = std::make_unique<RTC::RTCP::FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
 
 		/* clang-format off */
 		std::vector<TestFeedbackRtpTransportInput> inputs =
@@ -188,7 +188,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		}
 
 		packet->Finish();
-		validate(inputs, packet->GetPacketResults());
+		verify(inputs, packet->GetPacketResults());
 
 		REQUIRE(packet->GetBaseSequenceNumber() == 1000);
 		REQUIRE(packet->GetPacketStatusCount() == 51);
@@ -199,15 +199,16 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 
 		SECTION("serialize packet instance")
 		{
-			uint8_t buffer[1024];
+			alignas(4) uint8_t buffer[1024];
 			auto len = packet->Serialize(buffer);
 
 			REQUIRE(packet->GetSize() == len);
 
 			SECTION("parse serialized buffer")
 			{
-				std::unique_ptr<FeedbackRtpTransportPacket> packet2{ FeedbackRtpTransportPacket::Parse(
-					buffer, len) };
+				std::unique_ptr<RTC::RTCP::FeedbackRtpTransportPacket> packet2{
+					RTC::RTCP::FeedbackRtpTransportPacket::Parse(buffer, len)
+				};
 
 				REQUIRE(packet2);
 				REQUIRE(packet2->GetBaseSequenceNumber() == 1000);
@@ -215,7 +216,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 				REQUIRE(packet2->GetFeedbackPacketCount() == 10);
 				REQUIRE(packet2->GetPacketFractionLost() > 0);
 
-				uint8_t buffer2[1024];
+				alignas(4) uint8_t buffer2[1024];
 				auto len2 = packet2->Serialize(buffer2);
 
 				REQUIRE(len == len2);
@@ -240,7 +241,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		};
 		/* clang-format on */
 
-		auto packet = std::make_unique<FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
+		auto packet = std::make_unique<RTC::RTCP::FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
 
 		packet->SetFeedbackPacketCount(1);
 
@@ -257,7 +258,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		}
 
 		packet->Finish();
-		validate(inputs, packet->GetPacketResults());
+		verify(inputs, packet->GetPacketResults());
 
 		REQUIRE(packet->GetBaseSequenceNumber() == 1000);
 		REQUIRE(packet->GetPacketStatusCount() == 18);
@@ -268,15 +269,16 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 
 		SECTION("serialize packet instance")
 		{
-			uint8_t buffer[1024];
+			alignas(4) uint8_t buffer[1024];
 			auto len = packet->Serialize(buffer);
 
 			REQUIRE(packet->GetSize() == len);
 
 			SECTION("parse serialized buffer")
 			{
-				std::unique_ptr<FeedbackRtpTransportPacket> packet2{ FeedbackRtpTransportPacket::Parse(
-					buffer, len) };
+				std::unique_ptr<RTC::RTCP::FeedbackRtpTransportPacket> packet2{
+					RTC::RTCP::FeedbackRtpTransportPacket::Parse(buffer, len)
+				};
 
 				REQUIRE(packet2);
 				REQUIRE(packet2->GetBaseSequenceNumber() == 1000);
@@ -284,7 +286,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 				REQUIRE(packet2->GetFeedbackPacketCount() == 1);
 				REQUIRE(packet2->GetPacketFractionLost() > 0);
 
-				uint8_t buffer2[1024];
+				alignas(4) uint8_t buffer2[1024];
 				auto len2 = packet2->Serialize(buffer2);
 
 				REQUIRE(len == len2);
@@ -297,12 +299,12 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 	SECTION("create FeedbackRtpTransportPacket, incomplete two bit vector chunk")
 	{
 		std::vector<TestFeedbackRtpTransportInput> inputs = {
-			{ 999, 1000000000, RtcpMtu },  // Pre base.
+			{ 999,  1000000000, RtcpMtu }, // Pre base.
 			{ 1000, 1000000100, RtcpMtu }, // Base.
 			{ 1001, 1000000700, RtcpMtu },
 		};
 
-		auto packet = std::make_unique<FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
+		auto packet = std::make_unique<RTC::RTCP::FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
 
 		packet->SetFeedbackPacketCount(1);
 
@@ -319,7 +321,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		}
 
 		packet->Finish();
-		validate(inputs, packet->GetPacketResults());
+		verify(inputs, packet->GetPacketResults());
 
 		REQUIRE(packet->GetBaseSequenceNumber() == 1000);
 		REQUIRE(packet->GetPacketStatusCount() == 2);
@@ -330,15 +332,16 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 
 		SECTION("serialize packet instance")
 		{
-			uint8_t buffer[1024];
+			alignas(4) uint8_t buffer[1024];
 			auto len = packet->Serialize(buffer);
 
 			REQUIRE(packet->GetSize() == len);
 
 			SECTION("parse serialized buffer")
 			{
-				std::unique_ptr<FeedbackRtpTransportPacket> packet2{ FeedbackRtpTransportPacket::Parse(
-					buffer, len) };
+				std::unique_ptr<RTC::RTCP::FeedbackRtpTransportPacket> packet2{
+					RTC::RTCP::FeedbackRtpTransportPacket::Parse(buffer, len)
+				};
 
 				REQUIRE(packet2);
 				REQUIRE(packet2->GetBaseSequenceNumber() == 1000);
@@ -346,7 +349,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 				REQUIRE(packet2->GetFeedbackPacketCount() == 1);
 				REQUIRE(packet2->GetPacketFractionLost() == 0);
 
-				uint8_t buffer2[1024];
+				alignas(4) uint8_t buffer2[1024];
 				auto len2 = packet2->Serialize(buffer2);
 
 				REQUIRE(len == len2);
@@ -373,7 +376,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		};
 		/* clang-format on */
 
-		auto packet = std::make_unique<FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
+		auto packet = std::make_unique<RTC::RTCP::FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
 
 		packet->SetFeedbackPacketCount(1);
 
@@ -390,7 +393,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		}
 
 		packet->Finish();
-		validate(inputs, packet->GetPacketResults());
+		verify(inputs, packet->GetPacketResults());
 
 		REQUIRE(packet->GetBaseSequenceNumber() == 1000);
 		REQUIRE(packet->GetPacketStatusCount() == 8);
@@ -399,15 +402,16 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		REQUIRE(packet->GetLatestSequenceNumber() == 1007);
 		REQUIRE(packet->GetLatestTimestamp() == 1000000007);
 
-		uint8_t buffer[1024];
+		alignas(4) uint8_t buffer[1024];
 		auto len = packet->Serialize(buffer);
 
 		REQUIRE(packet->GetSize() == len);
 
 		SECTION("parse serialized buffer")
 		{
-			std::unique_ptr<FeedbackRtpTransportPacket> packet2{ FeedbackRtpTransportPacket::Parse(
-				buffer, len) };
+			std::unique_ptr<RTC::RTCP::FeedbackRtpTransportPacket> packet2{
+				RTC::RTCP::FeedbackRtpTransportPacket::Parse(buffer, len)
+			};
 
 			REQUIRE(packet2);
 			REQUIRE(packet2->GetBaseSequenceNumber() == 1000);
@@ -415,7 +419,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 			REQUIRE(packet2->GetFeedbackPacketCount() == 1);
 			REQUIRE(packet2->GetPacketFractionLost() == 0);
 
-			uint8_t buffer2[1024];
+			alignas(4) uint8_t buffer2[1024];
 			auto len2 = packet2->Serialize(buffer2);
 
 			REQUIRE(len == len2);
@@ -440,7 +444,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		};
 		/* clang-format on */
 
-		auto packet2 = std::make_unique<FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
+		auto packet2 = std::make_unique<RTC::RTCP::FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
 
 		packet2->SetFeedbackPacketCount(2);
 
@@ -457,7 +461,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		}
 
 		packet2->Finish();
-		validate(inputs2, packet2->GetPacketResults());
+		verify(inputs2, packet2->GetPacketResults());
 
 		REQUIRE(packet2->GetBaseSequenceNumber() == 1008);
 		REQUIRE(packet2->GetPacketStatusCount() == 7);
@@ -472,8 +476,9 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 
 		SECTION("parse serialized buffer")
 		{
-			std::unique_ptr<FeedbackRtpTransportPacket> packet3{ FeedbackRtpTransportPacket::Parse(
-				buffer, len) };
+			std::unique_ptr<RTC::RTCP::FeedbackRtpTransportPacket> packet3{
+				RTC::RTCP::FeedbackRtpTransportPacket::Parse(buffer, len)
+			};
 
 			REQUIRE(packet3);
 			REQUIRE(packet3->GetBaseSequenceNumber() == 1008);
@@ -481,7 +486,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 			REQUIRE(packet3->GetFeedbackPacketCount() == 2);
 			REQUIRE(packet3->GetPacketFractionLost() == 0);
 
-			uint8_t buffer2[1024];
+			alignas(4) uint8_t buffer2[1024];
 			auto len2 = packet3->Serialize(buffer2);
 
 			REQUIRE(len == len2);
@@ -493,7 +498,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 	SECTION("parse FeedbackRtpTransportPacket, one bit vector chunk")
 	{
 		// clang-format off
-		uint8_t data[] =
+		alignas(4) uint8_t data[] =
 		{
 			0x8F, 0xCD, 0x00, 0x07,
 			0xFA, 0x17, 0xFA, 0x17,
@@ -506,8 +511,9 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		};
 		// clang-format on
 
-		std::unique_ptr<FeedbackRtpTransportPacket> packet{ FeedbackRtpTransportPacket::Parse(
-			data, sizeof(data)) };
+		std::unique_ptr<RTC::RTCP::FeedbackRtpTransportPacket> packet{
+			RTC::RTCP::FeedbackRtpTransportPacket::Parse(data, sizeof(data))
+		};
 
 		REQUIRE(packet);
 		REQUIRE(packet->GetSize() == sizeof(data));
@@ -516,13 +522,13 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		REQUIRE(packet->GetReferenceTime() == 6275825); // 0x5FC2F1 (signed 24 bits)
 		REQUIRE(
 		  packet->GetReferenceTimestamp() ==
-		  FeedbackRtpTransportPacket::TimeWrapPeriod +
-		    static_cast<int64_t>(6275825) * FeedbackRtpTransportPacket::BaseTimeTick);
+		  RTC::RTCP::FeedbackRtpTransportPacket::TimeWrapPeriod +
+		    (static_cast<int64_t>(6275825) * RTC::RTCP::FeedbackRtpTransportPacket::BaseTimeTick));
 		REQUIRE(packet->GetFeedbackPacketCount() == 3);
 
 		SECTION("serialize packet")
 		{
-			uint8_t buffer[1024];
+			alignas(4) uint8_t buffer[1024];
 			auto len = packet->Serialize(buffer);
 
 			REQUIRE(len == sizeof(data));
@@ -533,7 +539,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 	SECTION("parse FeedbackRtpTransportPacket with negative reference time")
 	{
 		// clang-format off
-		uint8_t data[] =
+		alignas(4) uint8_t data[] =
 		{
 			0x8F, 0xCD, 0x00, 0x04,
 			0xFA, 0x17, 0xFA, 0x17,
@@ -543,8 +549,9 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		};
 		// clang-format on
 
-		std::unique_ptr<FeedbackRtpTransportPacket> packet{ FeedbackRtpTransportPacket::Parse(
-			data, sizeof(data)) };
+		std::unique_ptr<RTC::RTCP::FeedbackRtpTransportPacket> packet{
+			RTC::RTCP::FeedbackRtpTransportPacket::Parse(data, sizeof(data))
+		};
 
 		REQUIRE(packet);
 		REQUIRE(packet->GetSize() == sizeof(data));
@@ -553,13 +560,13 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		REQUIRE(packet->GetReferenceTime() == -2); // 0xFFFFFE = -2 (signed 24 bits)
 		REQUIRE(
 		  packet->GetReferenceTimestamp() ==
-		  FeedbackRtpTransportPacket::TimeWrapPeriod +
-		    static_cast<int64_t>(-2) * FeedbackRtpTransportPacket::BaseTimeTick);
+		  RTC::RTCP::FeedbackRtpTransportPacket::TimeWrapPeriod +
+		    (static_cast<int64_t>(-2) * RTC::RTCP::FeedbackRtpTransportPacket::BaseTimeTick));
 		REQUIRE(packet->GetFeedbackPacketCount() == 1);
 
 		SECTION("serialize packet")
 		{
-			uint8_t buffer[1024];
+			alignas(4) uint8_t buffer[1024];
 			auto len = packet->Serialize(buffer);
 
 			REQUIRE(len == sizeof(data));
@@ -570,7 +577,7 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 	SECTION("parse FeedbackRtpTransportPacket generated by Chrome")
 	{
 		// clang-format off
-		uint8_t data[] =
+		alignas(4) uint8_t data[] =
 		{
 			0x8F, 0xCD, 0x00, 0x05,
 			0xFA, 0x17, 0xFA, 0x17,
@@ -581,8 +588,9 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		};
 		// clang-format on
 
-		std::unique_ptr<FeedbackRtpTransportPacket> packet{ FeedbackRtpTransportPacket::Parse(
-			data, sizeof(data)) };
+		std::unique_ptr<RTC::RTCP::FeedbackRtpTransportPacket> packet{
+			RTC::RTCP::FeedbackRtpTransportPacket::Parse(data, sizeof(data))
+		};
 
 		REQUIRE(packet);
 		REQUIRE(packet->GetSize() == sizeof(data));
@@ -591,14 +599,14 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		REQUIRE(packet->GetReferenceTime() == -4368470);
 		REQUIRE(
 		  packet->GetReferenceTimestamp() ==
-		  FeedbackRtpTransportPacket::TimeWrapPeriod +
-		    static_cast<int64_t>(-4368470) * FeedbackRtpTransportPacket::BaseTimeTick);
+		  RTC::RTCP::FeedbackRtpTransportPacket::TimeWrapPeriod +
+		    (static_cast<int64_t>(-4368470) * RTC::RTCP::FeedbackRtpTransportPacket::BaseTimeTick));
 
 		REQUIRE(packet->GetFeedbackPacketCount() == 0);
 
 		SECTION("serialize packet")
 		{
-			uint8_t buffer[1024];
+			alignas(4) uint8_t buffer[1024];
 			auto len = packet->Serialize(buffer);
 
 			REQUIRE(len == sizeof(data));
@@ -620,136 +628,137 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 
 		// Metadata collected by parsing buffers with libwebrtc, buffers itself.
 		// were generated by chrome in direction of mediasoup.
-		std::vector<FeedbackPacketsMeta> feedbackPacketsMeta = {
+		const std::vector<FeedbackPacketsMeta> feedbackPacketsMeta = {
 			{ .baseTimeRaw       = 35504,
-			  .baseTimeMs        = 1076014080,
-			  .baseSequence      = 13,
-			  .packetStatusCount = 1,
-			  .deltas            = std::vector<int16_t>{ 57 },
-			  .buffer            = std::vector<uint8_t>{ 0xaf, 0xcd, 0x00, 0x05, 0xfa, 0x17, 0xfa, 0x17,
-			                                             0x00, 0x00, 0x04, 0xd2, 0x00, 0x0d, 0x00, 0x01,
-			                                             0x00, 0x8A, 0xB0, 0x00, 0x20, 0x01, 0xE4, 0x01 } },
+       .baseTimeMs        = 1076014080,
+       .baseSequence      = 13,
+       .packetStatusCount = 1,
+       .deltas            = std::vector<int16_t>{ 57 },
+       .buffer = std::vector<uint8_t>{ 0xaf, 0xcd, 0x00, 0x05, 0xfa, 0x17, 0xfa, 0x17,
+			                                  0x00, 0x00, 0x04, 0xd2, 0x00, 0x0d, 0x00, 0x01,
+			                                  0x00, 0x8A, 0xB0, 0x00, 0x20, 0x01, 0xE4, 0x01 }     },
 			{ .baseTimeRaw       = 35504,
-			  .baseTimeMs        = 1076014080,
-			  .baseSequence      = 14,
-			  .packetStatusCount = 4,
-			  .deltas            = std::vector<int16_t>{ 58, 2, 3, 55 },
-			  .buffer = std::vector<uint8_t>{ 0xaf, 0xcd, 0x00, 0x06, 0xFA, 0x17, 0xFA, 0x17, 0x1C, 0xB7,
+       .baseTimeMs        = 1076014080,
+       .baseSequence      = 14,
+       .packetStatusCount = 4,
+       .deltas            = std::vector<int16_t>{ 58, 2, 3, 55 },
+       .buffer = std::vector<uint8_t>{ 0xaf, 0xcd, 0x00, 0x06, 0xFA, 0x17, 0xFA, 0x17, 0x1C, 0xB7,
 			                                  0xDA, 0xF3, 0x00, 0x0E, 0x00, 0x04, 0x00, 0x8A, 0xB0, 0x01,
-			                                  0x20, 0x04, 0xE8, 0x08, 0x0C, 0xDC, 0x00, 0x02 } },
+			                                  0x20, 0x04, 0xE8, 0x08, 0x0C, 0xDC, 0x00, 0x02 }     },
 			{ .baseTimeRaw       = 35505,
-			  .baseTimeMs        = 1076014144,
-			  .baseSequence      = 18,
-			  .packetStatusCount = 5,
-			  .deltas            = std::vector<int16_t>{ 60, 6, 5, 9, 22 },
-			  .buffer = std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x06, 0xFA, 0x17, 0xFA, 0x17, 0x1C, 0xB7,
+       .baseTimeMs        = 1076014144,
+       .baseSequence      = 18,
+       .packetStatusCount = 5,
+       .deltas            = std::vector<int16_t>{ 60, 6, 5, 9, 22 },
+       .buffer = std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x06, 0xFA, 0x17, 0xFA, 0x17, 0x1C, 0xB7,
 			                                  0xDA, 0xF3, 0x00, 0x12, 0x00, 0x05, 0x00, 0x8A, 0xB1, 0x02,
-			                                  0x20, 0x05, 0xF0, 0x18, 0x14, 0x24, 0x58, 0x01 } },
+			                                  0x20, 0x05, 0xF0, 0x18, 0x14, 0x24, 0x58, 0x01 }     },
 
 			{ .baseTimeRaw       = 617873,
-			  .baseTimeMs        = 1113285696,
-			  .baseSequence      = 2924,
-			  .packetStatusCount = 22,
-			  .deltas =
+       .baseTimeMs        = 1113285696,
+       .baseSequence      = 2924,
+       .packetStatusCount = 22,
+       .deltas =
 			    std::vector<int16_t>{ 3, 5, 5, 0, 10, 0, 0, 4, 0, 1, 0, 2, 0, 2, 0, 2, 0, 2, 0, 1, 0, 4 },
-			  .buffer = std::vector<uint8_t>{ 0x8F, 0xCD, 0x00, 0x0A, 0xFA, 0x17, 0xFA, 0x17, 0x06,
+       .buffer = std::vector<uint8_t>{ 0x8F, 0xCD, 0x00, 0x0A, 0xFA, 0x17, 0xFA, 0x17, 0x06,
 			                                  0xF5, 0x11, 0x4C, 0x0B, 0x6C, 0x00, 0x16, 0x09, 0x6D,
 			                                  0x91, 0xEE, 0x20, 0x16, 0x0C, 0x14, 0x14, 0x00, 0x28,
 			                                  0x00, 0x00, 0x10, 0x00, 0x04, 0x00, 0x08, 0x00, 0x08,
-			                                  0x00, 0x08, 0x00, 0x08, 0x00, 0x04, 0x00, 0x10 } },
+			                                  0x00, 0x08, 0x00, 0x08, 0x00, 0x04, 0x00, 0x10 }     },
 
 			{ .baseTimeRaw       = -4368470,
-			  .baseTimeMs        = 794159744,
-			  .baseSequence      = 1,
-			  .packetStatusCount = 2,
-			  .deltas            = std::vector<int16_t>{ 35, 17 },
-			  .buffer            = std::vector<uint8_t>{ 0x8F, 0xCD, 0x00, 0x05, 0xFA, 0x17, 0xFA, 0x17,
-			                                             0x39, 0xE9, 0x42, 0x38, 0x00, 0x01, 0x00, 0x02,
-			                                             0xBD, 0x57, 0xAA, 0x00, 0x20, 0x02, 0x8C, 0x44 } },
+       .baseTimeMs        = 794159744,
+       .baseSequence      = 1,
+       .packetStatusCount = 2,
+       .deltas            = std::vector<int16_t>{ 35, 17 },
+       .buffer = std::vector<uint8_t>{ 0x8F, 0xCD, 0x00, 0x05, 0xFA, 0x17, 0xFA, 0x17,
+			                                  0x39, 0xE9, 0x42, 0x38, 0x00, 0x01, 0x00, 0x02,
+			                                  0xBD, 0x57, 0xAA, 0x00, 0x20, 0x02, 0x8C, 0x44 }     },
 
 			{ .baseTimeRaw       = 818995,
-			  .baseTimeMs        = 1126157504,
-			  .baseSequence      = 930,
-			  .packetStatusCount = 5,
-			  .deltas            = std::vector<int16_t>{ 62, 18, 5, 6, 19 },
-			  .buffer = std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x06, 0xFA, 0x17, 0xFA, 0x17, 0x26, 0x9E,
+       .baseTimeMs        = 1126157504,
+       .baseSequence      = 930,
+       .packetStatusCount = 5,
+       .deltas            = std::vector<int16_t>{ 62, 18, 5, 6, 19 },
+       .buffer = std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x06, 0xFA, 0x17, 0xFA, 0x17, 0x26, 0x9E,
 			                                  0x8E, 0x50, 0x03, 0xA2, 0x00, 0x05, 0x0C, 0x7F, 0x33, 0x9F,
-			                                  0x20, 0x05, 0xF8, 0x48, 0x14, 0x18, 0x4C, 0x01 } },
+			                                  0x20, 0x05, 0xF8, 0x48, 0x14, 0x18, 0x4C, 0x01 }     },
 			{ .baseTimeRaw       = 818996,
-			  .baseTimeMs        = 1126157568,
-			  .baseSequence      = 921,
-			  .packetStatusCount = 7,
-			  .deltas            = std::vector<int16_t>{ 14, 5, 6, 6, 7, 14, 5 },
-			  .buffer =
+       .baseTimeMs        = 1126157568,
+       .baseSequence      = 921,
+       .packetStatusCount = 7,
+       .deltas            = std::vector<int16_t>{ 14, 5, 6, 6, 7, 14, 5 },
+       .buffer =
 			    std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x07, 0xFA, 0x17, 0xFA, 0x17, 0x33, 0xB0, 0x4A,
 			                          0xE8, 0x03, 0x99, 0x00, 0x07, 0x0C, 0x7F, 0x34, 0x9F, 0x20, 0x07,
 			                          0x38, 0x14, 0x18, 0x18, 0x1C, 0x38, 0x14, 0x00, 0x00, 0x03 } },
 			{ .baseTimeRaw       = 818996,
-			  .baseTimeMs        = 1126157568,
-			  .baseSequence      = 935,
-			  .packetStatusCount = 7,
-			  .deltas            = std::vector<int16_t>{ 57, 0, 6, 5, 5, 24, 0 },
-			  .buffer =
+       .baseTimeMs        = 1126157568,
+       .baseSequence      = 935,
+       .packetStatusCount = 7,
+       .deltas            = std::vector<int16_t>{ 57, 0, 6, 5, 5, 24, 0 },
+       .buffer =
 			    std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x07, 0xFA, 0x17, 0xFA, 0x17, 0x26, 0x9E, 0x8E,
 			                          0x50, 0x03, 0xA7, 0x00, 0x07, 0x0C, 0x7F, 0x34, 0xA0, 0x20, 0x07,
 			                          0xE4, 0x00, 0x18, 0x14, 0x14, 0x60, 0x00, 0x00, 0x00, 0x03 } },
 			{ .baseTimeRaw       = 818996,
-			  .baseTimeMs        = 1126157568,
-			  .baseSequence      = 928,
-			  .packetStatusCount = 5,
-			  .deltas            = std::vector<int16_t>{ 63, 11, 21, 6, 0 },
-			  .buffer = std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x06, 0xFA, 0x17, 0xFA, 0x17, 0x33, 0xB0,
+       .baseTimeMs        = 1126157568,
+       .baseSequence      = 928,
+       .packetStatusCount = 5,
+       .deltas            = std::vector<int16_t>{ 63, 11, 21, 6, 0 },
+       .buffer = std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x06, 0xFA, 0x17, 0xFA, 0x17, 0x33, 0xB0,
 			                                  0x4A, 0xE8, 0x03, 0xA0, 0x00, 0x05, 0x0C, 0x7F, 0x34, 0xA0,
-			                                  0x20, 0x05, 0xFC, 0x2C, 0x54, 0x18, 0x00, 0x01 } },
+			                                  0x20, 0x05, 0xFC, 0x2C, 0x54, 0x18, 0x00, 0x01 }     },
 			{ .baseTimeRaw       = 818997,
-			  .baseTimeMs        = 1126157632,
-			  .baseSequence      = 942,
-			  .packetStatusCount = 6,
-			  .deltas            = std::vector<int16_t>{ 39, 13, 9, 5, 4, 13 },
-			  .buffer = std::vector<uint8_t>{ 0x8F, 0xCD, 0x00, 0x06, 0xFA, 0x17, 0xFA, 0x17, 0x26, 0x9E,
+       .baseTimeMs        = 1126157632,
+       .baseSequence      = 942,
+       .packetStatusCount = 6,
+       .deltas            = std::vector<int16_t>{ 39, 13, 9, 5, 4, 13 },
+       .buffer = std::vector<uint8_t>{ 0x8F, 0xCD, 0x00, 0x06, 0xFA, 0x17, 0xFA, 0x17, 0x26, 0x9E,
 			                                  0x8E, 0x50, 0x03, 0xAE, 0x00, 0x06, 0x0C, 0x7F, 0x35, 0xA1,
-			                                  0x20, 0x06, 0x9C, 0x34, 0x24, 0x14, 0x10, 0x34 } },
+			                                  0x20, 0x06, 0x9C, 0x34, 0x24, 0x14, 0x10, 0x34 }     },
 			{ .baseTimeRaw       = 821523,
-			  .baseTimeMs        = 1126319296,
-			  .baseSequence      = 10,
-			  .packetStatusCount = 7,
-			  .deltas            = std::vector<int16_t>{ 25, 2, 2, 3, 1, 1, 3 },
-			  .buffer =
+       .baseTimeMs        = 1126319296,
+       .baseSequence      = 10,
+       .packetStatusCount = 7,
+       .deltas            = std::vector<int16_t>{ 25, 2, 2, 3, 1, 1, 3 },
+       .buffer =
 			    std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x07, 0xFA, 0x17, 0xFA, 0x17, 0x00, 0x00, 0x04,
 			                          0xD2, 0x00, 0x0A, 0x00, 0x07, 0x0C, 0x89, 0x13, 0x00, 0x20, 0x07,
 			                          0x64, 0x08, 0x08, 0x0C, 0x04, 0x04, 0x0C, 0x00, 0x00, 0x03 } },
 			{ .baseTimeRaw       = 821524,
-			  .baseTimeMs        = 1126319360,
-			  .baseSequence      = 17,
-			  .packetStatusCount = 2,
-			  .deltas            = std::vector<int16_t>{ 44, 18 },
-			  .buffer            = std::vector<uint8_t>{ 0x8F, 0xCD, 0x00, 0x05, 0xFA, 0x17, 0xFA, 0x17,
-			                                             0x08, 0xEB, 0x06, 0xD7, 0x00, 0x11, 0x00, 0x02,
-			                                             0x0C, 0x89, 0x14, 0x01, 0x20, 0x02, 0xB0, 0x48 } },
+       .baseTimeMs        = 1126319360,
+       .baseSequence      = 17,
+       .packetStatusCount = 2,
+       .deltas            = std::vector<int16_t>{ 44, 18 },
+       .buffer = std::vector<uint8_t>{ 0x8F, 0xCD, 0x00, 0x05, 0xFA, 0x17, 0xFA, 0x17,
+			                                  0x08, 0xEB, 0x06, 0xD7, 0x00, 0x11, 0x00, 0x02,
+			                                  0x0C, 0x89, 0x14, 0x01, 0x20, 0x02, 0xB0, 0x48 }     },
 			{ .baseTimeRaw       = 821524,
-			  .baseTimeMs        = 1126319360,
-			  .baseSequence      = 17,
-			  .packetStatusCount = 1,
-			  .deltas            = std::vector<int16_t>{ 62 },
-			  .buffer            = std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x05, 0xFA, 0x17, 0xFA, 0x17,
-			                                             0x20, 0x92, 0x5E, 0xB7, 0x00, 0x11, 0x00, 0x01,
-			                                             0x0C, 0x89, 0x14, 0x00, 0x20, 0x01, 0xF8, 0x01 } },
+       .baseTimeMs        = 1126319360,
+       .baseSequence      = 17,
+       .packetStatusCount = 1,
+       .deltas            = std::vector<int16_t>{ 62 },
+       .buffer = std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x05, 0xFA, 0x17, 0xFA, 0x17,
+			                                  0x20, 0x92, 0x5E, 0xB7, 0x00, 0x11, 0x00, 0x01,
+			                                  0x0C, 0x89, 0x14, 0x00, 0x20, 0x01, 0xF8, 0x01 }     },
 			{ .baseTimeRaw       = 821526,
-			  .baseTimeMs        = 1126319488,
-			  .baseSequence      = 19,
-			  .packetStatusCount = 4,
-			  .deltas            = std::vector<int16_t>{ 4, 0, 4, 0 },
-			  .buffer = std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x06, 0xFA, 0x17, 0xFA, 0x17, 0x08, 0xEB,
+       .baseTimeMs        = 1126319488,
+       .baseSequence      = 19,
+       .packetStatusCount = 4,
+       .deltas            = std::vector<int16_t>{ 4, 0, 4, 0 },
+       .buffer = std::vector<uint8_t>{ 0xAF, 0xCD, 0x00, 0x06, 0xFA, 0x17, 0xFA, 0x17, 0x08, 0xEB,
 			                                  0x06, 0xD7, 0x00, 0x13, 0x00, 0x04, 0x0C, 0x89, 0x16, 0x02,
-			                                  0x20, 0x04, 0x10, 0x00, 0x10, 0x00, 0x00, 0x02 } }
+			                                  0x20, 0x04, 0x10, 0x00, 0x10, 0x00, 0x00, 0x02 }     }
 		};
 
 		for (const auto& packetMeta : feedbackPacketsMeta)
 		{
 			auto buffer = packetMeta.buffer;
 
-			std::unique_ptr<FeedbackRtpTransportPacket> feedback{ FeedbackRtpTransportPacket::Parse(
-				buffer.data(), buffer.size()) };
+			std::unique_ptr<RTC::RTCP::FeedbackRtpTransportPacket> feedback{
+				RTC::RTCP::FeedbackRtpTransportPacket::Parse(buffer.data(), buffer.size())
+			};
 
 			REQUIRE(feedback->GetReferenceTime() == packetMeta.baseTimeRaw);
 			REQUIRE(feedback->GetReferenceTimestamp() == packetMeta.baseTimeMs);
@@ -768,19 +777,20 @@ SCENARIO("RTCP Feeback RTP transport", "[parser][rtcp][feedback-rtp][transport]"
 		}
 	}
 
-	SECTION("Check GetBaseDelta Wraparound")
+	SECTION("check GetBaseDelta() wraparound")
 	{
-		auto MaxBaseTime =
-		  FeedbackRtpTransportPacket::TimeWrapPeriod - FeedbackRtpTransportPacket::BaseTimeTick;
-		auto packet1 = std::make_unique<FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
-		auto packet2 = std::make_unique<FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
-		auto packet3 = std::make_unique<FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
+		static const auto MaxBaseTime = RTC::RTCP::FeedbackRtpTransportPacket::TimeWrapPeriod -
+		                                RTC::RTCP::FeedbackRtpTransportPacket::BaseTimeTick;
+
+		auto packet1 = std::make_unique<RTC::RTCP::FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
+		auto packet2 = std::make_unique<RTC::RTCP::FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
+		auto packet3 = std::make_unique<RTC::RTCP::FeedbackRtpTransportPacket>(senderSsrc, mediaSsrc);
 
 		packet1->SetReferenceTime(MaxBaseTime);
-		packet2->SetReferenceTime(MaxBaseTime + FeedbackRtpTransportPacket::BaseTimeTick);
+		packet2->SetReferenceTime(MaxBaseTime + RTC::RTCP::FeedbackRtpTransportPacket::BaseTimeTick);
 		packet3->SetReferenceTime(
-		  MaxBaseTime + FeedbackRtpTransportPacket::BaseTimeTick +
-		  FeedbackRtpTransportPacket::BaseTimeTick);
+		  MaxBaseTime + RTC::RTCP::FeedbackRtpTransportPacket::BaseTimeTick +
+		  RTC::RTCP::FeedbackRtpTransportPacket::BaseTimeTick);
 
 		REQUIRE(packet1->GetReferenceTime() == 16777215);
 		REQUIRE(packet2->GetReferenceTime() == 0);

@@ -2,20 +2,18 @@
 #include "MediaSoupErrors.hpp"
 #include "RTC/SCTP/packet/Parameter.hpp"
 #include "RTC/SCTP/packet/parameters/IPv4AddressParameter.hpp"
-#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
+#include "RTC/SCTP/sctpCommon.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 
-using namespace RTC::SCTP;
-
-SCENARIO("IPv4 Adress Parameter (5)", "[sctp][serializable]")
+SCENARIO("IPv4 Adress Parameter (5)", "[serializable][sctp][parameter]")
 {
-	ResetBuffers();
+	sctpCommon::ResetBuffers();
 
 	SECTION("IPv4AddressParameter::Parse() succeeds")
 	{
 		// clang-format off
-		uint8_t buffer[] =
+		alignas(4) uint8_t buffer[] =
 		{
 			// Type:5 (IPV4_ADDRESS), Length: 8
 			0x00, 0x05, 0x00, 0x08,
@@ -28,16 +26,16 @@ SCENARIO("IPv4 Adress Parameter (5)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		auto* parameter = IPv4AddressParameter::Parse(buffer, sizeof(buffer));
+		auto* parameter = RTC::SCTP::IPv4AddressParameter::Parse(buffer, sizeof(buffer));
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::IPV4_ADDRESS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::IPV4_ADDRESS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::STOP);
 
 		REQUIRE(parameter->GetIPv4Address()[0] == 0x01);
 		REQUIRE(parameter->GetIPv4Address()[1] == 0x02);
@@ -46,18 +44,18 @@ SCENARIO("IPv4 Adress Parameter (5)", "[sctp][serializable]")
 
 		/* Serialize it. */
 
-		parameter->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		parameter->Serialize(sctpCommon::SerializeBuffer, sizeof(sctpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ sctpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::SerializeBuffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::IPV4_ADDRESS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::IPV4_ADDRESS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::STOP);
 
 		REQUIRE(parameter->GetIPv4Address()[0] == 0x01);
 		REQUIRE(parameter->GetIPv4Address()[1] == 0x02);
@@ -66,20 +64,21 @@ SCENARIO("IPv4 Adress Parameter (5)", "[sctp][serializable]")
 
 		/* Clone it. */
 
-		auto* clonedParameter = parameter->Clone(CloneBuffer, sizeof(CloneBuffer));
+		auto* clonedParameter =
+		  parameter->Clone(sctpCommon::CloneBuffer, sizeof(sctpCommon::CloneBuffer));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(sctpCommon::SerializeBuffer, 0x00, sizeof(sctpCommon::SerializeBuffer));
 
 		delete parameter;
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ clonedParameter,
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ sctpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::CloneBuffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::IPV4_ADDRESS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::IPV4_ADDRESS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::STOP);
 
 		REQUIRE(clonedParameter->GetIPv4Address()[0] == 0x01);
 		REQUIRE(clonedParameter->GetIPv4Address()[1] == 0x02);
@@ -93,7 +92,7 @@ SCENARIO("IPv4 Adress Parameter (5)", "[sctp][serializable]")
 	{
 		// Wrong type.
 		// clang-format off
-		uint8_t buffer1[] =
+		alignas(4) uint8_t buffer1[] =
 		{
 			// Type:6 (IPV6_ADDRESS), Length: 8
 			0x00, 0x06, 0x00, 0x08,
@@ -102,11 +101,11 @@ SCENARIO("IPv4 Adress Parameter (5)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!IPv4AddressParameter::Parse(buffer1, sizeof(buffer1)));
+		REQUIRE(!RTC::SCTP::IPv4AddressParameter::Parse(buffer1, sizeof(buffer1)));
 
 		// Wrong Length field.
 		// clang-format off
-		uint8_t buffer2[] =
+		alignas(4) uint8_t buffer2[] =
 		{
 			// Type:5 (IPV4_ADDRESS), Length: 7
 			0x00, 0x05, 0x00, 0x07,
@@ -115,11 +114,11 @@ SCENARIO("IPv4 Adress Parameter (5)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!IPv4AddressParameter::Parse(buffer2, sizeof(buffer2)));
+		REQUIRE(!RTC::SCTP::IPv4AddressParameter::Parse(buffer2, sizeof(buffer2)));
 
 		// Wrong Length field.
 		// clang-format off
-		uint8_t buffer3[] =
+		alignas(4) uint8_t buffer3[] =
 		{
 			// Type:5 (IPV4_ADDRESS), Length: 9
 			0x00, 0x05, 0x00, 0x09,
@@ -129,11 +128,11 @@ SCENARIO("IPv4 Adress Parameter (5)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!IPv4AddressParameter::Parse(buffer3, sizeof(buffer3)));
+		REQUIRE(!RTC::SCTP::IPv4AddressParameter::Parse(buffer3, sizeof(buffer3)));
 
 		// Wrong buffer length.
 		// clang-format off
-		uint8_t buffer4[] =
+		alignas(4) uint8_t buffer4[] =
 		{
 			// Type:5 (IPV4_ADDRESS), Length: 8
 			0x00, 0x05, 0x00, 0x08,
@@ -142,21 +141,22 @@ SCENARIO("IPv4 Adress Parameter (5)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!IPv4AddressParameter::Parse(buffer4, sizeof(buffer4)));
+		REQUIRE(!RTC::SCTP::IPv4AddressParameter::Parse(buffer4, sizeof(buffer4)));
 	}
 
 	SECTION("IPv4AddressParameter::Factory() succeeds")
 	{
-		auto* parameter = IPv4AddressParameter::Factory(FactoryBuffer, sizeof(FactoryBuffer));
+		auto* parameter = RTC::SCTP::IPv4AddressParameter::Factory(
+		  sctpCommon::FactoryBuffer, sizeof(sctpCommon::FactoryBuffer));
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
+		  /*buffer*/ sctpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::FactoryBuffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::IPV4_ADDRESS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::IPV4_ADDRESS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::STOP);
 
 		REQUIRE(parameter->GetIPv4Address()[0] == 0x00);
 		REQUIRE(parameter->GetIPv4Address()[1] == 0x00);
@@ -172,12 +172,12 @@ SCENARIO("IPv4 Adress Parameter (5)", "[sctp][serializable]")
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
+		  /*buffer*/ sctpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::FactoryBuffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::IPV4_ADDRESS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::IPV4_ADDRESS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::STOP);
 
 		REQUIRE(parameter->GetIPv4Address()[0] == 0x0B);
 		REQUIRE(parameter->GetIPv4Address()[1] == 0x16);
@@ -187,18 +187,18 @@ SCENARIO("IPv4 Adress Parameter (5)", "[sctp][serializable]")
 		/* Parse itself and compare. */
 
 		auto* parsedParameter =
-		  IPv4AddressParameter::Parse(parameter->GetBuffer(), parameter->GetLength());
+		  RTC::SCTP::IPv4AddressParameter::Parse(parameter->GetBuffer(), parameter->GetLength());
 
 		delete parameter;
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parsedParameter,
-		  /*buffer*/ FactoryBuffer,
+		  /*buffer*/ sctpCommon::FactoryBuffer,
 		  /*bufferLength*/ 8,
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::IPV4_ADDRESS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::IPV4_ADDRESS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::STOP);
 
 		REQUIRE(parsedParameter->GetIPv4Address()[0] == 0x0B);
 		REQUIRE(parsedParameter->GetIPv4Address()[1] == 0x16);

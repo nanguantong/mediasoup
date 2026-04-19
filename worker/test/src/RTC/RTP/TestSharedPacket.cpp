@@ -4,25 +4,23 @@
 #include "RTC/RTP/rtpCommon.hpp" // in worker/test/include/
 #include <catch2/catch_test_macros.hpp>
 
-using namespace RTC;
-
-static void CompareRtpPackets(const RTP::Packet* packet1, const RTP::Packet* packet2)
-{
-	REQUIRE(packet1->GetSsrc() == packet2->GetSsrc());
-	REQUIRE(packet1->GetSequenceNumber() == packet2->GetSequenceNumber());
-	REQUIRE(packet1->GetTimestamp() == packet2->GetTimestamp());
-	REQUIRE(packet1->GetLength() == packet2->GetLength());
-}
-
 SCENARIO("RTP SharedPacket", "[rtp][sharedpacket]")
 {
-	auto* packetA = RTP::Packet::Factory(FactoryBuffer, 2000);
+	auto compareRtpPackets = [](const RTC::RTP::Packet* packet1, const RTC::RTP::Packet* packet2)
+	{
+		REQUIRE(packet1->GetSsrc() == packet2->GetSsrc());
+		REQUIRE(packet1->GetSequenceNumber() == packet2->GetSequenceNumber());
+		REQUIRE(packet1->GetTimestamp() == packet2->GetTimestamp());
+		REQUIRE(packet1->GetLength() == packet2->GetLength());
+	};
+
+	auto* packetA = RTC::RTP::Packet::Factory(rtpCommon::FactoryBuffer, 2000);
 
 	packetA->SetSequenceNumber(1111);
 	packetA->SetTimestamp(111111);
 	packetA->SetSsrc(11111111);
 
-	auto* packetB = RTP::Packet::Factory(FactoryBuffer + 2000, 2000);
+	auto* packetB = RTC::RTP::Packet::Factory(rtpCommon::FactoryBuffer + 2000, 2000);
 
 	packetB->SetSequenceNumber(2222);
 	packetB->SetTimestamp(222222);
@@ -30,7 +28,7 @@ SCENARIO("RTP SharedPacket", "[rtp][sharedpacket]")
 
 	SECTION("default constructor and assign later")
 	{
-		RTP::SharedPacket sharedPacket;
+		RTC::RTP::SharedPacket sharedPacket;
 
 		REQUIRE(!sharedPacket.HasPacket());
 		REQUIRE(sharedPacket.GetPacket() == nullptr);
@@ -38,7 +36,7 @@ SCENARIO("RTP SharedPacket", "[rtp][sharedpacket]")
 		sharedPacket.Assign(packetA);
 
 		REQUIRE(sharedPacket.HasPacket());
-		CompareRtpPackets(sharedPacket.GetPacket(), packetA);
+		compareRtpPackets(sharedPacket.GetPacket(), packetA);
 
 		sharedPacket.Reset();
 
@@ -52,23 +50,23 @@ SCENARIO("RTP SharedPacket", "[rtp][sharedpacket]")
 	SECTION("constructor with packet and copy constructor")
 	{
 		// Create sharedPacket1 using constructor with a Packet.
-		RTP::SharedPacket sharedPacket1(packetA);
+		RTC::RTP::SharedPacket sharedPacket1(packetA);
 
 		REQUIRE(sharedPacket1.HasPacket());
-		CompareRtpPackets(sharedPacket1.GetPacket(), packetA);
+		compareRtpPackets(sharedPacket1.GetPacket(), packetA);
 
 		// Create sharedPacket2 using copy constructor.
-		RTP::SharedPacket sharedPacket2(sharedPacket1);
+		RTC::RTP::SharedPacket sharedPacket2(sharedPacket1);
 
 		REQUIRE(sharedPacket2.HasPacket());
-		CompareRtpPackets(sharedPacket2.GetPacket(), packetA);
+		compareRtpPackets(sharedPacket2.GetPacket(), packetA);
 
 		sharedPacket2.Assign(packetB);
 
 		REQUIRE(sharedPacket1.HasPacket());
-		CompareRtpPackets(sharedPacket1.GetPacket(), packetB);
+		compareRtpPackets(sharedPacket1.GetPacket(), packetB);
 		REQUIRE(sharedPacket2.HasPacket());
-		CompareRtpPackets(sharedPacket2.GetPacket(), packetB);
+		compareRtpPackets(sharedPacket2.GetPacket(), packetB);
 		REQUIRE(sharedPacket1.GetPacket() == sharedPacket2.GetPacket());
 
 		sharedPacket1.AssertSamePacket(sharedPacket1.GetPacket());
@@ -89,25 +87,25 @@ SCENARIO("RTP SharedPacket", "[rtp][sharedpacket]")
 
 	SECTION("copy assignment operator")
 	{
-		RTP::SharedPacket sharedPacket1(packetA);
+		RTC::RTP::SharedPacket sharedPacket1(packetA);
 
 		REQUIRE(sharedPacket1.HasPacket());
-		CompareRtpPackets(sharedPacket1.GetPacket(), packetA);
+		compareRtpPackets(sharedPacket1.GetPacket(), packetA);
 
-		RTP::SharedPacket sharedPacket2;
+		RTC::RTP::SharedPacket sharedPacket2;
 
 		// Fill sharedPacket2 using copy assignment operator.
 		sharedPacket2 = sharedPacket1;
 
 		REQUIRE(sharedPacket2.HasPacket());
-		CompareRtpPackets(sharedPacket2.GetPacket(), packetA);
+		compareRtpPackets(sharedPacket2.GetPacket(), packetA);
 
 		sharedPacket2.Assign(packetB);
 
 		REQUIRE(sharedPacket1.HasPacket());
-		CompareRtpPackets(sharedPacket1.GetPacket(), packetB);
+		compareRtpPackets(sharedPacket1.GetPacket(), packetB);
 		REQUIRE(sharedPacket2.HasPacket());
-		CompareRtpPackets(sharedPacket2.GetPacket(), packetB);
+		compareRtpPackets(sharedPacket2.GetPacket(), packetB);
 		REQUIRE(sharedPacket1.GetPacket() == sharedPacket2.GetPacket());
 
 		sharedPacket1.AssertSamePacket(sharedPacket1.GetPacket());
@@ -128,10 +126,10 @@ SCENARIO("RTP SharedPacket", "[rtp][sharedpacket]")
 
 	SECTION("assign nullptr")
 	{
-		RTP::SharedPacket sharedPacket(packetA);
+		RTC::RTP::SharedPacket sharedPacket(packetA);
 
 		REQUIRE(sharedPacket.HasPacket());
-		CompareRtpPackets(sharedPacket.GetPacket(), packetA);
+		compareRtpPackets(sharedPacket.GetPacket(), packetA);
 
 		sharedPacket.Assign(nullptr);
 

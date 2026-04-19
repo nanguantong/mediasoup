@@ -9,7 +9,9 @@
 #include "DepLibUV.hpp"
 #include "DepLibWebRTC.hpp"
 #include "DepOpenSSL.hpp"
+#ifndef MS_SCTP_STACK
 #include "DepUsrSCTP.hpp"
+#endif
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Settings.hpp"
@@ -18,7 +20,6 @@
 #include "Channel/ChannelSocket.hpp"
 #include "RTC/DtlsTransport.hpp"
 #include "RTC/SrtpSession.hpp"
-#include <uv.h>
 #include <absl/container/flat_hash_map.h>
 #include <csignal> // sigaction()
 #include <string>
@@ -35,7 +36,7 @@ static void ignoreSignals();
  * - 134 when any other uncaught C++ exception happens (only in non executable
  *   mode).
  */
-// NOLINTNEXTLINE
+// NOLINTNEXTLINE(readability-identifier-naming)
 extern "C" int mediasoup_worker_run(
   int argc,
   char* argv[],
@@ -121,7 +122,7 @@ extern "C" int mediasoup_worker_run(
 
 	MS_DEBUG_TAG(info, "starting mediasoup-worker process [version:%s]", version);
 
-#if defined(MS_LITTLE_ENDIAN)
+#ifdef MS_LITTLE_ENDIAN
 	MS_DEBUG_TAG(info, "little-endian CPU detected");
 #elif defined(MS_BIG_ENDIAN)
 	MS_DEBUG_TAG(info, "big-endian CPU detected");
@@ -147,7 +148,9 @@ extern "C" int mediasoup_worker_run(
 		// Initialize static stuff.
 		DepOpenSSL::ClassInit();
 		DepLibSRTP::ClassInit();
+#ifndef MS_SCTP_STACK
 		DepUsrSCTP::ClassInit();
+#endif
 #ifdef MS_LIBURING_SUPPORTED
 		DepLibUring::ClassInit();
 #endif
@@ -170,14 +173,10 @@ extern "C" int mediasoup_worker_run(
 		DepLibUring::ClassDestroy();
 #endif
 		RTC::DtlsTransport::ClassDestroy();
+#ifndef MS_SCTP_STACK
 		DepUsrSCTP::ClassDestroy();
-		DepLibUV::ClassDestroy();
-
-#ifdef MS_EXECUTABLE
-		// Wait a bit so pending messages to stdout/Channel arrive to the Node
-		// process.
-		uv_sleep(200);
 #endif
+		DepLibUV::ClassDestroy();
 
 		return 0;
 #ifndef MS_EXECUTABLE

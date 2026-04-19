@@ -2,19 +2,19 @@
 #include "MediaSoupErrors.hpp"
 #include "RTC/SCTP/packet/Chunk.hpp"
 #include "RTC/SCTP/packet/chunks/SackChunk.hpp"
-#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
+#include "RTC/SCTP/sctpCommon.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
+#include <vector>
 
-// NOLINTNEXTLINE (readability-function-size)
-SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
+SCENARIO("Selective Acknowledgement Chunk (3)", "[serializable][sctp][chunk]")
 {
-	ResetBuffers();
+	sctpCommon::ResetBuffers();
 
 	SECTION("SackChunk::Parse() succeeds")
 	{
 		// clang-format off
-		uint8_t buffer[] =
+		alignas(4) uint8_t buffer[] =
 		{
 			// Type:3 (SACK), Flags: 0b00000000, Length: 36
 			0x03, 0b00000000, 0x00, 0x24,
@@ -27,6 +27,8 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 			// Gap Ack Block 1: Start: 1000, End: 1999
 			0x03, 0xE8, 0x07, 0xCF,
 			// Gap Ack Block 2: Start: 2000, End: 2999
+			// Notice that this is wrong since it should be merged with the first
+			// Gap Ack Block.
 			0x07, 0xD0, 0x0B, 0xB7,
 			// Duplicate TSN 1: 287454020,
 			0x11, 0x22, 0x33, 0x44,
@@ -40,16 +42,16 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		auto* chunk = SackChunk::Parse(buffer, sizeof(buffer));
+		auto* chunk = RTC::SCTP::SackChunk::Parse(buffer, sizeof(buffer));
 
 		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 36,
-		  /*chunkType*/ Chunk::ChunkType::SACK,
+		  /*chunkType*/ RTC::SCTP::Chunk::ChunkType::SACK,
 		  /*unknownType*/ false,
-		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
+		  /*actionForUnknownChunkType*/ RTC::SCTP::Chunk::ActionForUnknownChunkType::STOP,
 		  /*flags*/ 0b00000000,
 		  /*canHaveParameters*/ false,
 		  /*parametersCount*/ 0,
@@ -58,30 +60,31 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 
 		REQUIRE(chunk->GetCumulativeTsnAck() == 287454020);
 		REQUIRE(chunk->GetAdvertisedReceiverWindowCredit() == 4278216311);
-		REQUIRE(chunk->GetNumberOfGapAckBlocks() == 2);
-		REQUIRE(chunk->GetNumberOfDuplicateTsns() == 3);
-		REQUIRE(chunk->GetAckBlockStartAt(0) == 1000);
-		REQUIRE(chunk->GetAckBlockEndAt(0) == 1999);
-		REQUIRE(chunk->GetAckBlockStartAt(1) == 2000);
-		REQUIRE(chunk->GetAckBlockEndAt(1) == 2999);
-		REQUIRE(chunk->GetDuplicateTsnAt(0) == 287454020);
-		REQUIRE(chunk->GetDuplicateTsnAt(1) == 4278216311);
-		REQUIRE(chunk->GetDuplicateTsnAt(2) == 556942164);
+
+		const std::vector<uint32_t> expectedDuplicateTsns{
+			{ 287454020, 4278216311, 556942164 },
+		};
+		const std::vector<RTC::SCTP::SackChunk::GapAckBlock> expectedGapAckBlocks{
+			{ 1000, 2999 },
+		};
+
+		REQUIRE(chunk->GetDuplicateTsns() == expectedDuplicateTsns);
+		REQUIRE(chunk->GetValidatedGapAckBlocks() == expectedGapAckBlocks);
 
 		/* Serialize it. */
 
-		chunk->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		chunk->Serialize(sctpCommon::SerializeBuffer, sizeof(sctpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ sctpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::SerializeBuffer),
 		  /*length*/ 36,
-		  /*chunkType*/ Chunk::ChunkType::SACK,
+		  /*chunkType*/ RTC::SCTP::Chunk::ChunkType::SACK,
 		  /*unknownType*/ false,
-		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
+		  /*actionForUnknownChunkType*/ RTC::SCTP::Chunk::ActionForUnknownChunkType::STOP,
 		  /*flags*/ 0b00000000,
 		  /*canHaveParameters*/ false,
 		  /*parametersCount*/ 0,
@@ -90,32 +93,25 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 
 		REQUIRE(chunk->GetCumulativeTsnAck() == 287454020);
 		REQUIRE(chunk->GetAdvertisedReceiverWindowCredit() == 4278216311);
-		REQUIRE(chunk->GetNumberOfGapAckBlocks() == 2);
-		REQUIRE(chunk->GetNumberOfDuplicateTsns() == 3);
-		REQUIRE(chunk->GetAckBlockStartAt(0) == 1000);
-		REQUIRE(chunk->GetAckBlockEndAt(0) == 1999);
-		REQUIRE(chunk->GetAckBlockStartAt(1) == 2000);
-		REQUIRE(chunk->GetAckBlockEndAt(1) == 2999);
-		REQUIRE(chunk->GetDuplicateTsnAt(0) == 287454020);
-		REQUIRE(chunk->GetDuplicateTsnAt(1) == 4278216311);
-		REQUIRE(chunk->GetDuplicateTsnAt(2) == 556942164);
+		REQUIRE(chunk->GetDuplicateTsns() == expectedDuplicateTsns);
+		REQUIRE(chunk->GetValidatedGapAckBlocks() == expectedGapAckBlocks);
 
 		/* Clone it. */
 
-		auto* clonedChunk = chunk->Clone(CloneBuffer, sizeof(CloneBuffer));
+		auto* clonedChunk = chunk->Clone(sctpCommon::CloneBuffer, sizeof(sctpCommon::CloneBuffer));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(sctpCommon::SerializeBuffer, 0x00, sizeof(sctpCommon::SerializeBuffer));
 
 		delete chunk;
 
 		CHECK_SCTP_CHUNK(
 		  /*chunk*/ clonedChunk,
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ sctpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::CloneBuffer),
 		  /*length*/ 36,
-		  /*chunkType*/ Chunk::ChunkType::SACK,
+		  /*chunkType*/ RTC::SCTP::Chunk::ChunkType::SACK,
 		  /*unknownType*/ false,
-		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
+		  /*actionForUnknownChunkType*/ RTC::SCTP::Chunk::ActionForUnknownChunkType::STOP,
 		  /*flags*/ 0b00000000,
 		  /*canHaveParameters*/ false,
 		  /*parametersCount*/ 0,
@@ -124,15 +120,8 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 
 		REQUIRE(clonedChunk->GetCumulativeTsnAck() == 287454020);
 		REQUIRE(clonedChunk->GetAdvertisedReceiverWindowCredit() == 4278216311);
-		REQUIRE(clonedChunk->GetNumberOfGapAckBlocks() == 2);
-		REQUIRE(clonedChunk->GetNumberOfDuplicateTsns() == 3);
-		REQUIRE(clonedChunk->GetAckBlockStartAt(0) == 1000);
-		REQUIRE(clonedChunk->GetAckBlockEndAt(0) == 1999);
-		REQUIRE(clonedChunk->GetAckBlockStartAt(1) == 2000);
-		REQUIRE(clonedChunk->GetAckBlockEndAt(1) == 2999);
-		REQUIRE(clonedChunk->GetDuplicateTsnAt(0) == 287454020);
-		REQUIRE(clonedChunk->GetDuplicateTsnAt(1) == 4278216311);
-		REQUIRE(clonedChunk->GetDuplicateTsnAt(2) == 556942164);
+		REQUIRE(clonedChunk->GetDuplicateTsns() == expectedDuplicateTsns);
+		REQUIRE(clonedChunk->GetValidatedGapAckBlocks() == expectedGapAckBlocks);
 
 		delete clonedChunk;
 	}
@@ -142,7 +131,7 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 		// Length field doesn't match Number of Gap Ack Blocks + Number of
 		// Duplicate TSNs.
 		// clang-format off
-		uint8_t buffer1[] =
+		alignas(4) uint8_t buffer1[] =
 		{
 			// Type:3 (SACK), Flags: 0b00000000, Length: 24 (should be 28)
 			0x03, 0b00000000, 0x00, 0x18,
@@ -164,12 +153,12 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!SackChunk::Parse(buffer1, sizeof(buffer1)));
+		REQUIRE(!RTC::SCTP::SackChunk::Parse(buffer1, sizeof(buffer1)));
 
 		// Length field doesn't match Number of Gap Ack Blocks + Number of
 		// Duplicate TSNs.
 		// clang-format off
-		uint8_t buffer2[] =
+		alignas(4) uint8_t buffer2[] =
 		{
 			// Type:3 (SACK), Flags: 0b00000000, Length: 32 (should be 28)
 			0x03, 0b00000000, 0x00, 0x20,
@@ -193,11 +182,11 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!SackChunk::Parse(buffer2, sizeof(buffer2)));
+		REQUIRE(!RTC::SCTP::SackChunk::Parse(buffer2, sizeof(buffer2)));
 
 		// Wrong Length field (smaller than buffer).
 		// clang-format off
-		uint8_t buffer3[] =
+		alignas(4) uint8_t buffer3[] =
 		{
 			// Type:3 (SACK), Flags: 0b00000000, Length: 24 (buffer is 20)
 			0x03, 0b00000000, 0x00, 0x18,
@@ -212,21 +201,22 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!SackChunk::Parse(buffer3, sizeof(buffer3)));
+		REQUIRE(!RTC::SCTP::SackChunk::Parse(buffer3, sizeof(buffer3)));
 	}
 
 	SECTION("SackChunk::Factory() succeeds")
 	{
-		auto* chunk = SackChunk::Factory(FactoryBuffer, sizeof(FactoryBuffer));
+		auto* chunk =
+		  RTC::SCTP::SackChunk::Factory(sctpCommon::FactoryBuffer, sizeof(sctpCommon::FactoryBuffer));
 
 		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
+		  /*buffer*/ sctpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::FactoryBuffer),
 		  /*length*/ 16,
-		  /*chunkType*/ Chunk::ChunkType::SACK,
+		  /*chunkType*/ RTC::SCTP::Chunk::ChunkType::SACK,
 		  /*unknownType*/ false,
-		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
+		  /*actionForUnknownChunkType*/ RTC::SCTP::Chunk::ActionForUnknownChunkType::STOP,
 		  /*flags*/ 0b00000000,
 		  /*canHaveParameters*/ false,
 		  /*parametersCount*/ 0,
@@ -235,15 +225,19 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 
 		REQUIRE(chunk->GetCumulativeTsnAck() == 0);
 		REQUIRE(chunk->GetAdvertisedReceiverWindowCredit() == 0);
-		REQUIRE(chunk->GetNumberOfGapAckBlocks() == 0);
-		REQUIRE(chunk->GetNumberOfDuplicateTsns() == 0);
+
+		std::vector<uint32_t> expectedDuplicateTsns{};
+		std::vector<RTC::SCTP::SackChunk::GapAckBlock> expectedGapAckBlocks{};
+
+		REQUIRE(chunk->GetDuplicateTsns() == expectedDuplicateTsns);
+		REQUIRE(chunk->GetValidatedGapAckBlocks() == expectedGapAckBlocks);
 
 		/* Modify it. */
 
 		chunk->SetCumulativeTsnAck(1234);
 		chunk->SetAdvertisedReceiverWindowCredit(5678);
 		chunk->AddDuplicateTsn(10000000);
-		chunk->AddAckBlock(10000, 10999);
+		chunk->AddAckBlock(10000, 19999);
 		chunk->AddAckBlock(20000, 20999);
 		chunk->AddDuplicateTsn(20000000);
 		chunk->AddAckBlock(60000, 60999);
@@ -252,12 +246,12 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 
 		CHECK_SCTP_CHUNK(
 		  /*chunk*/ chunk,
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
+		  /*buffer*/ sctpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::FactoryBuffer),
 		  /*length*/ 44,
-		  /*chunkType*/ Chunk::ChunkType::SACK,
+		  /*chunkType*/ RTC::SCTP::Chunk::ChunkType::SACK,
 		  /*unknownType*/ false,
-		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
+		  /*actionForUnknownChunkType*/ RTC::SCTP::Chunk::ActionForUnknownChunkType::STOP,
 		  /*flags*/ 0b00000000,
 		  /*canHaveParameters*/ false,
 		  /*parametersCount*/ 0,
@@ -266,33 +260,32 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 
 		REQUIRE(chunk->GetCumulativeTsnAck() == 1234);
 		REQUIRE(chunk->GetAdvertisedReceiverWindowCredit() == 5678);
-		REQUIRE(chunk->GetNumberOfGapAckBlocks() == 3);
-		REQUIRE(chunk->GetNumberOfDuplicateTsns() == 4);
-		REQUIRE(chunk->GetAckBlockStartAt(0) == 10000);
-		REQUIRE(chunk->GetAckBlockEndAt(0) == 10999);
-		REQUIRE(chunk->GetAckBlockStartAt(1) == 20000);
-		REQUIRE(chunk->GetAckBlockEndAt(1) == 20999);
-		REQUIRE(chunk->GetAckBlockStartAt(2) == 60000);
-		REQUIRE(chunk->GetAckBlockEndAt(2) == 60999);
-		REQUIRE(chunk->GetDuplicateTsnAt(0) == 10000000);
-		REQUIRE(chunk->GetDuplicateTsnAt(1) == 20000000);
-		REQUIRE(chunk->GetDuplicateTsnAt(2) == 30000000);
-		REQUIRE(chunk->GetDuplicateTsnAt(3) == 40000000);
+
+		expectedDuplicateTsns = {
+			{ 10000000, 20000000, 30000000, 40000000 }
+		};
+		expectedGapAckBlocks = {
+			{ 10000, 20999 },
+      { 60000, 60999 }
+		};
+
+		REQUIRE(chunk->GetDuplicateTsns() == expectedDuplicateTsns);
+		REQUIRE(chunk->GetValidatedGapAckBlocks() == expectedGapAckBlocks);
 
 		/* Parse itself and compare. */
 
-		auto* parsedChunk = SackChunk::Parse(chunk->GetBuffer(), chunk->GetLength());
+		auto* parsedChunk = RTC::SCTP::SackChunk::Parse(chunk->GetBuffer(), chunk->GetLength());
 
 		delete chunk;
 
 		CHECK_SCTP_CHUNK(
 		  /*chunk*/ parsedChunk,
-		  /*buffer*/ FactoryBuffer,
+		  /*buffer*/ sctpCommon::FactoryBuffer,
 		  /*bufferLength*/ 44,
 		  /*length*/ 44,
-		  /*chunkType*/ Chunk::ChunkType::SACK,
+		  /*chunkType*/ RTC::SCTP::Chunk::ChunkType::SACK,
 		  /*unknownType*/ false,
-		  /*actionForUnknownChunkType*/ Chunk::ActionForUnknownChunkType::STOP,
+		  /*actionForUnknownChunkType*/ RTC::SCTP::Chunk::ActionForUnknownChunkType::STOP,
 		  /*flags*/ 0b00000000,
 		  /*canHaveParameters*/ false,
 		  /*parametersCount*/ 0,
@@ -301,18 +294,8 @@ SCENARIO("Selective Acknowledgement Chunk (3)", "[sctp][serializable]")
 
 		REQUIRE(parsedChunk->GetCumulativeTsnAck() == 1234);
 		REQUIRE(parsedChunk->GetAdvertisedReceiverWindowCredit() == 5678);
-		REQUIRE(parsedChunk->GetNumberOfGapAckBlocks() == 3);
-		REQUIRE(parsedChunk->GetNumberOfDuplicateTsns() == 4);
-		REQUIRE(parsedChunk->GetAckBlockStartAt(0) == 10000);
-		REQUIRE(parsedChunk->GetAckBlockEndAt(0) == 10999);
-		REQUIRE(parsedChunk->GetAckBlockStartAt(1) == 20000);
-		REQUIRE(parsedChunk->GetAckBlockEndAt(1) == 20999);
-		REQUIRE(parsedChunk->GetAckBlockStartAt(2) == 60000);
-		REQUIRE(parsedChunk->GetAckBlockEndAt(2) == 60999);
-		REQUIRE(parsedChunk->GetDuplicateTsnAt(0) == 10000000);
-		REQUIRE(parsedChunk->GetDuplicateTsnAt(1) == 20000000);
-		REQUIRE(parsedChunk->GetDuplicateTsnAt(2) == 30000000);
-		REQUIRE(parsedChunk->GetDuplicateTsnAt(3) == 40000000);
+		REQUIRE(parsedChunk->GetDuplicateTsns() == expectedDuplicateTsns);
+		REQUIRE(parsedChunk->GetValidatedGapAckBlocks() == expectedGapAckBlocks);
 
 		delete parsedChunk;
 	}

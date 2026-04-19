@@ -7,21 +7,25 @@
 #include "RTC/RTCP/FuzzerSenderReport.hpp"
 #include "RTC/RTCP/FuzzerXr.hpp"
 #include "RTC/RTCP/Packet.hpp"
+#include <cstring> // std::memcpy()
 
-void Fuzzer::RTC::RTCP::Packet::Fuzz(const uint8_t* data, size_t len)
+namespace
 {
-	if (!::RTC::RTCP::Packet::IsRtcp(data, len))
+	alignas(4) thread_local uint8_t DataBuffer[65536];
+} // namespace
+
+void FuzzerRtcRtcpPacket::Fuzz(const uint8_t* data, size_t len)
+{
+	if (!RTC::RTCP::Packet::IsRtcp(data, len))
 	{
 		return;
 	}
 
-	// We need to clone the given data into a separate buffer because setters
-	// below will try to write into packet memory.
-	std::unique_ptr<uint8_t[]> data2(new uint8_t[len]);
+	// NOTE: We need to copy given data into another buffer because we are gonna
+	// write into it.
+	std::memcpy(DataBuffer, data, len);
 
-	std::memcpy(data2.get(), data, len);
-
-	::RTC::RTCP::Packet* packet = ::RTC::RTCP::Packet::Parse(data2.get(), len);
+	RTC::RTCP::Packet* packet = RTC::RTCP::Packet::Parse(DataBuffer, len);
 
 	if (!packet)
 	{
@@ -32,63 +36,63 @@ void Fuzzer::RTC::RTCP::Packet::Fuzz(const uint8_t* data, size_t len)
 	{
 		auto* previousPacket = packet;
 
-		switch (::RTC::RTCP::Type(packet->GetType()))
+		switch (RTC::RTCP::Type(packet->GetType()))
 		{
-			case ::RTC::RTCP::Type::SR:
+			case RTC::RTCP::Type::SR:
 			{
-				auto* sr = dynamic_cast<::RTC::RTCP::SenderReportPacket*>(packet);
+				auto* sr = dynamic_cast<RTC::RTCP::SenderReportPacket*>(packet);
 
-				RTC::RTCP::SenderReport::Fuzz(sr);
+				FuzzerRtcRtcpSenderReport::Fuzz(sr);
 
 				break;
 			}
 
-			case ::RTC::RTCP::Type::RR:
+			case RTC::RTCP::Type::RR:
 			{
-				auto* rr = dynamic_cast<::RTC::RTCP::ReceiverReportPacket*>(packet);
+				auto* rr = dynamic_cast<RTC::RTCP::ReceiverReportPacket*>(packet);
 
-				RTC::RTCP::ReceiverReport::Fuzz(rr);
+				FuzzerRtcRtcpReceiverReport::Fuzz(rr);
 
 				break;
 			}
 
-			case ::RTC::RTCP::Type::SDES:
+			case RTC::RTCP::Type::SDES:
 			{
-				auto* sdes = dynamic_cast<::RTC::RTCP::SdesPacket*>(packet);
+				auto* sdes = dynamic_cast<RTC::RTCP::SdesPacket*>(packet);
 
-				RTC::RTCP::Sdes::Fuzz(sdes);
+				FuzzerRtcRtcpSdes::Fuzz(sdes);
 
 				break;
 			}
 
-			case ::RTC::RTCP::Type::BYE:
+			case RTC::RTCP::Type::BYE:
 			{
-				auto* bye = dynamic_cast<::RTC::RTCP::ByePacket*>(packet);
+				auto* bye = dynamic_cast<RTC::RTCP::ByePacket*>(packet);
 
-				RTC::RTCP::Bye::Fuzz(bye);
+				FuzzerRtcRtcpBye::Fuzz(bye);
 
 				break;
 			}
 
-			case ::RTC::RTCP::Type::RTPFB:
+			case RTC::RTCP::Type::RTPFB:
 			{
-				RTC::RTCP::FeedbackRtp::Fuzz(packet);
+				FuzzerRtcRtcpFeedbackRtp::Fuzz(packet);
 
 				break;
 			}
 
-			case ::RTC::RTCP::Type::PSFB:
+			case RTC::RTCP::Type::PSFB:
 			{
-				RTC::RTCP::FeedbackPs::Fuzz(packet);
+				FuzzerRtcRtcpFeedbackPs::Fuzz(packet);
 
 				break;
 			}
 
-			case ::RTC::RTCP::Type::XR:
+			case RTC::RTCP::Type::XR:
 			{
-				auto* xr = dynamic_cast<::RTC::RTCP::ExtendedReportPacket*>(packet);
+				auto* xr = dynamic_cast<RTC::RTCP::ExtendedReportPacket*>(packet);
 
-				RTC::RTCP::ExtendedReport::Fuzz(xr);
+				FuzzerRtcRtcpExtendedReport::Fuzz(xr);
 
 				break;
 			}

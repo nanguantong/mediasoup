@@ -18,7 +18,7 @@ namespace RTC
 	{
 		/* Class variables. */
 
-		thread_local uint32_t Packet::nextMediasoupPacketId{ Utils::Crypto::GetRandomUInt(
+		thread_local uint32_t Packet::nextMediasoupPacketId{ Utils::Crypto::GetRandomUInt<uint32_t>(
 			0, std::numeric_limits<uint32_t>::max() / 2) };
 
 		/* Class methods. */
@@ -27,17 +27,12 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			const auto* header = const_cast<FixedHeader*>(reinterpret_cast<const FixedHeader*>(buffer));
-
-			// clang-format off
 			return (
-				(bufferLength >= Packet::FixedHeaderMinLength) &&
-				// @see RFC 7983.
-				(buffer[0] > 127 && buffer[0] < 192) &&
-				// RTP Version must be 2.
-				(header->version == 2)
-			);
-			// clang-format on
+			  bufferLength >= Packet::FixedHeaderMinLength &&
+			  // @see RFC 7983.
+			  (buffer[0] > 127 && buffer[0] < 192) &&
+			  // RTP Version must be 2.
+			  (buffer[0] >> 6) == 2);
 		}
 
 		Packet* Packet::Parse(const uint8_t* buffer, size_t packetLength, size_t bufferLength)
@@ -157,6 +152,7 @@ namespace RTC
 			MS_TRACE();
 
 			MS_DUMP_CLEAN(indentation, "<RTP::Packet>");
+
 			MS_DUMP_CLEAN(indentation, "  length: %zu (buffer length: %zu)", GetLength(), GetBufferLength());
 			MS_DUMP_CLEAN(indentation, "  sequence number: %" PRIu16, GetSequenceNumber());
 			MS_DUMP_CLEAN(indentation, "  timestamp: %" PRIu32, GetTimestamp());
@@ -723,7 +719,7 @@ namespace RTC
 			}
 
 			const uint8_t* extensionsStart = GetHeaderExtensionValue();
-			uint8_t* ptr                   = const_cast<uint8_t*>(extensionsStart);
+			auto* ptr                      = const_cast<uint8_t*>(extensionsStart);
 
 			if (type == ExtensionsType::OneByte)
 			{
@@ -842,7 +838,7 @@ namespace RTC
 			}
 		}
 
-		void Packet::AssignExtensionIds(RTC::RtpHeaderExtensionIds& headerExtensionIds)
+		void Packet::AssignExtensionIds(RTP::HeaderExtensionIds& headerExtensionIds)
 		{
 			MS_TRACE();
 
@@ -860,7 +856,7 @@ namespace RTC
 			}
 
 			uint8_t extenLen;
-			uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.mid, extenLen);
+			const uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.mid, extenLen);
 
 			if (!extenValue || extenLen == 0)
 			{
@@ -916,7 +912,7 @@ namespace RTC
 
 			// First try with the RID id then with the Repaired RID id.
 			uint8_t extenLen;
-			uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.rid, extenLen);
+			const uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.rid, extenLen);
 
 			if (extenValue && extenLen > 0)
 			{
@@ -947,7 +943,7 @@ namespace RTC
 			}
 
 			uint8_t extenLen;
-			uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.absSendTime, extenLen);
+			const uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.absSendTime, extenLen);
 
 			if (!extenValue || extenLen != 3u)
 			{
@@ -988,7 +984,8 @@ namespace RTC
 			}
 
 			uint8_t extenLen;
-			uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.transportWideCc01, extenLen);
+			const uint8_t* extenValue =
+			  GetExtensionValue(this->headerExtensionIds.transportWideCc01, extenLen);
 
 			if (!extenValue || extenLen != 2u)
 			{
@@ -1027,7 +1024,8 @@ namespace RTC
 			}
 
 			uint8_t extenLen;
-			uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.ssrcAudioLevel, extenLen);
+			const uint8_t* extenValue =
+			  GetExtensionValue(this->headerExtensionIds.ssrcAudioLevel, extenLen);
 
 			if (!extenValue || extenLen != 1u)
 			{
@@ -1054,7 +1052,7 @@ namespace RTC
 			}
 
 			uint8_t extenLen;
-			uint8_t* extenValue =
+			const uint8_t* extenValue =
 			  GetExtensionValue(this->headerExtensionIds.dependencyDescriptor, extenLen);
 
 			auto* value = Codecs::DependencyDescriptor::Parse(
@@ -1102,7 +1100,8 @@ namespace RTC
 			}
 
 			uint8_t extenLen;
-			uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.videoOrientation, extenLen);
+			const uint8_t* extenValue =
+			  GetExtensionValue(this->headerExtensionIds.videoOrientation, extenLen);
 
 			if (!extenValue || extenLen != 1u)
 			{
@@ -1158,7 +1157,8 @@ namespace RTC
 			}
 
 			uint8_t extenLen;
-			uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.absCaptureTime, extenLen);
+			const uint8_t* extenValue =
+			  GetExtensionValue(this->headerExtensionIds.absCaptureTime, extenLen);
 
 			// Extension value can be 8 or 16 bytes depending on whether it contains
 			// estimated capture clock offset or not.
@@ -1193,16 +1193,16 @@ namespace RTC
 			}
 
 			uint8_t extenLen;
-			uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.playoutDelay, extenLen);
+			const uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.playoutDelay, extenLen);
 
 			if (extenLen != 3)
 			{
 				return false;
 			}
 
-			uint32_t v = Utils::Byte::Get3Bytes(extenValue, 0);
-			minDelay   = v >> 12u;
-			maxDelay   = v & 0xFFFu;
+			const uint32_t v = Utils::Byte::Get3Bytes(extenValue, 0);
+			minDelay         = v >> 12u;
+			maxDelay         = v & 0xFFFu;
 
 			return true;
 		}
@@ -1217,7 +1217,8 @@ namespace RTC
 			}
 
 			uint8_t extenLen;
-			uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.mediasoupPacketId, extenLen);
+			const uint8_t* extenValue =
+			  GetExtensionValue(this->headerExtensionIds.mediasoupPacketId, extenLen);
 
 			if (extenLen != 4u)
 			{
@@ -1238,10 +1239,11 @@ namespace RTC
 				MS_THROW_TYPE_ERROR("invalid payloadLength %zu without payload", payloadLength);
 			}
 
-			auto previousLength        = GetLength();
-			auto previousPayloadLength = GetPayloadLength();
-			auto previousPaddingLength = GetPaddingLength();
-			auto newLength = previousLength - previousPayloadLength - previousPaddingLength + payloadLength;
+			const auto previousLength        = GetLength();
+			const auto previousPayloadLength = GetPayloadLength();
+			const auto previousPaddingLength = GetPaddingLength();
+			const auto newLength =
+			  previousLength - previousPayloadLength - previousPaddingLength + payloadLength;
 
 			// Set the new Packet total length.
 			// NOTE: This throws if given length is higher than buffer length.
@@ -1250,17 +1252,21 @@ namespace RTC
 			// Unset padding flag.
 			GetFixedHeaderPointer()->padding = 0;
 
-			std::memmove(GetPayloadPointer(), payload, payloadLength);
+			if (payload)
+			{
+				std::memmove(GetPayloadPointer(), payload, payloadLength);
+			}
 		}
 
 		void Packet::SetPayloadLength(size_t payloadLength)
 		{
 			MS_TRACE();
 
-			auto previousLength        = GetLength();
-			auto previousPayloadLength = GetPayloadLength();
-			auto previousPaddingLength = GetPaddingLength();
-			auto newLength = previousLength - previousPayloadLength - previousPaddingLength + payloadLength;
+			const auto previousLength        = GetLength();
+			const auto previousPayloadLength = GetPayloadLength();
+			const auto previousPaddingLength = GetPaddingLength();
+			const auto newLength =
+			  previousLength - previousPayloadLength - previousPaddingLength + payloadLength;
 
 			// Set the new Packet total length.
 			// NOTE: This throws if given length is higher than buffer length.
@@ -1326,9 +1332,9 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			auto previousLength        = GetLength();
-			auto previousPaddingLength = GetPaddingLength();
-			auto newLength             = previousLength - previousPaddingLength + paddingLength;
+			const auto previousLength        = GetLength();
+			const auto previousPaddingLength = GetPaddingLength();
+			const auto newLength             = previousLength - previousPaddingLength + paddingLength;
 
 			// Set the new Packet total length.
 			// NOTE: This throws if given length is higher than buffer length.
@@ -1350,10 +1356,10 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			auto previousLength        = GetLength();
-			auto previousPaddingLength = GetPaddingLength();
-			auto newNotPaddedLength    = previousLength - previousPaddingLength;
-			auto newPaddedLength       = Utils::Byte::PadTo4Bytes(newNotPaddedLength);
+			const auto previousLength        = GetLength();
+			const auto previousPaddingLength = GetPaddingLength();
+			const auto newNotPaddedLength    = previousLength - previousPaddingLength;
+			const auto newPaddedLength       = Utils::Byte::PadTo4Bytes(newNotPaddedLength);
 
 			if (newPaddedLength == previousLength)
 			{
@@ -1364,7 +1370,7 @@ namespace RTC
 			// NOTE: This throws if given length is higher than buffer length.
 			SetLength(newPaddedLength);
 
-			auto newPaddingLength = newPaddedLength - newNotPaddedLength;
+			const auto newPaddingLength = newPaddedLength - newNotPaddedLength;
 
 			if (newPaddingLength > 0)
 			{
@@ -1525,7 +1531,7 @@ namespace RTC
 			{
 				auto csrcsLength = GetCsrcCount();
 
-				if (GetLength() < (ptr - GetBuffer()) + csrcsLength)
+				if (GetLength() < static_cast<size_t>(ptr - GetBuffer()) + csrcsLength)
 				{
 					MS_WARN_TAG(rtp, "invalid Packet, not enough space for the announced CSRC list");
 
@@ -1539,7 +1545,7 @@ namespace RTC
 			if (HasHeaderExtension())
 			{
 				// The Header Extension is at least 4 bytes.
-				if (GetLength() < (ptr - GetBuffer()) + 4)
+				if (GetLength() < static_cast<size_t>(ptr - GetBuffer()) + 4)
 				{
 					MS_WARN_TAG(rtp, "invalid Packet, not enough space for the announced Header Extension");
 
@@ -1548,7 +1554,7 @@ namespace RTC
 
 				const auto headerExtensionLength = GetHeaderExtensionLength();
 
-				if (GetLength() < (ptr - GetBuffer()) + headerExtensionLength)
+				if (GetLength() < static_cast<size_t>(ptr - GetBuffer()) + headerExtensionLength)
 				{
 					MS_WARN_TAG(
 					  rtp, "invalid Packet, not enough space for the announced Header Extension value");
@@ -1589,7 +1595,7 @@ namespace RTC
 
 			// Here we are at the end of the Packet.
 			MS_ASSERT(
-			  ptr - GetBuffer() == GetLength(),
+			  static_cast<size_t>(ptr - GetBuffer()) == GetLength(),
 			  "Packet computed length does not match its assigned length");
 
 			return true;
@@ -1603,14 +1609,14 @@ namespace RTC
 			{
 				const uint8_t* extensionsStart = GetHeaderExtensionValue();
 				const uint8_t* extensionsEnd   = extensionsStart + GetHeaderExtensionValueLength();
-				uint8_t* ptr                   = const_cast<uint8_t*>(extensionsStart);
+				auto* ptr                      = const_cast<uint8_t*>(extensionsStart);
 
 				// One-Byte Extensions cannot have length 0.
 				while (ptr < extensionsEnd)
 				{
 					const auto* extension = reinterpret_cast<OneByteExtension*>(ptr);
 					const uint8_t id      = extension->id;
-					// NOTE: In Ont-Byte Extensions, announced value must be incremented
+					// NOTE: In One-Byte Extensions, announced value must be incremented
 					// by 1.
 					const size_t len = extension->len + 1;
 
@@ -1663,7 +1669,7 @@ namespace RTC
 				const uint8_t* extensionsEnd   = extensionsStart + GetHeaderExtensionValueLength();
 				// ptr points to the Extension id field (1 byte).
 				// ptr+1 points to the length field (1 byte, can have value 0).
-				uint8_t* ptr = const_cast<uint8_t*>(extensionsStart);
+				auto* ptr = const_cast<uint8_t*>(extensionsStart);
 
 				// Two-Byte Extensions can have length 0.
 				while (ptr + 1 < extensionsEnd)

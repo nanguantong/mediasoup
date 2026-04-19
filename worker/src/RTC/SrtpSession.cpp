@@ -15,7 +15,7 @@ namespace RTC
 	/* Static. */
 
 	static constexpr size_t EncryptBufferSize{ 65536 };
-	thread_local static uint8_t EncryptBuffer[EncryptBufferSize];
+	alignas(4) thread_local uint8_t EncryptBuffer[EncryptBufferSize];
 
 	/* Class methods. */
 
@@ -226,8 +226,7 @@ namespace RTC
 				{
 					MS_ABORT("srtp_dealloc() failed: %s", DepLibSRTP::GetErrorString(err).c_str());
 				}
-				// NOLINTNEXTLINE
-				catch (const std::exception& error)
+				catch (const std::exception& error) // NOLINT(bugprone-empty-catch)
 				{
 					// NOTE: This is to avoid a warning:
 					// '~SrtpSession' has a non-throwing exception specification but can
@@ -352,7 +351,7 @@ namespace RTC
 		}
 
 		// Update the given data pointer and len.
-		*data = (const uint8_t*)EncryptBuffer;
+		*data = const_cast<const uint8_t*>(EncryptBuffer);
 		*len  = encryptLen;
 
 		return true;

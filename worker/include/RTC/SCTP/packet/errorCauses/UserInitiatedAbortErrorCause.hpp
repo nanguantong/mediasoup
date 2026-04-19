@@ -3,6 +3,7 @@
 
 #include "common.hpp"
 #include "RTC/SCTP/packet/ErrorCause.hpp"
+#include <string_view>
 
 namespace RTC
 {
@@ -76,20 +77,24 @@ namespace RTC
 				return HasVariableLengthValue();
 			}
 
-			const uint8_t* GetUpperLayerAbortReason() const
+			const std::string_view GetUpperLayerAbortReason() const
 			{
-				return GetVariableLengthValue();
+				const auto* value = GetVariableLengthValue();
+
+				if (!value)
+				{
+					return {};
+				}
+
+				return std::string_view(reinterpret_cast<const char*>(value), GetVariableLengthValueLength());
 			}
 
-			uint16_t GetUpperLayerAbortReasonLength() const
-			{
-				return GetVariableLengthValueLength();
-			}
-
-			void SetUpperLayerAbortReason(const uint8_t* reason, uint16_t reasonLength);
+			void SetUpperLayerAbortReason(const std::string_view& reason);
 
 		protected:
 			UserInitiatedAbortErrorCause* SoftClone(const uint8_t* buffer) const final;
+
+			virtual const std::string ContentToString() const override final;
 		};
 	} // namespace SCTP
 } // namespace RTC

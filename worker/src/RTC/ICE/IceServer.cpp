@@ -12,7 +12,7 @@ namespace RTC
 		/* Static. */
 
 		static constexpr size_t StunResponseFactoryBufferLength{ 65536 };
-		thread_local static uint8_t StunResponseFactoryBuffer[StunResponseFactoryBufferLength];
+		thread_local uint8_t StunResponseFactoryBuffer[StunResponseFactoryBufferLength];
 		static constexpr size_t MaxTuples{ 8 };
 		static constexpr uint8_t ConsentCheckMinTimeoutSec{ 10u };
 		static constexpr uint8_t ConsentCheckMaxTimeoutSec{ 60u };
@@ -20,13 +20,13 @@ namespace RTC
 		/* Class variables. */
 
 		// clang-format off
-	std::unordered_map<IceServer::IceState, std::string> IceServer::iceStateToString =
-	{
-		{ IceServer::IceState::NEW,          "new"          },
-		{ IceServer::IceState::CONNECTED,    "connected"    },
-		{ IceServer::IceState::COMPLETED,    "completed"    },
-		{ IceServer::IceState::DISCONNECTED, "disconnected" },
-	};
+		std::unordered_map<IceServer::IceState, std::string> IceServer::iceStateToString =
+		{
+			{ IceServer::IceState::NEW,          "new"          },
+			{ IceServer::IceState::CONNECTED,    "connected"    },
+			{ IceServer::IceState::COMPLETED,    "completed"    },
+			{ IceServer::IceState::DISCONNECTED, "disconnected" },
+		};
 		// clang-format on
 
 		/* Class methods. */
@@ -423,15 +423,10 @@ namespace RTC
 				{
 					// We may have changed our usernameFragment and password, so check the
 					// old ones.
-					// clang-format off
-				if (
-				  !this->oldUsernameFragment.empty() &&
-				  !this->oldPassword.empty() &&
-				  request->CheckAuthentication(
-				    this->oldUsernameFragment, this->oldPassword
-				  ) == RTC::ICE::StunPacket::AuthenticationResult::OK
-				)
-					// clang-format on
+					if (
+					  !this->oldUsernameFragment.empty() && !this->oldPassword.empty() &&
+					  request->CheckAuthentication(this->oldUsernameFragment, this->oldPassword) ==
+					    RTC::ICE::StunPacket::AuthenticationResult::OK)
 					{
 						MS_DEBUG_TAG(ice, "using old ICE credentials");
 
@@ -564,7 +559,7 @@ namespace RTC
 			}
 			else
 			{
-				thread_local static std::string_view errorReasonPhrase;
+				thread_local std::string_view errorReasonPhrase;
 
 				response->GetErrorCode(errorReasonPhrase);
 

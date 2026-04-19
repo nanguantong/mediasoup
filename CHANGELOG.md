@@ -2,6 +2,27 @@
 
 ### NEXT
 
+### 3.19.19
+
+- Worker: Ensure 4-byte alignment for network packet receive buffers and test buffers to avoid undefined behavior ([PR #1756](https://github.com/versatica/mediasoup/pull/1756).
+- Worker: Update liburing from 2.12-1 to 2.14-1 ([PR #1761](https://github.com/versatica/mediasoup/pull/1761).
+
+### 3.19.18
+
+- Worker: Improve `Utils::Crypto::GetRandomUInt()` ([PR #1725](https://github.com/versatica/mediasoup/pull/1725).
+- Convert `WORKER_CLOSE` into a notification ([PR #1729](https://github.com/versatica/mediasoup/pull/1729).
+- Node tests: Replace `sctp` unmaintained library with `werift-sctp` ([PR #1732](https://github.com/versatica/mediasoup/pull/1732), thanks to @shinyoshiaki for his help with `werift-sctp`.
+- Worker: Require C++20 ([PR #1741](https://github.com/versatica/mediasoup/pull/1741).
+- Fix "SCTP failed" if no DataChannel is created on a Transport with `enableSctp: true` ([PR #1749](https://github.com/versatica/mediasoup/pull/1749).
+
+### 3.19.17
+
+- `ICE::StunPacket`: Fix wrong memory access in `GetXorMappedAddress()` method ([08c1ec9](https://github.com/versatica/mediasoup/commit/ea464d40ef77247c3ff7acd10e4a0118665fdd14)).
+
+### 3.19.16
+
+- `RTP::ProbationGenerator`: Remove wrong warning log ([PR #1703](https://github.com/versatica/mediasoup/pull/1703).
+
 ### 3.19.15
 
 - `RtpStreamSend`: duplicated packets are discarded ([PR #1683](https://github.com/versatica/mediasoup/pull/1683).

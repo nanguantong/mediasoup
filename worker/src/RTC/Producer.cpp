@@ -10,7 +10,6 @@
 #include "RTC/RTCP/Feedback.hpp"
 #include "RTC/RTCP/XrReceiverReferenceTime.hpp"
 #include "RTC/RTP/Codecs/Tools.hpp"
-#include "RTC/RtpHeaderExtensionIds.hpp"
 #ifdef MS_RTC_LOGGER_RTP
 #include "RTC/RtcLogger.hpp"
 #endif
@@ -22,7 +21,7 @@ namespace RTC
 	/* Static */
 
 	static constexpr size_t ProducerSendBufferSize{ 65536 };
-	thread_local static uint8_t ProducerSendBuffer[ProducerSendBufferSize];
+	thread_local uint8_t ProducerSendBuffer[ProducerSendBufferSize];
 	static constexpr unsigned int SendNackDelay{ 10u }; // In ms.
 
 	/* Instance methods. */
@@ -87,26 +86,17 @@ namespace RTC
 
 			// rid is optional.
 			// However ssrc or rid must be present (if more than 1 encoding).
-			// clang-format off
 			if (
-				encodings->size() > 1 &&
-				!encoding->ssrc().has_value() &&
-				!flatbuffers::IsFieldPresent(encoding, FBS::RtpParameters::EncodingMapping::VT_RID)
-			)
-			// clang-format on
+			  encodings->size() > 1 && !encoding->ssrc().has_value() &&
+			  !flatbuffers::IsFieldPresent(encoding, FBS::RtpParameters::EncodingMapping::VT_RID))
 			{
 				MS_THROW_TYPE_ERROR("wrong entry in rtpMapping.encodings (missing ssrc or rid)");
 			}
 
 			// If there is no mid and a single encoding, ssrc or rid must be present.
-			// clang-format off
 			if (
-				this->rtpParameters.mid.empty() &&
-				encodings->size() == 1 &&
-				!encoding->ssrc().has_value() &&
-				!flatbuffers::IsFieldPresent(encoding, FBS::RtpParameters::EncodingMapping::VT_RID)
-			)
-			// clang-format on
+			  this->rtpParameters.mid.empty() && encodings->size() == 1 && !encoding->ssrc().has_value() &&
+			  !flatbuffers::IsFieldPresent(encoding, FBS::RtpParameters::EncodingMapping::VT_RID))
 			{
 				MS_THROW_TYPE_ERROR(
 				  "wrong entry in rtpMapping.encodings (missing ssrc or rid, or rtpParameters.mid)");
@@ -820,14 +810,9 @@ namespace RTC
 		//
 		// NOTE: We know that this may only happen before calling MangleRtpPacket()
 		// so the SSRC of the packet is still the original one and not the mapped one.
-		//
-		// clang-format off
 		if (
-			this->currentRtpPacket &&
-			this->currentRtpPacket->GetSsrc() == ssrc &&
-			this->currentRtpPacket->IsKeyFrame()
-		)
-		// clang-format on
+		  this->currentRtpPacket && this->currentRtpPacket->GetSsrc() == ssrc &&
+		  this->currentRtpPacket->IsKeyFrame())
 		{
 			return;
 		}
@@ -835,7 +820,7 @@ namespace RTC
 		this->keyFrameRequestManager->KeyFrameNeeded(ssrc);
 	}
 
-	RTC::RtpStreamRecv* Producer::GetRtpStream(const RTC::RTP::Packet* packet)
+	RTC::RTP::RtpStreamRecv* Producer::GetRtpStream(const RTC::RTP::Packet* packet)
 	{
 		MS_TRACE();
 
@@ -994,14 +979,9 @@ namespace RTC
 
 		// If not found, and there is a single encoding without ssrc and RID, this
 		// may be the media or RTX stream.
-		//
-		// clang-format off
 		if (
-			this->rtpParameters.encodings.size() == 1 &&
-			!this->rtpParameters.encodings[0].ssrc &&
-			this->rtpParameters.encodings[0].rid.empty()
-		)
-		// clang-format on
+		  this->rtpParameters.encodings.size() == 1 && !this->rtpParameters.encodings[0].ssrc &&
+		  this->rtpParameters.encodings[0].rid.empty())
 		{
 			auto& encoding           = this->rtpParameters.encodings[0];
 			const auto* mediaCodec   = this->rtpParameters.GetCodecForEncoding(encoding);
@@ -1061,7 +1041,7 @@ namespace RTC
 		return nullptr;
 	}
 
-	RTC::RtpStreamRecv* Producer::CreateRtpStream(
+	RTC::RTP::RtpStreamRecv* Producer::CreateRtpStream(
 	  const RTC::RTP::Packet* packet, const RTC::RtpCodecParameters& mediaCodec, size_t encodingIdx)
 	{
 		MS_TRACE();
@@ -1087,7 +1067,7 @@ namespace RTC
 		  mediaCodec.payloadType);
 
 		// Set stream params.
-		RTC::RtpStream::Params params;
+		RTC::RTP::RtpStream::Params params;
 
 		params.encodingIdx    = encodingIdx;
 		params.ssrc           = ssrc;
@@ -1151,7 +1131,7 @@ namespace RTC
 		  this->type == RtpParameters::Type::SIMULCAST && this->rtpMapping.encodings.size() > 1;
 
 		// Create a RtpStreamRecv for receiving a media stream.
-		auto* rtpStream = new RTC::RtpStreamRecv(this, params, SendNackDelay, useRtpInactivityCheck);
+		auto* rtpStream = new RTC::RTP::RtpStreamRecv(this, params, SendNackDelay, useRtpInactivityCheck);
 
 		// Insert into the maps.
 		this->mapSsrcRtpStream[ssrc]              = rtpStream;
@@ -1174,7 +1154,7 @@ namespace RTC
 		return rtpStream;
 	}
 
-	void Producer::NotifyNewRtpStream(RTC::RtpStreamRecv* rtpStream)
+	void Producer::NotifyNewRtpStream(RTC::RTP::RtpStreamRecv* rtpStream)
 	{
 		MS_TRACE();
 
@@ -1184,7 +1164,7 @@ namespace RTC
 		this->listener->OnProducerNewRtpStream(this, rtpStream, mappedSsrc);
 	}
 
-	inline bool Producer::MangleRtpPacket(RTC::RTP::Packet* packet, RTC::RtpStreamRecv* rtpStream) const
+	inline bool Producer::MangleRtpPacket(RTC::RTP::Packet* packet, RTC::RTP::RtpStreamRecv* rtpStream) const
 	{
 		MS_TRACE();
 
@@ -1214,8 +1194,8 @@ namespace RTC
 
 		// Mangle RTP header extensions.
 		{
-			thread_local static uint8_t buffer[4096];
-			thread_local static std::vector<RTC::RTP::Packet::Extension> extensions;
+			thread_local uint8_t buffer[4096];
+			thread_local std::vector<RTC::RTP::Packet::Extension> extensions;
 
 			// This happens just once.
 			if (extensions.capacity() != 24)
@@ -1443,14 +1423,9 @@ namespace RTC
 			{
 				// If video orientation was not yet detected or any value has changed,
 				// emit event.
-				// clang-format off
 				if (
-					!this->videoOrientationDetected ||
-					camera != this->videoOrientation.camera ||
-					flip != this->videoOrientation.flip ||
-					rotation != this->videoOrientation.rotation
-				)
-				// clang-format on
+				  !this->videoOrientationDetected || camera != this->videoOrientation.camera ||
+				  flip != this->videoOrientation.flip || rotation != this->videoOrientation.rotation)
 				{
 					this->videoOrientationDetected  = true;
 					this->videoOrientation.camera   = camera;
@@ -1513,7 +1488,7 @@ namespace RTC
 		{
 			auto rtpPacketDump = packet->FillBuffer(this->shared->channelNotifier->GetBufferBuilder());
 			auto traceInfo     = FBS::Producer::CreateKeyFrameTraceInfo(
-        this->shared->channelNotifier->GetBufferBuilder(), rtpPacketDump, isRtx);
+			  this->shared->channelNotifier->GetBufferBuilder(), rtpPacketDump, isRtx);
 
 			auto notification = FBS::Producer::CreateTraceNotification(
 			  this->shared->channelNotifier->GetBufferBuilder(),
@@ -1529,7 +1504,7 @@ namespace RTC
 		{
 			auto rtpPacketDump = packet->FillBuffer(this->shared->channelNotifier->GetBufferBuilder());
 			auto traceInfo     = FBS::Producer::CreateRtpTraceInfo(
-        this->shared->channelNotifier->GetBufferBuilder(), rtpPacketDump, isRtx);
+			  this->shared->channelNotifier->GetBufferBuilder(), rtpPacketDump, isRtx);
 
 			auto notification = FBS::Producer::CreateTraceNotification(
 			  this->shared->channelNotifier->GetBufferBuilder(),
@@ -1648,7 +1623,8 @@ namespace RTC
 		  notification);
 	}
 
-	inline void Producer::OnRtpStreamScore(RTC::RtpStream* rtpStream, uint8_t score, uint8_t previousScore)
+	inline void Producer::OnRtpStreamScore(
+	  RTC::RTP::RtpStream* rtpStream, uint8_t score, uint8_t previousScore)
 	{
 		MS_TRACE();
 
@@ -1657,14 +1633,14 @@ namespace RTC
 
 		// Notify the listener.
 		this->listener->OnProducerRtpStreamScore(
-		  this, static_cast<RTC::RtpStreamRecv*>(rtpStream), score, previousScore);
+		  this, static_cast<RTC::RTP::RtpStreamRecv*>(rtpStream), score, previousScore);
 
 		// Emit the score event.
 		EmitScore();
 	}
 
 	inline void Producer::OnRtpStreamSendRtcpPacket(
-	  RTC::RtpStreamRecv* /*rtpStream*/, RTC::RTCP::Packet* packet)
+	  RTC::RTP::RtpStreamRecv* /*rtpStream*/, RTC::RTCP::Packet* packet)
 	{
 		switch (packet->GetType())
 		{
@@ -1720,7 +1696,7 @@ namespace RTC
 	}
 
 	inline void Producer::OnRtpStreamNeedWorstRemoteFractionLost(
-	  RTC::RtpStreamRecv* rtpStream, uint8_t& worstRemoteFractionLost)
+	  RTC::RTP::RtpStreamRecv* rtpStream, uint8_t& worstRemoteFractionLost)
 	{
 		auto mappedSsrc = this->mapRtpStreamMappedSsrc.at(rtpStream);
 

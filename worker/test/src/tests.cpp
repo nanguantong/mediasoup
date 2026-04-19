@@ -1,8 +1,11 @@
+#include "common.hpp"
 #include "DepLibSRTP.hpp"
 #include "DepLibUV.hpp"
 #include "DepLibWebRTC.hpp"
 #include "DepOpenSSL.hpp"
+#ifndef MS_SCTP_STACK
 #include "DepUsrSCTP.hpp"
+#endif
 #include "Settings.hpp"
 #include "Utils.hpp"
 #include <catch2/catch_session.hpp>
@@ -46,19 +49,23 @@ int main(int argc, char* argv[])
 	DepLibUV::ClassInit();
 	DepOpenSSL::ClassInit();
 	DepLibSRTP::ClassInit();
+#ifndef MS_SCTP_STACK
 	DepUsrSCTP::ClassInit();
+#endif
 	DepLibWebRTC::ClassInit();
 	Utils::Crypto::ClassInit();
 
 	Catch::Session session;
 
-	int status = session.run(argc, argv);
+	const int status = session.run(argc, argv);
 
 	// Free static stuff.
 	DepLibSRTP::ClassDestroy();
 	Utils::Crypto::ClassDestroy();
 	DepLibWebRTC::ClassDestroy();
+#ifndef MS_SCTP_STACK
 	DepUsrSCTP::ClassDestroy();
+#endif
 	DepLibUV::ClassDestroy();
 
 	return status;

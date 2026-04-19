@@ -38,7 +38,7 @@ namespace RTC
 			/**
 			 * Zero Checksum Alternate Error Detection Method.
 			 */
-			// NOLINTNEXTLINE (performance-enum-size)
+			// NOLINTNEXTLINE(performance-enum-size)
 			enum class AlternateErrorDetectionMethod : uint32_t
 			{
 				NONE           = 0x0000,
@@ -65,7 +65,7 @@ namespace RTC
 			 */
 			static ZeroChecksumAcceptableParameter* Factory(uint8_t* buffer, size_t bufferLength);
 
-			static const std::string& AlternateErrorDetectionMethod2String(
+			static const std::string& AlternateErrorDetectionMethodToString(
 			  AlternateErrorDetectionMethod alternateErrorDetectionMethod);
 
 		private:
@@ -78,8 +78,8 @@ namespace RTC
 			static ZeroChecksumAcceptableParameter* ParseStrict(
 			  const uint8_t* buffer, size_t bufferLength, uint16_t parameterLength, uint8_t padding);
 
-			static std::unordered_map<AlternateErrorDetectionMethod, std::string>
-			  alternateErrorDetectionMethod2String;
+			static const std::unordered_map<AlternateErrorDetectionMethod, std::string>
+			  AlternateErrorDetectionMethod2String;
 
 		private:
 			/**

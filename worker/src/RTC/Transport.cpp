@@ -1,14 +1,13 @@
-#include "flatbuffers/stl_emulation.h"
 #define MS_CLASS "RTC::Transport"
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/Transport.hpp"
-#ifdef MS_LIBURING_SUPPORTED
-#include "DepLibUring.hpp"
-#endif
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
+#ifdef MS_LIBURING_SUPPORTED
+#include "DepLibUring.hpp"
+#endif
 #include "FBS/transport.h"
 #include "RTC/BweType.hpp"
 #include "RTC/Consts.hpp"
@@ -20,6 +19,10 @@
 #include "RTC/RTCP/FeedbackRtpTransport.hpp"
 #include "RTC/RTCP/XrDelaySinceLastRr.hpp"
 #include "RTC/RtpDictionaries.hpp"
+#ifdef MS_SCTP_STACK
+#include "RTC/SCTP/association/Association.hpp"
+#include "RTC/SCTP/public/SctpOptions.hpp"
+#endif
 #include "RTC/SimpleConsumer.hpp"
 #include "RTC/SimulcastConsumer.hpp"
 #include "RTC/SvcConsumer.hpp"
@@ -42,7 +45,9 @@ namespace RTC
 	  const std::string& id,
 	  RTC::Transport::Listener* listener,
 	  const FBS::Transport::Options* options)
-	  : id(id), shared(shared), listener(listener),
+	  : id(id),
+	    shared(shared),
+	    listener(listener),
 	    recvRtpTransmission(/*ignorePaddingOnlyPackets*/ false),
 	    sendRtpTransmission(/*ignorePaddingOnlyPackets*/ false),
 	    recvRtxTransmission(/*ignorePaddingOnlyPackets*/ false, 1000u),
@@ -61,8 +66,9 @@ namespace RTC
 			}
 		}
 
-		if (auto initialAvailableOutgoingBitrate = options->initialAvailableOutgoingBitrate();
-		    initialAvailableOutgoingBitrate.has_value())
+		if (
+		  auto initialAvailableOutgoingBitrate = options->initialAvailableOutgoingBitrate();
+		  initialAvailableOutgoingBitrate.has_value())
 		{
 			this->initialAvailableOutgoingBitrate = initialAvailableOutgoingBitrate.value();
 		}
@@ -105,6 +111,19 @@ namespace RTC
 				sctpSendBufferSize = DefaultSctpSendBufferSize;
 			}
 
+#ifdef MS_SCTP_STACK
+			// TODO: SCTP: Many interesting options missing.
+			const RTC::SCTP::SctpOptions sctpOptions = { .sourcePort         = 5000,
+				                                           .destinationPort    = 5000,
+				                                           .maxOutboundStreams = 65535,
+				                                           .maxInboundStreams =
+				                                             options->numSctpStreams()->mis(),
+				                                           // TODO: SCTP: Sure?
+				                                           .maxSendMessageSize = this->maxMessageSize,
+				                                           .maxSendBufferSize  = sctpSendBufferSize };
+
+			this->sctpAssociation = std::make_unique<RTC::SCTP::Association>(sctpOptions, this);
+#else
 			// This may throw.
 			this->sctpAssociation = new RTC::SctpAssociation(
 			  this,
@@ -113,6 +132,7 @@ namespace RTC
 			  this->maxMessageSize,
 			  sctpSendBufferSize,
 			  options->isDataChannel());
+#endif
 		}
 
 		// Create the RTCP timer.
@@ -163,9 +183,17 @@ namespace RTC
 		}
 		this->mapDataConsumers.clear();
 
+#ifdef MS_SCTP_STACK
+		// NOTE: We don't do anything here since the `Destroying()` method has already
+		// been called by the Transport subclass and it closes the SCTP Association.
+		// NOTE: We cannot do it here in the destructor because here we are no longer
+		// the Transport subclass but Transport parent (this is how the destruction
+		// chain works in C++).
+#else
 		// Delete SCTP association.
 		delete this->sctpAssociation;
 		this->sctpAssociation = nullptr;
+#endif
 
 		// Delete the RTCP timer.
 		delete this->rtcpTimer;
@@ -343,6 +371,36 @@ namespace RTC
 			// Add sctpParameters.
 			sctpParameters = this->sctpAssociation->FillBuffer(builder);
 
+#ifdef MS_SCTP_STACK
+			// NOTE: There is never permanent FAILED state.
+			switch (this->sctpAssociation->GetAssociationState())
+			{
+				case RTC::SCTP::Types::AssociationState::NEW:
+				{
+					sctpState = FBS::SctpAssociation::SctpState::NEW;
+					break;
+				}
+
+				case RTC::SCTP::Types::AssociationState::CONNECTING:
+				{
+					sctpState = FBS::SctpAssociation::SctpState::CONNECTING;
+					break;
+				}
+
+				case RTC::SCTP::Types::AssociationState::CONNECTED:
+				{
+					sctpState = FBS::SctpAssociation::SctpState::CONNECTED;
+					break;
+				}
+
+				case RTC::SCTP::Types::AssociationState::SHUTTING_DOWN:
+				case RTC::SCTP::Types::AssociationState::CLOSED:
+				{
+					sctpState = FBS::SctpAssociation::SctpState::CLOSED;
+					break;
+				}
+			}
+#else
 			switch (this->sctpAssociation->GetState())
 			{
 				case RTC::SctpAssociation::SctpState::NEW:
@@ -375,7 +433,7 @@ namespace RTC
 					break;
 				}
 			}
-
+#endif
 			sctpListener = this->sctpListener.FillBuffer(builder);
 		}
 
@@ -424,6 +482,36 @@ namespace RTC
 		if (this->sctpAssociation)
 		{
 			// Add sctpState.
+#ifdef MS_SCTP_STACK
+			// NOTE: There is never permanent FAILED state.
+			switch (this->sctpAssociation->GetAssociationState())
+			{
+				case RTC::SCTP::Types::AssociationState::NEW:
+				{
+					sctpState = FBS::SctpAssociation::SctpState::NEW;
+					break;
+				}
+
+				case RTC::SCTP::Types::AssociationState::CONNECTING:
+				{
+					sctpState = FBS::SctpAssociation::SctpState::CONNECTING;
+					break;
+				}
+
+				case RTC::SCTP::Types::AssociationState::CONNECTED:
+				{
+					sctpState = FBS::SctpAssociation::SctpState::CONNECTED;
+					break;
+				}
+
+				case RTC::SCTP::Types::AssociationState::SHUTTING_DOWN:
+				case RTC::SCTP::Types::AssociationState::CLOSED:
+				{
+					sctpState = FBS::SctpAssociation::SctpState::CLOSED;
+					break;
+				}
+			}
+#else
 			switch (this->sctpAssociation->GetState())
 			{
 				case RTC::SctpAssociation::SctpState::NEW:
@@ -456,6 +544,7 @@ namespace RTC
 					break;
 				}
 			}
+#endif
 		}
 
 		return FBS::Transport::CreateStatsDirect(
@@ -725,20 +814,21 @@ namespace RTC
 					// - there is transport-wide-cc-01 RTP header extension, and
 					// - there is "transport-cc" in codecs RTCP feedback.
 					//
-					// clang-format off
 					if (
-						rtpHeaderExtensionIds.transportWideCc01 != 0u &&
-						std::any_of(
-							codecs.begin(), codecs.end(), [](const RTC::RtpCodecParameters& codec)
-							{
-								return std::any_of(
-									codec.rtcpFeedback.begin(), codec.rtcpFeedback.end(), [](const RTC::RtcpFeedback& fb)
-									{
-										return fb.type == "transport-cc";
-									});
-							})
-					)
-					// clang-format on
+					  rtpHeaderExtensionIds.transportWideCc01 != 0u &&
+					  std::any_of(
+					    codecs.begin(),
+					    codecs.end(),
+					    [](const RTC::RtpCodecParameters& codec)
+					    {
+						    return std::any_of(
+						      codec.rtcpFeedback.begin(),
+						      codec.rtcpFeedback.end(),
+						      [](const RTC::RtcpFeedback& fb)
+						      {
+							      return fb.type == "transport-cc";
+						      });
+					    }))
 					{
 						MS_DEBUG_TAG(bwe, "enabling TransportCongestionControlServer with transport-cc");
 
@@ -749,20 +839,20 @@ namespace RTC
 					// - there is abs-send-time RTP header extension, and
 					// - there is "remb" in codecs RTCP feedback.
 					//
-					// clang-format off
 					else if (
-						rtpHeaderExtensionIds.absSendTime != 0u &&
-						std::any_of(
-							codecs.begin(), codecs.end(), [](const RTC::RtpCodecParameters& codec)
-							{
-								return std::any_of(
-									codec.rtcpFeedback.begin(), codec.rtcpFeedback.end(), [](const RTC::RtcpFeedback& fb)
-									{
-										return fb.type == "goog-remb";
-									});
-							})
-					)
-					// clang-format on
+					  rtpHeaderExtensionIds.absSendTime != 0u && std::any_of(
+					                                               codecs.begin(),
+					                                               codecs.end(),
+					                                               [](const RTC::RtpCodecParameters& codec)
+					                                               {
+						                                               return std::any_of(
+						                                                 codec.rtcpFeedback.begin(),
+						                                                 codec.rtcpFeedback.end(),
+						                                                 [](const RTC::RtcpFeedback& fb)
+						                                                 {
+							                                                 return fb.type == "goog-remb";
+						                                                 });
+					                                               }))
 					{
 						MS_DEBUG_TAG(bwe, "enabling TransportCongestionControlServer with REMB");
 
@@ -904,21 +994,22 @@ namespace RTC
 					// - there is transport-wide-cc-01 RTP header extension, and
 					// - there is "transport-cc" in codecs RTCP feedback.
 					//
-					// clang-format off
-						if (
-								consumer->GetKind() == RTC::Media::Kind::VIDEO &&
-								rtpHeaderExtensionIds.transportWideCc01 != 0u &&
-								std::any_of(
-									codecs.begin(), codecs.end(), [](const RTC::RtpCodecParameters& codec)
-									{
-									return std::any_of(
-											codec.rtcpFeedback.begin(), codec.rtcpFeedback.end(), [](const RTC::RtcpFeedback& fb)
-											{
-											return fb.type == "transport-cc";
-											});
-									})
-							 )
-					// clang-format on
+					if (
+					  consumer->GetKind() == RTC::Media::Kind::VIDEO &&
+					  rtpHeaderExtensionIds.transportWideCc01 != 0u &&
+					  std::any_of(
+					    codecs.begin(),
+					    codecs.end(),
+					    [](const RTC::RtpCodecParameters& codec)
+					    {
+						    return std::any_of(
+						      codec.rtcpFeedback.begin(),
+						      codec.rtcpFeedback.end(),
+						      [](const RTC::RtcpFeedback& fb)
+						      {
+							      return fb.type == "transport-cc";
+						      });
+					    }))
 					{
 						MS_DEBUG_TAG(bwe, "enabling TransportCongestionControlClient with transport-cc");
 
@@ -930,21 +1021,22 @@ namespace RTC
 					// - there is abs-send-time RTP header extension, and
 					// - there is "remb" in codecs RTCP feedback.
 					//
-					// clang-format off
-						else if (
-								consumer->GetKind() == RTC::Media::Kind::VIDEO &&
-								rtpHeaderExtensionIds.absSendTime != 0u &&
-								std::any_of(
-									codecs.begin(), codecs.end(), [](const RTC::RtpCodecParameters& codec)
-									{
-									return std::any_of(
-											codec.rtcpFeedback.begin(), codec.rtcpFeedback.end(), [](const RTC::RtcpFeedback& fb)
-											{
-											return fb.type == "goog-remb";
-											});
-									})
-								)
-					// clang-format on
+					else if (
+					  consumer->GetKind() == RTC::Media::Kind::VIDEO &&
+					  rtpHeaderExtensionIds.absSendTime != 0u &&
+					  std::any_of(
+					    codecs.begin(),
+					    codecs.end(),
+					    [](const RTC::RtpCodecParameters& codec)
+					    {
+						    return std::any_of(
+						      codec.rtcpFeedback.begin(),
+						      codec.rtcpFeedback.end(),
+						      [](const RTC::RtcpFeedback& fb)
+						      {
+							      return fb.type == "goog-remb";
+						      });
+					    }))
 					{
 						MS_DEBUG_TAG(bwe, "enabling TransportCongestionControlClient with REMB");
 
@@ -990,22 +1082,22 @@ namespace RTC
 				// - there is transport-wide-cc-01 RTP header extension, and
 				// - there is "transport-cc" in codecs RTCP feedback.
 				//
-				// clang-format off
-					if (
-							!this->senderBwe &&
-							consumer->GetKind() == RTC::Media::Kind::VIDEO &&
-							rtpHeaderExtensionIds.transportWideCc01 != 0u &&
-							std::any_of(
-								codecs.begin(), codecs.end(), [](const RTC::RtpCodecParameters& codec)
-								{
-								return std::any_of(
-										codec.rtcpFeedback.begin(), codec.rtcpFeedback.end(), [](const RTC::RtcpFeedback& fb)
-										{
-										return fb.type == "transport-cc";
-										});
-								})
-						 )
-				// clang-format on
+				if (
+				  !this->senderBwe && consumer->GetKind() == RTC::Media::Kind::VIDEO &&
+				  rtpHeaderExtensionIds.transportWideCc01 != 0u &&
+				  std::any_of(
+				    codecs.begin(),
+				    codecs.end(),
+				    [](const RTC::RtpCodecParameters& codec)
+				    {
+					    return std::any_of(
+					      codec.rtcpFeedback.begin(),
+					      codec.rtcpFeedback.end(),
+					      [](const RTC::RtcpFeedback& fb)
+					      {
+						      return fb.type == "transport-cc";
+					      });
+				    }))
 				{
 					MS_DEBUG_TAG(bwe, "enabling SenderBandwidthEstimator");
 
@@ -1136,6 +1228,16 @@ namespace RTC
 
 				request->Accept(FBS::Response::Body::DataProducer_DumpResponse, dumpOffset);
 
+				if (dataProducer->GetType() == RTC::DataProducer::Type::SCTP)
+				{
+					// Tell to the SCTP association.
+#ifdef MS_SCTP_STACK
+					this->sctpAssociation->MayConnect();
+#else
+					this->sctpAssociation->HandleDataProducer(dataProducer);
+#endif
+				}
+
 				break;
 			}
 
@@ -1160,7 +1262,9 @@ namespace RTC
 				  this->shared,
 				  dataConsumerId,
 				  dataProducerId,
+#ifndef MS_SCTP_STACK
 				  this->sctpAssociation,
+#endif
 				  this,
 				  body,
 				  this->maxMessageSize);
@@ -1229,13 +1333,21 @@ namespace RTC
 
 				if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
 				{
+#ifdef MS_SCTP_STACK
+					if (this->sctpAssociation->GetAssociationState() == RTC::SCTP::Types::AssociationState::CONNECTED)
+#else
 					if (this->sctpAssociation->GetState() == RTC::SctpAssociation::SctpState::CONNECTED)
+#endif
 					{
 						dataConsumer->SctpAssociationConnected();
 					}
 
 					// Tell to the SCTP association.
+#ifdef MS_SCTP_STACK
+					this->sctpAssociation->MayConnect();
+#else
 					this->sctpAssociation->HandleDataConsumer(dataConsumer);
+#endif
 				}
 
 				break;
@@ -1362,6 +1474,16 @@ namespace RTC
 
 			case Channel::ChannelRequest::Method::TRANSPORT_CLOSE_DATAPRODUCER:
 			{
+				if (!this->sctpAssociation)
+				{
+					MS_WARN_TAG(sctp, "cannot close a DataProducer, no SCTP Association");
+					;
+
+					request->Accept();
+
+					break;
+				}
+
 				const auto* body = request->data->body_as<FBS::Transport::CloseDataProducerRequest>();
 
 				// This may throw.
@@ -1383,8 +1505,12 @@ namespace RTC
 
 				if (dataProducer->GetType() == RTC::DataProducer::Type::SCTP)
 				{
+#ifdef MS_SCTP_STACK
+					// TODO: SCTP
+#else
 					// Tell the SctpAssociation so it can reset the SCTP stream.
 					this->sctpAssociation->DataProducerClosed(dataProducer);
+#endif
 				}
 
 				// Delete it.
@@ -1397,6 +1523,15 @@ namespace RTC
 
 			case Channel::ChannelRequest::Method::TRANSPORT_CLOSE_DATACONSUMER:
 			{
+				if (!this->sctpAssociation)
+				{
+					MS_WARN_TAG(sctp, "cannot close a DataConsumer, no SCTP Association");
+
+					request->Accept();
+
+					break;
+				}
+
 				const auto* body = request->data->body_as<FBS::Transport::CloseDataConsumerRequest>();
 
 				// This may throw.
@@ -1412,8 +1547,12 @@ namespace RTC
 
 				if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
 				{
+#ifdef MS_SCTP_STACK
+					// TODO: SCTP
+#else
 					// Tell the SctpAssociation so it can reset the SCTP stream.
 					this->sctpAssociation->DataConsumerClosed(dataConsumer);
+#endif
 				}
 
 				// Delete it.
@@ -1458,6 +1597,17 @@ namespace RTC
 	{
 		MS_TRACE();
 
+#ifdef MS_SCTP_STACK
+		if (this->sctpAssociation)
+		{
+			// NOTE: We don't invoke `Shutdown()` but `Close()` in the SCTP Association
+			// because at this point we are closing everything and we won't have any
+			// chance to complete the SCTP SHUTDOWN + SHUTDOWN_ACK + SHUTDOWN_COMPLETE
+			// dance, so we invoke `Close()` which just sends a SCTP ABORT.
+			this->sctpAssociation->Close();
+		}
+#endif
+
 		this->destroying = true;
 	}
 
@@ -1484,7 +1634,11 @@ namespace RTC
 		// Tell the SctpAssociation.
 		if (this->sctpAssociation)
 		{
+#ifdef MS_SCTP_STACK
+			this->sctpAssociation->MayConnect();
+#else
 			this->sctpAssociation->TransportConnected();
+#endif
 		}
 
 		// Start the RTCP timer.
@@ -1529,6 +1683,14 @@ namespace RTC
 			auto* dataConsumer = kv.second;
 
 			dataConsumer->TransportDisconnected();
+		}
+
+		// Tell the SctpAssociation.
+		if (this->sctpAssociation)
+		{
+#ifndef MS_SCTP_STACK
+			this->sctpAssociation->TransportDisconnected();
+#endif
 		}
 
 		// Stop the RTCP timer.
@@ -1663,7 +1825,11 @@ namespace RTC
 		}
 
 		// Pass it to the SctpAssociation.
+#ifdef MS_SCTP_STACK
+		this->sctpAssociation->ReceiveSctpData(data, len);
+#else
 		this->sctpAssociation->ProcessSctpData(data, len);
+#endif
 	}
 
 	void Transport::CheckNoDataProducer(const std::string& dataProducerId) const
@@ -1925,12 +2091,7 @@ namespace RTC
 							auto* remb = static_cast<RTC::RTCP::FeedbackPsRembPacket*>(afb);
 
 							// Pass it to the TCC client.
-							// clang-format off
-							if (
-								this->tccClient &&
-								this->tccClient->GetBweType() == RTC::BweType::REMB
-							)
-							// clang-format on
+							if (this->tccClient && this->tccClient->GetBweType() == RTC::BweType::REMB)
 							{
 								this->tccClient->ReceiveEstimatedBitrate(remb->GetBitrate());
 							}
@@ -1943,7 +2104,7 @@ namespace RTC
 							  rtcp,
 							  "ignoring unsupported %s Feedback PS AFB packet "
 							  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
-							  RTC::RTCP::FeedbackPsPacket::MessageType2String(feedback->GetMessageType()).c_str(),
+							  RTC::RTCP::FeedbackPsPacket::MessageTypeToString(feedback->GetMessageType()).c_str(),
 							  feedback->GetSenderSsrc(),
 							  feedback->GetMediaSsrc());
 
@@ -1957,7 +2118,7 @@ namespace RTC
 						  rtcp,
 						  "ignoring unsupported %s Feedback packet "
 						  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
-						  RTC::RTCP::FeedbackPsPacket::MessageType2String(feedback->GetMessageType()).c_str(),
+						  RTC::RTCP::FeedbackPsPacket::MessageTypeToString(feedback->GetMessageType()).c_str(),
 						  feedback->GetSenderSsrc(),
 						  feedback->GetMediaSsrc());
 					}
@@ -1973,17 +2134,10 @@ namespace RTC
 
 				// If no Consumer is found and this is not a Transport Feedback for the
 				// probation SSRC or any Consumer RTX SSRC, ignore it.
-				//
-				// clang-format off
 				if (
-					!consumer &&
-					feedback->GetMessageType() != RTC::RTCP::FeedbackRtp::MessageType::TCC &&
-					(
-						feedback->GetMediaSsrc() != RTC::RTP::ProbationGenerator::Ssrc ||
-						!GetConsumerByRtxSsrc(feedback->GetMediaSsrc())
-					)
-				)
-				// clang-format on
+				  !consumer && feedback->GetMessageType() != RTC::RTCP::FeedbackRtp::MessageType::TCC &&
+				  (feedback->GetMediaSsrc() != RTC::RTP::ProbationGenerator::Ssrc ||
+				   !GetConsumerByRtxSsrc(feedback->GetMediaSsrc())))
 				{
 					MS_DEBUG_TAG(
 					  rtcp,
@@ -2044,7 +2198,7 @@ namespace RTC
 						  rtcp,
 						  "ignoring unsupported %s Feedback packet "
 						  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
-						  RTC::RTCP::FeedbackRtpPacket::MessageType2String(feedback->GetMessageType()).c_str(),
+						  RTC::RTCP::FeedbackRtpPacket::MessageTypeToString(feedback->GetMessageType()).c_str(),
 						  feedback->GetSenderSsrc(),
 						  feedback->GetMediaSsrc());
 					}
@@ -2407,59 +2561,59 @@ namespace RTC
 		  notification);
 	}
 
-	inline void Transport::OnProducerPaused(RTC::Producer* producer)
+	void Transport::OnProducerPaused(RTC::Producer* producer)
 	{
 		MS_TRACE();
 
 		this->listener->OnTransportProducerPaused(this, producer);
 	}
 
-	inline void Transport::OnProducerResumed(RTC::Producer* producer)
+	void Transport::OnProducerResumed(RTC::Producer* producer)
 	{
 		MS_TRACE();
 
 		this->listener->OnTransportProducerResumed(this, producer);
 	}
 
-	inline void Transport::OnProducerNewRtpStream(
-	  RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc)
+	void Transport::OnProducerNewRtpStream(
+	  RTC::Producer* producer, RTC::RTP::RtpStreamRecv* rtpStream, uint32_t mappedSsrc)
 	{
 		MS_TRACE();
 
 		this->listener->OnTransportProducerNewRtpStream(this, producer, rtpStream, mappedSsrc);
 	}
 
-	inline void Transport::OnProducerRtpStreamScore(
-	  RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, uint8_t score, uint8_t previousScore)
+	void Transport::OnProducerRtpStreamScore(
+	  RTC::Producer* producer, RTC::RTP::RtpStreamRecv* rtpStream, uint8_t score, uint8_t previousScore)
 	{
 		MS_TRACE();
 
 		this->listener->OnTransportProducerRtpStreamScore(this, producer, rtpStream, score, previousScore);
 	}
 
-	inline void Transport::OnProducerRtcpSenderReport(
-	  RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, bool first)
+	void Transport::OnProducerRtcpSenderReport(
+	  RTC::Producer* producer, RTC::RTP::RtpStreamRecv* rtpStream, bool first)
 	{
 		MS_TRACE();
 
 		this->listener->OnTransportProducerRtcpSenderReport(this, producer, rtpStream, first);
 	}
 
-	inline void Transport::OnProducerRtpPacketReceived(RTC::Producer* producer, RTC::RTP::Packet* packet)
+	void Transport::OnProducerRtpPacketReceived(RTC::Producer* producer, RTC::RTP::Packet* packet)
 	{
 		MS_TRACE();
 
 		this->listener->OnTransportProducerRtpPacketReceived(this, producer, packet);
 	}
 
-	inline void Transport::OnProducerSendRtcpPacket(RTC::Producer* /*producer*/, RTC::RTCP::Packet* packet)
+	void Transport::OnProducerSendRtcpPacket(RTC::Producer* /*producer*/, RTC::RTCP::Packet* packet)
 	{
 		MS_TRACE();
 
 		SendRtcpPacket(packet);
 	}
 
-	inline void Transport::OnProducerNeedWorstRemoteFractionLost(
+	void Transport::OnProducerNeedWorstRemoteFractionLost(
 	  RTC::Producer* producer, uint32_t mappedSsrc, uint8_t& worstRemoteFractionLost)
 	{
 		MS_TRACE();
@@ -2468,7 +2622,7 @@ namespace RTC
 		  this, producer, mappedSsrc, worstRemoteFractionLost);
 	}
 
-	inline void Transport::OnConsumerSendRtpPacket(RTC::Consumer* consumer, RTC::RTP::Packet* packet)
+	void Transport::OnConsumerSendRtpPacket(RTC::Consumer* consumer, RTC::RTP::Packet* packet)
 	{
 		MS_TRACE();
 
@@ -2481,13 +2635,9 @@ namespace RTC
 		packet->UpdateAbsSendTime(DepLibUV::GetTimeMs());
 
 		// Update transport wide sequence number if present.
-		// clang-format off
 		if (
-			this->tccClient &&
-			this->tccClient->GetBweType() == RTC::BweType::TRANSPORT_CC &&
-			packet->UpdateTransportWideCc01(this->transportWideCcSeq + 1)
-		)
-		// clang-format on
+		  this->tccClient && this->tccClient->GetBweType() == RTC::BweType::TRANSPORT_CC &&
+		  packet->UpdateTransportWideCc01(this->transportWideCcSeq + 1))
 		{
 			this->transportWideCcSeq++;
 
@@ -2567,7 +2717,7 @@ namespace RTC
 		this->sendRtpTransmission.Update(packet);
 	}
 
-	inline void Transport::OnConsumerRetransmitRtpPacket(RTC::Consumer* consumer, RTC::RTP::Packet* packet)
+	void Transport::OnConsumerRetransmitRtpPacket(RTC::Consumer* consumer, RTC::RTP::Packet* packet)
 	{
 		MS_TRACE();
 
@@ -2575,13 +2725,9 @@ namespace RTC
 		packet->UpdateAbsSendTime(DepLibUV::GetTimeMs());
 
 		// Update transport wide sequence number if present.
-		// clang-format off
 		if (
-			this->tccClient &&
-			this->tccClient->GetBweType() == RTC::BweType::TRANSPORT_CC &&
-			packet->UpdateTransportWideCc01(this->transportWideCcSeq + 1)
-		)
-		// clang-format on
+		  this->tccClient && this->tccClient->GetBweType() == RTC::BweType::TRANSPORT_CC &&
+		  packet->UpdateTransportWideCc01(this->transportWideCcSeq + 1))
 		{
 			this->transportWideCcSeq++;
 
@@ -2656,7 +2802,7 @@ namespace RTC
 		this->sendRtxTransmission.Update(packet);
 	}
 
-	inline void Transport::OnConsumerKeyFrameRequested(RTC::Consumer* consumer, uint32_t mappedSsrc)
+	void Transport::OnConsumerKeyFrameRequested(RTC::Consumer* consumer, uint32_t mappedSsrc)
 	{
 		MS_TRACE();
 
@@ -2670,7 +2816,7 @@ namespace RTC
 		this->listener->OnTransportConsumerKeyFrameRequested(this, consumer, mappedSsrc);
 	}
 
-	inline void Transport::OnConsumerNeedBitrateChange(RTC::Consumer* /*consumer*/)
+	void Transport::OnConsumerNeedBitrateChange(RTC::Consumer* /*consumer*/)
 	{
 		MS_TRACE();
 
@@ -2680,7 +2826,7 @@ namespace RTC
 		ComputeOutgoingDesiredBitrate();
 	}
 
-	inline void Transport::OnConsumerNeedZeroBitrate(RTC::Consumer* /*consumer*/)
+	void Transport::OnConsumerNeedZeroBitrate(RTC::Consumer* /*consumer*/)
 	{
 		MS_TRACE();
 
@@ -2692,7 +2838,7 @@ namespace RTC
 		ComputeOutgoingDesiredBitrate(/*forceBitrate*/ true);
 	}
 
-	inline void Transport::OnConsumerProducerClosed(RTC::Consumer* consumer)
+	void Transport::OnConsumerProducerClosed(RTC::Consumer* consumer)
 	{
 		MS_TRACE();
 
@@ -2728,7 +2874,7 @@ namespace RTC
 		}
 	}
 
-	inline void Transport::OnDataProducerMessageReceived(
+	void Transport::OnDataProducerMessageReceived(
 	  RTC::DataProducer* dataProducer,
 	  const uint8_t* msg,
 	  size_t len,
@@ -2742,21 +2888,21 @@ namespace RTC
 		  this, dataProducer, msg, len, ppid, subchannels, requiredSubchannel);
 	}
 
-	inline void Transport::OnDataProducerPaused(RTC::DataProducer* dataProducer)
+	void Transport::OnDataProducerPaused(RTC::DataProducer* dataProducer)
 	{
 		MS_TRACE();
 
 		this->listener->OnTransportDataProducerPaused(this, dataProducer);
 	}
 
-	inline void Transport::OnDataProducerResumed(RTC::DataProducer* dataProducer)
+	void Transport::OnDataProducerResumed(RTC::DataProducer* dataProducer)
 	{
 		MS_TRACE();
 
 		this->listener->OnTransportDataProducerResumed(this, dataProducer);
 	}
 
-	inline void Transport::OnDataConsumerSendMessage(
+	void Transport::OnDataConsumerSendMessage(
 	  RTC::DataConsumer* dataConsumer, const uint8_t* msg, size_t len, uint32_t ppid, onQueuedCallback* cb)
 	{
 		MS_TRACE();
@@ -2764,7 +2910,7 @@ namespace RTC
 		SendMessage(dataConsumer, msg, len, ppid, cb);
 	}
 
-	inline void Transport::OnDataConsumerDataProducerClosed(RTC::DataConsumer* dataConsumer)
+	void Transport::OnDataConsumerDataProducerClosed(RTC::DataConsumer* dataConsumer)
 	{
 		MS_TRACE();
 
@@ -2774,17 +2920,40 @@ namespace RTC
 		// Notify the listener.
 		this->listener->OnTransportDataConsumerDataProducerClosed(this, dataConsumer);
 
-		if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
+		if (this->sctpAssociation && dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
 		{
+#ifdef MS_SCTP_STACK
+			// TODO: SCTP
+#else
 			// Tell the SctpAssociation so it can reset the SCTP stream.
 			this->sctpAssociation->DataConsumerClosed(dataConsumer);
+#endif
 		}
 
 		// Delete it.
 		delete dataConsumer;
 	}
 
-	inline void Transport::OnSctpAssociationConnecting(RTC::SctpAssociation* /*sctpAssociation*/)
+#ifdef MS_SCTP_STACK
+	bool Transport::OnAssociationSendData(const uint8_t* data, size_t len)
+	{
+		MS_TRACE();
+
+		// Ignore if destroying.
+		// NOTE: This is because when the child class (i.e. WebRtcTransport) is deleted,
+		// its destructor is called first and then the parent Transport's destructor,
+		// and we would end here calling SendSctpData() which is an abstract method.
+		if (this->destroying)
+		{
+			MS_WARN_DEV("ignoring sending data because Transport is being destroying");
+
+			return false;
+		}
+
+		return SendSctpData(data, len);
+	}
+
+	void Transport::OnAssociationConnecting()
 	{
 		MS_TRACE();
 
@@ -2799,7 +2968,7 @@ namespace RTC
 		  sctpStateChangeOffset);
 	}
 
-	inline void Transport::OnSctpAssociationConnected(RTC::SctpAssociation* /*sctpAssociation*/)
+	void Transport::OnAssociationConnected()
 	{
 		MS_TRACE();
 
@@ -2823,9 +2992,14 @@ namespace RTC
 		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
 		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
 		  sctpStateChangeOffset);
+
+		// TODO: SCTP: REMOVE
+		MS_DUMP("---- SCTP Association connected, dump():");
+		this->sctpAssociation->Dump();
 	}
 
-	inline void Transport::OnSctpAssociationFailed(RTC::SctpAssociation* /*sctpAssociation*/)
+	void Transport::OnAssociationFailed(
+	  RTC::SCTP::Types::ErrorKind /*errorKind*/, std::string_view /*errorMessage*/)
 	{
 		MS_TRACE();
 
@@ -2851,7 +3025,8 @@ namespace RTC
 		  sctpStateChangeOffset);
 	}
 
-	inline void Transport::OnSctpAssociationClosed(RTC::SctpAssociation* /*sctpAssociation*/)
+	void Transport::OnAssociationClosed(
+	  RTC::SCTP::Types::ErrorKind /*errorKind*/, std::string_view /*errorMessage*/)
 	{
 		MS_TRACE();
 
@@ -2877,7 +3052,182 @@ namespace RTC
 		  sctpStateChangeOffset);
 	}
 
-	inline void Transport::OnSctpAssociationSendData(
+	void Transport::OnAssociationRestarted()
+	{
+		MS_TRACE();
+
+		// TODO: SCTP
+	}
+
+	void Transport::OnAssociationError(RTC::SCTP::Types::ErrorKind errorKind, std::string_view errorMessage)
+	{
+		MS_TRACE();
+
+		const auto errorKindStringView = RTC::SCTP::Types::ErrorKindToString(errorKind);
+
+		MS_WARN_TAG(
+		  sctp,
+		  "SCTP Association error [kind:%.*s, message:%.*s]",
+		  static_cast<int>(errorKindStringView.size()),
+		  errorKindStringView.data(),
+		  static_cast<int>(errorMessage.size()),
+		  errorMessage.data());
+	}
+
+	void Transport::OnAssociationMessageReceived(RTC::SCTP::Message /*message*/)
+	{
+		MS_TRACE();
+
+		// TODO: SCTP
+	}
+
+	void Transport::OnAssociationStreamsResetPerformed(std::span<const uint16_t> /*outboundStreamIds*/)
+	{
+		MS_TRACE();
+
+		// TODO: SCTP
+	}
+
+	void Transport::OnAssociationStreamsResetFailed(
+	  std::span<const uint16_t> /*outboundStreamIds*/, std::string_view /*errorMessage*/)
+	{
+		MS_TRACE();
+
+		// TODO: SCTP
+	}
+
+	void Transport::OnAssociationInboundStreamsReset(std::span<const uint16_t> /*inboundStreamIds*/)
+	{
+		MS_TRACE();
+
+		// TODO: SCTP
+	}
+
+	void Transport::OnAssociationStreamBufferedAmountLow(uint16_t /*streamId*/)
+	{
+		MS_TRACE();
+
+		// TODO: SCTP
+	}
+
+	void Transport::OnAssociationTotalBufferedAmountLow()
+	{
+		MS_TRACE();
+
+		// TODO: SCTP
+	}
+
+	bool Transport::OnAssociationIsTransportReadyForSctp()
+	{
+		MS_TRACE();
+
+		// We are ready for SCTP traffic if the transport is connected (e.g. the
+		// WebRtcTransport has ICE and DTLS connected) and there is at least a
+		// DataProducer or DataConsumer.
+		//
+		// NOTE: We don't want to start SCTP connection if there are no DataProducers
+		// and DataConsumers because the peer (e.g. a browser) may have not started
+		// its SCTP stack (e.g. no "m=application" media section in its SDP) so if we
+		// initiate the SCTP connection it would fail after some time.
+		return IsConnected() && (this->mapDataProducers.size() > 0 || this->mapDataConsumers.size() > 0);
+	}
+
+	// TODO: SCTP: Add OnAssociationLifecycleMessageXxxxxx() methods.
+#else
+	void Transport::OnSctpAssociationConnecting(RTC::SctpAssociation* /*sctpAssociation*/)
+	{
+		MS_TRACE();
+
+		// Notify the Node Transport.
+		auto sctpStateChangeOffset = FBS::Transport::CreateSctpStateChangeNotification(
+		  this->shared->channelNotifier->GetBufferBuilder(), FBS::SctpAssociation::SctpState::CONNECTING);
+
+		this->shared->channelNotifier->Emit(
+		  this->id,
+		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
+		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
+		  sctpStateChangeOffset);
+	}
+
+	void Transport::OnSctpAssociationConnected(RTC::SctpAssociation* /*sctpAssociation*/)
+	{
+		MS_TRACE();
+
+		// Tell all DataConsumers.
+		for (auto& kv : this->mapDataConsumers)
+		{
+			auto* dataConsumer = kv.second;
+
+			if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
+			{
+				dataConsumer->SctpAssociationConnected();
+			}
+		}
+
+		// Notify the Node Transport.
+		auto sctpStateChangeOffset = FBS::Transport::CreateSctpStateChangeNotification(
+		  this->shared->channelNotifier->GetBufferBuilder(), FBS::SctpAssociation::SctpState::CONNECTED);
+
+		this->shared->channelNotifier->Emit(
+		  this->id,
+		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
+		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
+		  sctpStateChangeOffset);
+	}
+
+	void Transport::OnSctpAssociationFailed(RTC::SctpAssociation* /*sctpAssociation*/)
+	{
+		MS_TRACE();
+
+		// Tell all DataConsumers.
+		for (auto& kv : this->mapDataConsumers)
+		{
+			auto* dataConsumer = kv.second;
+
+			if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
+			{
+				dataConsumer->SctpAssociationClosed();
+			}
+		}
+
+		// Notify the Node Transport.
+		auto sctpStateChangeOffset = FBS::Transport::CreateSctpStateChangeNotification(
+		  this->shared->channelNotifier->GetBufferBuilder(), FBS::SctpAssociation::SctpState::FAILED);
+
+		this->shared->channelNotifier->Emit(
+		  this->id,
+		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
+		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
+		  sctpStateChangeOffset);
+	}
+
+	void Transport::OnSctpAssociationClosed(RTC::SctpAssociation* /*sctpAssociation*/)
+	{
+		MS_TRACE();
+
+		// Tell all DataConsumers.
+		for (auto& kv : this->mapDataConsumers)
+		{
+			auto* dataConsumer = kv.second;
+
+			if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
+			{
+				dataConsumer->SctpAssociationClosed();
+			}
+		}
+
+		// Notify the Node Transport.
+		auto sctpStateChangeOffset = FBS::Transport::CreateSctpStateChangeNotification(
+		  this->shared->channelNotifier->GetBufferBuilder(), FBS::SctpAssociation::SctpState::CLOSED);
+
+		this->shared->channelNotifier->Emit(
+		  this->id,
+		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
+		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
+		  sctpStateChangeOffset);
+	}
+
+	void Transport::OnSctpAssociationSendData(
 	  RTC::SctpAssociation* /*sctpAssociation*/, const uint8_t* data, size_t len)
 	{
 		MS_TRACE();
@@ -2888,16 +3238,15 @@ namespace RTC
 		// and we would end here calling SendSctpData() which is an abstract method.
 		if (this->destroying)
 		{
+			MS_WARN_DEV("ignoring sending data because Transport is being destroying");
+
 			return;
 		}
 
-		if (this->sctpAssociation)
-		{
-			SendSctpData(data, len);
-		}
+		SendSctpData(data, len);
 	}
 
-	inline void Transport::OnSctpAssociationMessageReceived(
+	void Transport::OnSctpAssociationMessageReceived(
 	  RTC::SctpAssociation* /*sctpAssociation*/,
 	  uint16_t streamId,
 	  const uint8_t* msg,
@@ -2934,7 +3283,7 @@ namespace RTC
 		}
 	}
 
-	inline void Transport::OnSctpAssociationBufferedAmount(
+	void Transport::OnSctpAssociationBufferedAmount(
 	  RTC::SctpAssociation* /*sctpAssociation*/, uint32_t bufferedAmount)
 	{
 		MS_TRACE();
@@ -2949,8 +3298,9 @@ namespace RTC
 			}
 		}
 	}
+#endif
 
-	inline void Transport::OnTransportCongestionControlClientBitrates(
+	void Transport::OnTransportCongestionControlClientBitrates(
 	  RTC::TransportCongestionControlClient* /*tccClient*/,
 	  RTC::TransportCongestionControlClient::Bitrates& bitrates)
 	{
@@ -2965,7 +3315,7 @@ namespace RTC
 		EmitTraceEventBweType(bitrates);
 	}
 
-	inline void Transport::OnTransportCongestionControlClientSendRtpPacket(
+	void Transport::OnTransportCongestionControlClientSendRtpPacket(
 	  RTC::TransportCongestionControlClient* /*tccClient*/,
 	  RTC::RTP::Packet* packet,
 	  const webrtc::PacedPacketInfo& pacingInfo)
@@ -2976,12 +3326,9 @@ namespace RTC
 		packet->UpdateAbsSendTime(DepLibUV::GetTimeMs());
 
 		// Update transport wide sequence number if present.
-		// clang-format off
 		if (
-			this->tccClient->GetBweType() == RTC::BweType::TRANSPORT_CC &&
-			packet->UpdateTransportWideCc01(this->transportWideCcSeq + 1)
-		)
-		// clang-format on
+		  this->tccClient->GetBweType() == RTC::BweType::TRANSPORT_CC &&
+		  packet->UpdateTransportWideCc01(this->transportWideCcSeq + 1))
 		{
 			this->transportWideCcSeq++;
 
@@ -3070,18 +3417,18 @@ namespace RTC
 		  this->sendProbationTransmission.GetBitrate(DepLibUV::GetTimeMs()));
 	}
 
-	inline void Transport::OnTransportCongestionControlServerSendRtcpPacket(
+	void Transport::OnTransportCongestionControlServerSendRtcpPacket(
 	  RTC::TransportCongestionControlServer* /*tccServer*/, RTC::RTCP::Packet* packet)
 	{
 		MS_TRACE();
 
-		packet->Serialize(RTC::RTCP::Buffer);
+		packet->Serialize(RTC::RTCP::SerializationBuffer);
 
 		SendRtcpPacket(packet);
 	}
 
 #ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
-	inline void Transport::OnSenderBandwidthEstimatorAvailableBitrate(
+	void Transport::OnSenderBandwidthEstimatorAvailableBitrate(
 	  RTC::SenderBandwidthEstimator* /*senderBwe*/,
 	  uint32_t availableBitrate,
 	  uint32_t previousAvailableBitrate)
@@ -3099,7 +3446,7 @@ namespace RTC
 	}
 #endif
 
-	inline void Transport::OnTimer(TimerHandle* timer)
+	void Transport::OnTimer(TimerHandle* timer)
 	{
 		MS_TRACE();
 
@@ -3116,7 +3463,7 @@ namespace RTC
 			 * [1.0, 1.5] times the calculated interval to avoid unintended
 			 * synchronization of all participants.
 			 */
-			interval *= static_cast<float>(Utils::Crypto::GetRandomUInt(10, 15)) / 10;
+			interval *= static_cast<float>(Utils::Crypto::GetRandomUInt<uint16_t>(10, 15)) / 10;
 
 			this->rtcpTimer->Start(interval);
 		}

@@ -203,7 +203,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		packet->Serialize(RTC::RTCP::Buffer);
+		packet->Serialize(RTC::RTCP::SerializationBuffer);
 
 		const auto data = this->shared->channelNotifier->GetBufferBuilder().CreateVector(
 		  packet->GetData(), packet->GetSize());
@@ -245,11 +245,13 @@ namespace RTC
 		RTC::Transport::DataSent(len);
 	}
 
-	void DirectTransport::SendSctpData(const uint8_t* /*data*/, size_t /*len*/)
+	bool DirectTransport::SendSctpData(const uint8_t* /*data*/, size_t /*len*/)
 	{
 		MS_TRACE();
 
 		// Do nothing.
+
+		return false;
 	}
 
 	void DirectTransport::RecvStreamClosed(uint32_t /*ssrc*/)

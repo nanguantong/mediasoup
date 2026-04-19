@@ -7,16 +7,14 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 
-using namespace RTC::SCTP;
-
-SCENARIO("Supported Extensions Parameter (32776)", "[sctp][serializable]")
+SCENARIO("Supported Extensions Parameter (32776)", "[serializable][sctp][parameter]")
 {
-	ResetBuffers();
+	sctpCommon::ResetBuffers();
 
 	SECTION("SupportedExtensionsParameter::Parse() succeeds")
 	{
 		// clang-format off
-		uint8_t buffer[] =
+		alignas(4) uint8_t buffer[] =
 		{
 			// Type:32776 (SUPPORTED_EXTENSIONS), Length: 7
 			0x80, 0x08, 0x00, 0x07,
@@ -28,142 +26,172 @@ SCENARIO("Supported Extensions Parameter (32776)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		auto* parameter = SupportedExtensionsParameter::Parse(buffer, sizeof(buffer));
+		auto* parameter = RTC::SCTP::SupportedExtensionsParameter::Parse(buffer, sizeof(buffer));
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::SUPPORTED_EXTENSIONS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::SUPPORTED_EXTENSIONS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::SKIP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::SKIP);
 
 		REQUIRE(parameter->GetNumberOfChunkTypes() == 3);
-		REQUIRE(parameter->GetChunkTypeAt(0) == Chunk::ChunkType::RE_CONFIG);
-		REQUIRE(parameter->GetChunkTypeAt(1) == Chunk::ChunkType::ECNE);
-		REQUIRE(parameter->GetChunkTypeAt(2) == static_cast<Chunk::ChunkType>(0x42));
+		REQUIRE(parameter->GetChunkTypeAt(0) == RTC::SCTP::Chunk::ChunkType::RE_CONFIG);
+		REQUIRE(parameter->GetChunkTypeAt(1) == RTC::SCTP::Chunk::ChunkType::ECNE);
+		REQUIRE(parameter->GetChunkTypeAt(2) == static_cast<RTC::SCTP::Chunk::ChunkType>(0x42));
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::RE_CONFIG) == true);
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::ECNE) == true);
+		REQUIRE(parameter->IncludesChunkType(static_cast<RTC::SCTP::Chunk::ChunkType>(0x42)) == true);
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::I_DATA) == false);
 
 		/* Serialize it. */
 
-		parameter->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		parameter->Serialize(sctpCommon::SerializeBuffer, sizeof(sctpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ sctpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::SerializeBuffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::SUPPORTED_EXTENSIONS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::SUPPORTED_EXTENSIONS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::SKIP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::SKIP);
 
 		REQUIRE(parameter->GetNumberOfChunkTypes() == 3);
-		REQUIRE(parameter->GetChunkTypeAt(0) == Chunk::ChunkType::RE_CONFIG);
-		REQUIRE(parameter->GetChunkTypeAt(1) == Chunk::ChunkType::ECNE);
-		REQUIRE(parameter->GetChunkTypeAt(2) == static_cast<Chunk::ChunkType>(0x42));
+		REQUIRE(parameter->GetChunkTypeAt(0) == RTC::SCTP::Chunk::ChunkType::RE_CONFIG);
+		REQUIRE(parameter->GetChunkTypeAt(1) == RTC::SCTP::Chunk::ChunkType::ECNE);
+		REQUIRE(parameter->GetChunkTypeAt(2) == static_cast<RTC::SCTP::Chunk::ChunkType>(0x42));
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::RE_CONFIG) == true);
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::ECNE) == true);
+		REQUIRE(parameter->IncludesChunkType(static_cast<RTC::SCTP::Chunk::ChunkType>(0x42)) == true);
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::I_DATA) == false);
 
 		/* Clone it. */
 
-		auto* clonedParameter = parameter->Clone(CloneBuffer, sizeof(CloneBuffer));
+		auto* clonedParameter =
+		  parameter->Clone(sctpCommon::CloneBuffer, sizeof(sctpCommon::CloneBuffer));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(sctpCommon::SerializeBuffer, 0x00, sizeof(sctpCommon::SerializeBuffer));
 
 		delete parameter;
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ clonedParameter,
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ sctpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::CloneBuffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::SUPPORTED_EXTENSIONS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::SUPPORTED_EXTENSIONS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::SKIP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::SKIP);
 
 		REQUIRE(clonedParameter->GetNumberOfChunkTypes() == 3);
-		REQUIRE(clonedParameter->GetChunkTypeAt(0) == Chunk::ChunkType::RE_CONFIG);
-		REQUIRE(clonedParameter->GetChunkTypeAt(1) == Chunk::ChunkType::ECNE);
-		REQUIRE(clonedParameter->GetChunkTypeAt(2) == static_cast<Chunk::ChunkType>(0x42));
+		REQUIRE(clonedParameter->GetChunkTypeAt(0) == RTC::SCTP::Chunk::ChunkType::RE_CONFIG);
+		REQUIRE(clonedParameter->GetChunkTypeAt(1) == RTC::SCTP::Chunk::ChunkType::ECNE);
+		REQUIRE(clonedParameter->GetChunkTypeAt(2) == static_cast<RTC::SCTP::Chunk::ChunkType>(0x42));
+		REQUIRE(clonedParameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::RE_CONFIG) == true);
+		REQUIRE(clonedParameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::ECNE) == true);
+		REQUIRE(
+		  clonedParameter->IncludesChunkType(static_cast<RTC::SCTP::Chunk::ChunkType>(0x42)) == true);
+		REQUIRE(clonedParameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::I_DATA) == false);
 
 		delete clonedParameter;
 	}
 
 	SECTION("SupportedExtensionsParameter::Factory() succeeds")
 	{
-		auto* parameter = SupportedExtensionsParameter::Factory(FactoryBuffer, sizeof(FactoryBuffer));
+		auto* parameter = RTC::SCTP::SupportedExtensionsParameter::Factory(
+		  sctpCommon::FactoryBuffer, sizeof(sctpCommon::FactoryBuffer));
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
+		  /*buffer*/ sctpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::FactoryBuffer),
 		  /*length*/ 4,
-		  /*parameterType*/ Parameter::ParameterType::SUPPORTED_EXTENSIONS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::SUPPORTED_EXTENSIONS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::SKIP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::SKIP);
 
 		REQUIRE(parameter->GetNumberOfChunkTypes() == 0);
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::RE_CONFIG) == false);
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::ECNE) == false);
+		REQUIRE(parameter->IncludesChunkType(static_cast<RTC::SCTP::Chunk::ChunkType>(0x42)) == false);
 
 		/* Modify it. */
 
-		parameter->AddChunkType(Chunk::ChunkType::RE_CONFIG);
-		parameter->AddChunkType(Chunk::ChunkType::CWR);
+		parameter->AddChunkType(RTC::SCTP::Chunk::ChunkType::RE_CONFIG);
+		parameter->AddChunkType(RTC::SCTP::Chunk::ChunkType::CWR);
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
+		  /*buffer*/ sctpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::FactoryBuffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::SUPPORTED_EXTENSIONS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::SUPPORTED_EXTENSIONS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::SKIP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::SKIP);
 
 		REQUIRE(parameter->GetNumberOfChunkTypes() == 2);
-		REQUIRE(parameter->GetChunkTypeAt(0) == Chunk::ChunkType::RE_CONFIG);
-		REQUIRE(parameter->GetChunkTypeAt(1) == Chunk::ChunkType::CWR);
+		REQUIRE(parameter->GetChunkTypeAt(0) == RTC::SCTP::Chunk::ChunkType::RE_CONFIG);
+		REQUIRE(parameter->GetChunkTypeAt(1) == RTC::SCTP::Chunk::ChunkType::CWR);
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::RE_CONFIG) == true);
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::CWR) == true);
 
-		parameter->AddChunkType(Chunk::ChunkType::OPERATION_ERROR);
-		parameter->AddChunkType(Chunk::ChunkType::COOKIE_ACK);
-		parameter->AddChunkType(static_cast<Chunk::ChunkType>(99));
+		parameter->AddChunkType(RTC::SCTP::Chunk::ChunkType::OPERATION_ERROR);
+		parameter->AddChunkType(RTC::SCTP::Chunk::ChunkType::COOKIE_ACK);
+		parameter->AddChunkType(static_cast<RTC::SCTP::Chunk::ChunkType>(99));
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
+		  /*buffer*/ sctpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::FactoryBuffer),
 		  /*length*/ 12,
-		  /*parameterType*/ Parameter::ParameterType::SUPPORTED_EXTENSIONS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::SUPPORTED_EXTENSIONS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::SKIP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::SKIP);
 
 		REQUIRE(parameter->GetNumberOfChunkTypes() == 5);
-		REQUIRE(parameter->GetChunkTypeAt(0) == Chunk::ChunkType::RE_CONFIG);
-		REQUIRE(parameter->GetChunkTypeAt(1) == Chunk::ChunkType::CWR);
-		REQUIRE(parameter->GetChunkTypeAt(2) == Chunk::ChunkType::OPERATION_ERROR);
-		REQUIRE(parameter->GetChunkTypeAt(3) == Chunk::ChunkType::COOKIE_ACK);
-		REQUIRE(parameter->GetChunkTypeAt(4) == static_cast<Chunk::ChunkType>(99));
+		REQUIRE(parameter->GetChunkTypeAt(0) == RTC::SCTP::Chunk::ChunkType::RE_CONFIG);
+		REQUIRE(parameter->GetChunkTypeAt(1) == RTC::SCTP::Chunk::ChunkType::CWR);
+		REQUIRE(parameter->GetChunkTypeAt(2) == RTC::SCTP::Chunk::ChunkType::OPERATION_ERROR);
+		REQUIRE(parameter->GetChunkTypeAt(3) == RTC::SCTP::Chunk::ChunkType::COOKIE_ACK);
+		REQUIRE(parameter->GetChunkTypeAt(4) == static_cast<RTC::SCTP::Chunk::ChunkType>(99));
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::RE_CONFIG) == true);
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::CWR) == true);
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::OPERATION_ERROR) == true);
+		REQUIRE(parameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::COOKIE_ACK) == true);
+		REQUIRE(parameter->IncludesChunkType(static_cast<RTC::SCTP::Chunk::ChunkType>(99)) == true);
 
 		/* Parse itself and compare. */
 
 		auto* parsedParameter =
-		  SupportedExtensionsParameter::Parse(parameter->GetBuffer(), parameter->GetLength());
+		  RTC::SCTP::SupportedExtensionsParameter::Parse(parameter->GetBuffer(), parameter->GetLength());
 
 		delete parameter;
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parsedParameter,
-		  /*buffer*/ FactoryBuffer,
+		  /*buffer*/ sctpCommon::FactoryBuffer,
 		  /*bufferLength*/ 12,
 		  /*length*/ 12,
-		  /*parameterType*/ Parameter::ParameterType::SUPPORTED_EXTENSIONS,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::SUPPORTED_EXTENSIONS,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::SKIP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::SKIP);
 
 		REQUIRE(parsedParameter->GetNumberOfChunkTypes() == 5);
-		REQUIRE(parsedParameter->GetChunkTypeAt(0) == Chunk::ChunkType::RE_CONFIG);
-		REQUIRE(parsedParameter->GetChunkTypeAt(1) == Chunk::ChunkType::CWR);
-		REQUIRE(parsedParameter->GetChunkTypeAt(2) == Chunk::ChunkType::OPERATION_ERROR);
-		REQUIRE(parsedParameter->GetChunkTypeAt(3) == Chunk::ChunkType::COOKIE_ACK);
-		REQUIRE(parsedParameter->GetChunkTypeAt(4) == static_cast<Chunk::ChunkType>(99));
+		REQUIRE(parsedParameter->GetChunkTypeAt(0) == RTC::SCTP::Chunk::ChunkType::RE_CONFIG);
+		REQUIRE(parsedParameter->GetChunkTypeAt(1) == RTC::SCTP::Chunk::ChunkType::CWR);
+		REQUIRE(parsedParameter->GetChunkTypeAt(2) == RTC::SCTP::Chunk::ChunkType::OPERATION_ERROR);
+		REQUIRE(parsedParameter->GetChunkTypeAt(3) == RTC::SCTP::Chunk::ChunkType::COOKIE_ACK);
+		REQUIRE(parsedParameter->GetChunkTypeAt(4) == static_cast<RTC::SCTP::Chunk::ChunkType>(99));
+		REQUIRE(parsedParameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::RE_CONFIG) == true);
+		REQUIRE(parsedParameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::CWR) == true);
+		REQUIRE(parsedParameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::OPERATION_ERROR) == true);
+		REQUIRE(parsedParameter->IncludesChunkType(RTC::SCTP::Chunk::ChunkType::COOKIE_ACK) == true);
+		REQUIRE(parsedParameter->IncludesChunkType(static_cast<RTC::SCTP::Chunk::ChunkType>(99)) == true);
 
 		delete parsedParameter;
 	}

@@ -47,7 +47,7 @@ namespace RTC
 			 * Error Cause Code.
 			 * NOTE: This field MUST be 2 bytes long.
 			 */
-			// NOLINTNEXTLINE (performance-enum-size)
+			// NOLINTNEXTLINE(performance-enum-size)
 			enum class ErrorCauseCode : uint16_t
 			{
 				INVALID_STREAM_IDENTIFIER                    = 0x0001,
@@ -66,7 +66,10 @@ namespace RTC
 			};
 
 			/**
-			 * Struct of a SCTP Error Cause Header.
+			 * Struct of an SCTP Error Cause Header.
+			 *
+			 * @remarks
+			 * - This struct is guaranteed to be aligned to 2 bytes.
 			 */
 			struct ErrorCauseHeader
 			{
@@ -105,10 +108,10 @@ namespace RTC
 			  uint16_t& causeLength,
 			  uint8_t& padding);
 
-			static const std::string& ErrorCauseCode2String(ErrorCauseCode causeCode);
+			static const std::string& ErrorCauseCodeToString(ErrorCauseCode causeCode);
 
 		private:
-			static std::unordered_map<ErrorCauseCode, std::string> errorCauseCode2String;
+			static const std::unordered_map<ErrorCauseCode, std::string> ErrorCauseCode2String;
 
 		protected:
 			/**
@@ -136,6 +139,23 @@ namespace RTC
 			virtual bool HasUnknownCode() const
 			{
 				return false;
+			}
+
+			virtual const std::string ToString() const final
+			{
+				// Get the custom content from the subclass.
+				const auto contentToString = ContentToString();
+
+				if (contentToString.size() > 0)
+				{
+					return ErrorCause::ErrorCauseCodeToString(GetCode()) + " (" +
+					       std::to_string(static_cast<uint16_t>(GetCode())) + ") " + contentToString;
+				}
+				else
+				{
+					return ErrorCause::ErrorCauseCodeToString(GetCode()) + " (" +
+					       std::to_string(static_cast<uint16_t>(GetCode())) + ")";
+				}
 			}
 
 		protected:
@@ -176,6 +196,14 @@ namespace RTC
 			{
 				GetHeaderPointer()->code =
 				  static_cast<ErrorCauseCode>(htons(static_cast<uint16_t>(causeCode)));
+			}
+
+			/**
+			 * Subclasses can override this method.
+			 */
+			virtual const std::string ContentToString() const
+			{
+				return "";
 			}
 		};
 	} // namespace SCTP

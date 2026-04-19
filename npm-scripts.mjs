@@ -20,7 +20,7 @@ const WORKER_PREBUILD_DIR = 'worker/prebuild';
 const GH_OWNER = 'versatica';
 const GH_REPO = 'mediasoup';
 
-// Paths for ESLint to check. Converted to string for convenience.
+// Paths for ESLint to check.
 const ESLINT_PATHS = [
 	'eslint.config.mjs',
 	'jest.config.mjs',
@@ -28,14 +28,12 @@ const ESLINT_PATHS = [
 	'node/src',
 	'npm-scripts.mjs',
 	'worker/scripts',
-].join(' ');
+];
 
-// Paths for ESLint to ignore. Converted to string argument for convenience.
-const ESLINT_IGNORE_PATTERN_ARGS = ['node/src/fbs']
-	.map(entry => `--ignore-pattern ${entry}`)
-	.join(' ');
+// Paths for ESLint to ignore.
+const ESLINT_IGNORE_PATHS = ['node/src/fbs'];
 
-// Paths for Prettier to check/write. Converted to string for convenience.
+// Paths for Prettier to check/write.
 // NOTE: Prettier ignores paths in .gitignore so we don't need to care about
 // node/src/fbs.
 const PRETTIER_PATHS = [
@@ -51,7 +49,7 @@ const PRETTIER_PATHS = [
 	'package.json',
 	'tsconfig.json',
 	'worker/scripts',
-].join(' ');
+];
 
 const task = process.argv[2];
 const taskArgs = process.argv.slice(3).join(' ');
@@ -192,6 +190,18 @@ async function run() {
 			break;
 		}
 
+		case 'tidy:worker': {
+			tidyWorker({ fix: false });
+
+			break;
+		}
+
+		case 'tidy:worker:fix': {
+			tidyWorker({ fix: true });
+
+			break;
+		}
+
 		case 'flatc:node': {
 			await flatcNode();
 
@@ -307,7 +317,7 @@ function buildTypescript({ force }) {
 		return;
 	}
 
-	logInfo('buildTypescript()');
+	logInfo(`buildTypescript() [force:${force}]`);
 
 	deleteNodeLib();
 
@@ -352,11 +362,18 @@ function lintNode() {
 	// rules.
 	executeCmd('eslint-config-prettier eslint.config.mjs');
 
+	const eslintIgnorePatternArgs = ESLINT_IGNORE_PATHS.map(
+		entry => `--ignore-pattern ${entry}`
+	).join(' ');
+	const eslintFiles = ESLINT_PATHS.join(' ');
+
 	executeCmd(
-		`eslint -c eslint.config.mjs --max-warnings 0 ${ESLINT_IGNORE_PATTERN_ARGS} ${ESLINT_PATHS}`
+		`eslint -c eslint.config.mjs --max-warnings 0 ${eslintIgnorePatternArgs} ${eslintFiles}`
 	);
 
-	executeCmd(`prettier --check ${PRETTIER_PATHS}`);
+	const prettierFiles = PRETTIER_PATHS.join(' ');
+
+	executeCmd(`prettier --check ${prettierFiles}`);
 
 	executeCmd('knip --config knip.config.mjs --treat-config-hints-as-errors');
 }
@@ -372,7 +389,9 @@ function lintWorker() {
 function formatNode() {
 	logInfo('formatNode()');
 
-	executeCmd(`prettier --write ${PRETTIER_PATHS}`);
+	const prettierFiles = PRETTIER_PATHS.join(' ');
+
+	executeCmd(`prettier --write ${prettierFiles}`);
 }
 
 function formatWorker() {
@@ -381,6 +400,18 @@ function formatWorker() {
 	installInvoke();
 
 	executeCmd(`"${PYTHON}" -m invoke -r worker format`);
+}
+
+function tidyWorker({ fix }) {
+	logInfo(`tidyWorker() [fix:${fix}]`);
+
+	installInvoke();
+
+	if (fix) {
+		executeCmd(`"${PYTHON}" -m invoke -r worker tidy-fix`);
+	} else {
+		executeCmd(`"${PYTHON}" -m invoke -r worker tidy`);
+	}
 }
 
 async function flatcNode() {
@@ -475,9 +506,9 @@ function installNodeDeps() {
 	// Update package-lock.json.
 	executeCmd('npm install --package-lock-only --ignore-scripts');
 
-	// Check vulnerabilities in deps (exclude dev deps).
-	executeCmd('npm audit --omit=dev');
-	executeCmd('npm audit --omit=dev --prefix worker/scripts');
+	// Check vulnerabilities in deps.
+	executeCmd('npm audit --omit dev');
+	executeCmd('npm audit --prefix worker/scripts');
 }
 
 async function checkRelease() {

@@ -80,7 +80,10 @@ namespace RTC
 			};
 
 			/**
-			 * Struct of a SCTP Parameter Header.
+			 * Struct of an SCTP Parameter Header.
+			 *
+			 * @remarks
+			 * - This struct is guaranteed to be aligned to 2 bytes.
 			 */
 			struct ParameterHeader
 			{
@@ -120,10 +123,10 @@ namespace RTC
 			  uint16_t& parameterLength,
 			  uint8_t& padding);
 
-			static const std::string& ParameterType2String(ParameterType parameterType);
+			static const std::string& ParameterTypeToString(ParameterType parameterType);
 
 		private:
-			static std::unordered_map<ParameterType, std::string> parameterType2String;
+			static const std::unordered_map<ParameterType, std::string> ParameterType2String;
 
 		protected:
 			/**

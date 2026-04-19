@@ -1,18 +1,18 @@
 #include "common.hpp"
 #include "RTC/SCTP/packet/ErrorCause.hpp"
 #include "RTC/SCTP/packet/errorCauses/UnknownErrorCause.hpp"
-#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
+#include "RTC/SCTP/sctpCommon.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 
-SCENARIO("Unknown Error Cause", "[sctp][serializable]")
+SCENARIO("Unknown Error Cause", "[serializable][sctp][errorcause]")
 {
-	ResetBuffers();
+	sctpCommon::ResetBuffers();
 
 	SECTION("UnknownErrorCause::Parse() succeeds")
 	{
 		// clang-format off
-		uint8_t buffer[] =
+		alignas(4) uint8_t buffer[] =
 		{
 			// Code:999 (UNKNOWN), Length: 11
 			0x03, 0xE7, 0x00, 0x0B,
@@ -26,14 +26,14 @@ SCENARIO("Unknown Error Cause", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		auto* errorCause = UnknownErrorCause::Parse(buffer, sizeof(buffer));
+		auto* errorCause = RTC::SCTP::UnknownErrorCause::Parse(buffer, sizeof(buffer));
 
 		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 12,
-		  /*causeCode*/ static_cast<ErrorCause::ErrorCauseCode>(999),
+		  /*causeCode*/ static_cast<RTC::SCTP::ErrorCause::ErrorCauseCode>(999),
 		  /*unknownCode*/ true);
 
 		REQUIRE(errorCause->HasUnknownValue() == true);
@@ -51,16 +51,16 @@ SCENARIO("Unknown Error Cause", "[sctp][serializable]")
 
 		/* Serialize it. */
 
-		errorCause->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		errorCause->Serialize(sctpCommon::SerializeBuffer, sizeof(sctpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ errorCause,
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ sctpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::SerializeBuffer),
 		  /*length*/ 12,
-		  /*causeCode*/ static_cast<ErrorCause::ErrorCauseCode>(999),
+		  /*causeCode*/ static_cast<RTC::SCTP::ErrorCause::ErrorCauseCode>(999),
 		  /*unknownCode*/ true);
 
 		REQUIRE(errorCause->HasUnknownValue() == true);
@@ -78,18 +78,19 @@ SCENARIO("Unknown Error Cause", "[sctp][serializable]")
 
 		/* Clone it. */
 
-		auto* clonedErrorCause = errorCause->Clone(CloneBuffer, sizeof(CloneBuffer));
+		auto* clonedErrorCause =
+		  errorCause->Clone(sctpCommon::CloneBuffer, sizeof(sctpCommon::CloneBuffer));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(sctpCommon::SerializeBuffer, 0x00, sizeof(sctpCommon::SerializeBuffer));
 
 		delete errorCause;
 
 		CHECK_SCTP_ERROR_CAUSE(
 		  /*errorCause*/ clonedErrorCause,
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ sctpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::CloneBuffer),
 		  /*length*/ 12,
-		  /*causeCode*/ static_cast<ErrorCause::ErrorCauseCode>(999),
+		  /*causeCode*/ static_cast<RTC::SCTP::ErrorCause::ErrorCauseCode>(999),
 		  /*unknownCode*/ true);
 
 		REQUIRE(clonedErrorCause->HasUnknownValue() == true);
@@ -112,7 +113,7 @@ SCENARIO("Unknown Error Cause", "[sctp][serializable]")
 	{
 		// Wrong Length field.
 		// clang-format off
-		uint8_t buffer1[] =
+		alignas(4) uint8_t buffer1[] =
 		{
 			// Code:49159 (UNKNOWN), Length: 3
 			0xC0, 0x07, 0x00, 0x03,
@@ -123,11 +124,11 @@ SCENARIO("Unknown Error Cause", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!UnknownErrorCause::Parse(buffer1, sizeof(buffer1)));
+		REQUIRE(!RTC::SCTP::UnknownErrorCause::Parse(buffer1, sizeof(buffer1)));
 
 		// Wrong buffer length.
 		// clang-format off
-		uint8_t buffer2[] =
+		alignas(4) uint8_t buffer2[] =
 		{
 			// Code:49159 (UNKNOWN), Length: 11
 			0xC0, 0x07, 0x00, 0x0B,
@@ -138,6 +139,6 @@ SCENARIO("Unknown Error Cause", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!UnknownErrorCause::Parse(buffer2, sizeof(buffer2)));
+		REQUIRE(!RTC::SCTP::UnknownErrorCause::Parse(buffer2, sizeof(buffer2)));
 	}
 }

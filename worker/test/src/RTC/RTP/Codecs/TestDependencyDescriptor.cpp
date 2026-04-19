@@ -2,19 +2,17 @@
 #include "RTC/RTP/Codecs/DependencyDescriptor.hpp"
 #include <catch2/catch_test_macros.hpp>
 
-using namespace RTC;
-
-class Listener : public ::RTC::RTP::Codecs::DependencyDescriptor::Listener
+SCENARIO("Dependency Descriptor", "[rtp][codecs][dependency-descriptor]")
 {
-public:
-	void OnDependencyDescriptorUpdated(const uint8_t* data, size_t len) override
+	class Listener : public RTC::RTP::Codecs::DependencyDescriptor::Listener
 	{
-	}
-};
+	public:
+		void OnDependencyDescriptorUpdated(const uint8_t* data, size_t len) override
+		{
+		}
+	};
 
-SCENARIO("parse Dependency Descriptor", "[codecs][DD]")
-{
-	SECTION("parse Dependency Descriptor")
+	SECTION("parse")
 	{
 		/**
 		 * Taken from https://issues.webrtc.org/issues/42225660.
@@ -84,9 +82,10 @@ SCENARIO("parse Dependency Descriptor", "[codecs][DD]")
 		Listener listener;
 
 		// clang-format on
-		std::unique_ptr<RTP::Codecs::DependencyDescriptor::TemplateDependencyStructure> templateDependencyStructure;
-		auto dependencyDescriptor = std::unique_ptr<::RTC::RTP::Codecs::DependencyDescriptor>(
-		  ::RTC::RTP::Codecs::DependencyDescriptor::Parse(
+		std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor::TemplateDependencyStructure>
+		  templateDependencyStructure;
+		auto dependencyDescriptor = std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor>(
+		  RTC::RTP::Codecs::DependencyDescriptor::Parse(
 		    data, sizeof(data), std::addressof(listener), templateDependencyStructure));
 
 		REQUIRE(dependencyDescriptor);
@@ -96,7 +95,7 @@ SCENARIO("parse Dependency Descriptor", "[codecs][DD]")
 		REQUIRE(dependencyDescriptor->frameNumber == 303);
 
 		auto* templateStructure = dependencyDescriptor->templateDependencyStructure;
-		std::vector<::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication> dtis{};
+		std::vector<RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication> dtis{};
 		std::vector<uint8_t> fdiffs{};
 		std::vector<uint8_t> fdiffChains{};
 
@@ -104,9 +103,9 @@ SCENARIO("parse Dependency Descriptor", "[codecs][DD]")
 		REQUIRE(templateStructure->templateLayers[0].spatialLayer == 0);
 		REQUIRE(templateStructure->templateLayers[0].temporalLayer == 0);
 		dtis = {
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
 		};
 		REQUIRE(templateStructure->templateLayers[0].decodeTargetIndications == dtis);
 		fdiffs = {};
@@ -117,9 +116,9 @@ SCENARIO("parse Dependency Descriptor", "[codecs][DD]")
 		REQUIRE(templateStructure->templateLayers[1].spatialLayer == 0);
 		REQUIRE(templateStructure->templateLayers[1].temporalLayer == 0);
 		dtis = {
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
 		};
 		REQUIRE(templateStructure->templateLayers[1].decodeTargetIndications == dtis);
 		fdiffs = { 4 };
@@ -130,9 +129,9 @@ SCENARIO("parse Dependency Descriptor", "[codecs][DD]")
 		REQUIRE(templateStructure->templateLayers[2].spatialLayer == 0);
 		REQUIRE(templateStructure->templateLayers[2].temporalLayer == 1);
 		dtis = {
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::NOT_PRESENT,
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::DISCARDABLE,
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::NOT_PRESENT,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::DISCARDABLE,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::SWITCH,
 		};
 		REQUIRE(templateStructure->templateLayers[2].decodeTargetIndications == dtis);
 		fdiffs = { 2 };
@@ -143,9 +142,9 @@ SCENARIO("parse Dependency Descriptor", "[codecs][DD]")
 		REQUIRE(templateStructure->templateLayers[3].spatialLayer == 0);
 		REQUIRE(templateStructure->templateLayers[3].temporalLayer == 2);
 		dtis = {
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::NOT_PRESENT,
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::NOT_PRESENT,
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::DISCARDABLE,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::NOT_PRESENT,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::NOT_PRESENT,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::DISCARDABLE,
 		};
 		REQUIRE(templateStructure->templateLayers[3].decodeTargetIndications == dtis);
 		fdiffs = { 1 };
@@ -156,9 +155,9 @@ SCENARIO("parse Dependency Descriptor", "[codecs][DD]")
 		REQUIRE(templateStructure->templateLayers[4].spatialLayer == 0);
 		REQUIRE(templateStructure->templateLayers[4].temporalLayer == 2);
 		dtis = {
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::NOT_PRESENT,
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::NOT_PRESENT,
-			::RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::DISCARDABLE,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::NOT_PRESENT,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::NOT_PRESENT,
+			RTC::RTP::Codecs::DependencyDescriptor::DecodeTargetIndication::DISCARDABLE,
 		};
 		REQUIRE(templateStructure->templateLayers[4].decodeTargetIndications == dtis);
 		fdiffs = { 1 };
@@ -221,10 +220,10 @@ SCENARIO("parse Dependency Descriptor", "[codecs][DD]")
 
 		Listener listener;
 
-		std::unique_ptr<::RTC::RTP::Codecs::DependencyDescriptor::TemplateDependencyStructure>
+		std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor::TemplateDependencyStructure>
 		  templateDependencyStructure;
-		auto dependencyDescriptor = std::unique_ptr<::RTC::RTP::Codecs::DependencyDescriptor>(
-		  ::RTC::RTP::Codecs::DependencyDescriptor::Parse(
+		auto dependencyDescriptor = std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor>(
+		  RTC::RTP::Codecs::DependencyDescriptor::Parse(
 		    data1, sizeof(data1), std::addressof(listener), templateDependencyStructure));
 
 		REQUIRE(dependencyDescriptor);
@@ -238,8 +237,8 @@ SCENARIO("parse Dependency Descriptor", "[codecs][DD]")
 		};
 
 		// clang-format on
-		dependencyDescriptor = std::unique_ptr<::RTC::RTP::Codecs::DependencyDescriptor>(
-		  ::RTC::RTP::Codecs::DependencyDescriptor::Parse(
+		dependencyDescriptor = std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor>(
+		  RTC::RTP::Codecs::DependencyDescriptor::Parse(
 		    data2, sizeof(data2), std::addressof(listener), templateDependencyStructure));
 
 		REQUIRE(dependencyDescriptor);
@@ -247,11 +246,11 @@ SCENARIO("parse Dependency Descriptor", "[codecs][DD]")
 
 		uint8_t len;
 
-		auto data = dependencyDescriptor->Serialize(len);
+		const auto* data = dependencyDescriptor->Serialize(len);
 
 		// clang-format on
-		dependencyDescriptor = std::unique_ptr<::RTC::RTP::Codecs::DependencyDescriptor>(
-		  ::RTC::RTP::Codecs::DependencyDescriptor::Parse(
+		dependencyDescriptor = std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor>(
+		  RTC::RTP::Codecs::DependencyDescriptor::Parse(
 		    data, sizeof(data), std::addressof(listener), templateDependencyStructure));
 
 		REQUIRE(dependencyDescriptor);
@@ -262,8 +261,8 @@ SCENARIO("parse Dependency Descriptor", "[codecs][DD]")
 		data = dependencyDescriptor->Serialize(len);
 
 		// clang-format on
-		dependencyDescriptor = std::unique_ptr<::RTC::RTP::Codecs::DependencyDescriptor>(
-		  ::RTC::RTP::Codecs::DependencyDescriptor::Parse(
+		dependencyDescriptor = std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor>(
+		  RTC::RTP::Codecs::DependencyDescriptor::Parse(
 		    data, sizeof(data), std::addressof(listener), templateDependencyStructure));
 
 		REQUIRE(dependencyDescriptor);

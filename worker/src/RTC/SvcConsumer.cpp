@@ -56,8 +56,7 @@ namespace RTC
 				this->preferredLayers.spatial = static_cast<int16_t>(encoding.spatialLayers - 1);
 			}
 
-			if (flatbuffers::IsFieldPresent(
-			      data->preferredLayers(), FBS::Consumer::ConsumerLayers::VT_TEMPORALLAYER))
+			if (flatbuffers::IsFieldPresent(data->preferredLayers(), FBS::Consumer::ConsumerLayers::VT_TEMPORALLAYER))
 			{
 				if (this->preferredLayers.temporal > encoding.temporalLayers - 1)
 				{
@@ -89,7 +88,7 @@ namespace RTC
 		// libsrtp bug:
 		// https://github.com/versatica/mediasoup/issues/1437
 		const uint16_t initialOutputSeq =
-		  Utils::Crypto::GetRandomUInt(1000u, std::numeric_limits<uint16_t>::max() / 2);
+		  Utils::Crypto::GetRandomUInt<uint16_t>(1000u, std::numeric_limits<uint16_t>::max() / 2);
 
 		this->rtpSeqManager = RTC::SeqManager<uint16_t>(initialOutputSeq);
 
@@ -281,14 +280,14 @@ namespace RTC
 		}
 	}
 
-	void SvcConsumer::ProducerRtpStream(RTC::RtpStreamRecv* rtpStream, uint32_t /*mappedSsrc*/)
+	void SvcConsumer::ProducerRtpStream(RTC::RTP::RtpStreamRecv* rtpStream, uint32_t /*mappedSsrc*/)
 	{
 		MS_TRACE();
 
 		this->producerRtpStream = rtpStream;
 	}
 
-	void SvcConsumer::ProducerNewRtpStream(RTC::RtpStreamRecv* rtpStream, uint32_t /*mappedSsrc*/)
+	void SvcConsumer::ProducerNewRtpStream(RTC::RTP::RtpStreamRecv* rtpStream, uint32_t /*mappedSsrc*/)
 	{
 		MS_TRACE();
 
@@ -304,7 +303,7 @@ namespace RTC
 	}
 
 	void SvcConsumer::ProducerRtpStreamScore(
-	  RTC::RtpStreamRecv* /*rtpStream*/, uint8_t score, uint8_t previousScore)
+	  RTC::RTP::RtpStreamRecv* /*rtpStream*/, uint8_t score, uint8_t previousScore)
 	{
 		MS_TRACE();
 
@@ -314,19 +313,14 @@ namespace RTC
 		if (RTC::Consumer::IsActive())
 		{
 			// Just check target layers if the stream has died or reborned.
-			// clang-format off
-			if (
-				!this->externallyManagedBitrate ||
-				(score == 0u || previousScore == 0u)
-			)
-			// clang-format on
+			if (!this->externallyManagedBitrate || (score == 0u || previousScore == 0u))
 			{
 				MayChangeLayers();
 			}
 		}
 	}
 
-	void SvcConsumer::ProducerRtcpSenderReport(RTC::RtpStreamRecv* /*rtpStream*/, bool /*first*/)
+	void SvcConsumer::ProducerRtcpSenderReport(RTC::RTP::RtpStreamRecv* /*rtpStream*/, bool /*first*/)
 	{
 		MS_TRACE();
 
@@ -424,12 +418,9 @@ namespace RTC
 			{
 				// Ignore temporal layers lower than the one we already have (taking into account
 				// the spatial layer too).
-				// clang-format off
 				if (
-					spatialLayer == this->provisionalTargetLayers.spatial &&
-					temporalLayer <= this->provisionalTargetLayers.temporal
-				)
-				// clang-format on
+				  spatialLayer == this->provisionalTargetLayers.spatial &&
+				  temporalLayer <= this->provisionalTargetLayers.temporal)
 				{
 					continue;
 				}
@@ -440,15 +431,10 @@ namespace RTC
 				// When using K-SVC we must subtract the bitrate of the current used layer
 				// if the new layer is the temporal layer 0 of an higher spatial layer.
 				//
-				// clang-format off
 				if (
-					this->encodingContext->IsKSvc() &&
-					requiredBitrate &&
-					temporalLayer == 0 &&
-					this->provisionalTargetLayers.spatial > -1 &&
-					spatialLayer > this->provisionalTargetLayers.spatial
-				)
-				// clang-format on
+				  this->encodingContext->IsKSvc() && requiredBitrate && temporalLayer == 0 &&
+				  this->provisionalTargetLayers.spatial > -1 &&
+				  spatialLayer > this->provisionalTargetLayers.spatial)
 				{
 					auto provisionalRequiredBitrate = this->producerRtpStream->GetSpatialLayerBitrate(
 					  nowMs, this->provisionalTargetLayers.spatial);
@@ -546,13 +532,11 @@ namespace RTC
 			UpdateTargetLayers(provisionalTargetLayers.spatial, provisionalTargetLayers.temporal);
 
 			// If this looks like a spatial layer downgrade due to BWE limitations, set member.
-			// clang-format off
 			if (
-				this->rtpStream->GetActiveMs() > BweDowngradeMinActiveMs &&
-				this->encodingContext->GetTargetSpatialLayer() < this->encodingContext->GetCurrentSpatialLayer() &&
-				this->encodingContext->GetCurrentSpatialLayer() <= this->preferredLayers.spatial
-			)
-			// clang-format on
+			  this->rtpStream->GetActiveMs() > BweDowngradeMinActiveMs &&
+			  this->encodingContext->GetTargetSpatialLayer() <
+			    this->encodingContext->GetCurrentSpatialLayer() &&
+			  this->encodingContext->GetCurrentSpatialLayer() <= this->preferredLayers.spatial)
 			{
 				MS_DEBUG_DEV(
 				  "possible target spatial layer downgrade (from %" PRIi16 " to %" PRIi16
@@ -610,7 +594,7 @@ namespace RTC
 		return desiredBitrate;
 	}
 
-	// NOLINTNEXTLINE (misc-no-recursion)
+	// NOLINTNEXTLINE(misc-no-recursion)
 	void SvcConsumer::SendRtpPacket(RTC::RTP::Packet* packet, RTC::RTP::SharedPacket& sharedPacket)
 	{
 		MS_TRACE();
@@ -630,12 +614,7 @@ namespace RTC
 			return;
 		}
 
-		// clang-format off
-		if (
-			this->encodingContext->GetTargetSpatialLayer() == -1 ||
-			this->encodingContext->GetTargetTemporalLayer() == -1
-		)
-		// clang-format on
+		if (this->encodingContext->GetTargetSpatialLayer() == -1 || this->encodingContext->GetTargetTemporalLayer() == -1)
 		{
 #ifdef MS_RTC_LOGGER_RTP
 			packet->logger.Discarded(RTC::RtcLogger::RtpPacket::DiscardReason::INVALID_TARGET_LAYER);
@@ -775,10 +754,10 @@ namespace RTC
 			  origSeq);
 		}
 
-		const RTC::RtpStreamSend::ReceivePacketResult result =
+		const RTC::RTP::RtpStreamSend::ReceivePacketResult result =
 		  this->rtpStream->ReceivePacket(packet, sharedPacket);
 
-		if (result != RTC::RtpStreamSend::ReceivePacketResult::DISCARDED)
+		if (result != RTC::RTP::RtpStreamSend::ReceivePacketResult::DISCARDED)
 		{
 			// Send the packet.
 			this->listener->OnConsumerSendRtpPacket(this, packet);
@@ -813,7 +792,7 @@ namespace RTC
 
 		// If sharedPacket doesn't have a packet inside and it has been stored we
 		// need to clone the packet into it.
-		if (!sharedPacket.HasPacket() && result == RTC::RtpStreamSend::ReceivePacketResult::ACCEPTED_AND_STORED)
+		if (!sharedPacket.HasPacket() && result == RTC::RTP::RtpStreamSend::ReceivePacketResult::ACCEPTED_AND_STORED)
 		{
 			sharedPacket.Assign(packet);
 		}
@@ -825,7 +804,7 @@ namespace RTC
 		{
 			// NOTE: Only send buffered packets if the first packet containing the key
 			// frame was sent.
-			if (result != RTC::RtpStreamSend::ReceivePacketResult::DISCARDED)
+			if (result != RTC::RTP::RtpStreamSend::ReceivePacketResult::DISCARDED)
 			{
 				for (auto& kv : this->targetLayerRetransmissionBuffer)
 				{
@@ -1055,7 +1034,7 @@ namespace RTC
 		  rtp, "[ssrc:%" PRIu32 ", payloadType:%" PRIu8 "]", encoding.ssrc, mediaCodec->payloadType);
 
 		// Set stream params.
-		RTC::RtpStream::Params params;
+		RTC::RTP::RtpStream::Params params;
 
 		params.ssrc           = encoding.ssrc;
 		params.payloadType    = mediaCodec->payloadType;
@@ -1111,7 +1090,7 @@ namespace RTC
 			}
 		}
 
-		this->rtpStream = new RTC::RtpStreamSend(this, params, this->rtpParameters.mid);
+		this->rtpStream = new RTC::RTP::RtpStreamSend(this, params, this->rtpParameters.mid);
 		this->rtpStreams.push_back(this->rtpStream);
 
 		// If the Consumer is paused, tell the RtpStreamSend.
@@ -1146,7 +1125,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		VideoLayers newTargetLayers;
+		RTC::ConsumerTypes::VideoLayers newTargetLayers;
 
 		if (RecalculateTargetLayers(newTargetLayers))
 		{
@@ -1169,7 +1148,7 @@ namespace RTC
 		}
 	}
 
-	bool SvcConsumer::RecalculateTargetLayers(VideoLayers& newTargetLayers) const
+	bool SvcConsumer::RecalculateTargetLayers(RTC::ConsumerTypes::VideoLayers& newTargetLayers) const
 	{
 		MS_TRACE();
 
@@ -1369,7 +1348,7 @@ namespace RTC
 	}
 
 	void SvcConsumer::OnRtpStreamScore(
-	  RTC::RtpStream* /*rtpStream*/, uint8_t /*score*/, uint8_t /*previousScore*/)
+	  RTC::RTP::RtpStream* /*rtpStream*/, uint8_t /*score*/, uint8_t /*previousScore*/)
 	{
 		MS_TRACE();
 
@@ -1389,7 +1368,7 @@ namespace RTC
 	}
 
 	void SvcConsumer::OnRtpStreamRetransmitRtpPacket(
-	  RTC::RtpStreamSend* /*rtpStream*/, RTC::RTP::Packet* packet)
+	  RTC::RTP::RtpStreamSend* /*rtpStream*/, RTC::RTP::Packet* packet)
 	{
 		MS_TRACE();
 

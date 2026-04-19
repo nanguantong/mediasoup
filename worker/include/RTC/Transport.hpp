@@ -14,11 +14,18 @@
 #include "RTC/Producer.hpp"
 #include "RTC/RTCP/CompoundPacket.hpp"
 #include "RTC/RTCP/Packet.hpp"
+#include "RTC/RTP/HeaderExtensionIds.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RateCalculator.hpp"
-#include "RTC/RtpHeaderExtensionIds.hpp"
 #include "RTC/RtpListener.hpp"
+#ifdef MS_SCTP_STACK
+#include "RTC/SCTP/public/AssociationInterface.hpp"
+#include "RTC/SCTP/public/AssociationListener.hpp"
+#include "RTC/SCTP/public/Message.hpp"
+#include "RTC/SCTP/public/SctpTypes.hpp"
+#else
 #include "RTC/SctpAssociation.hpp"
+#endif
 #include "RTC/SctpListener.hpp"
 #include "RTC/Shared.hpp"
 #ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
@@ -37,7 +44,11 @@ namespace RTC
 	                  public RTC::Consumer::Listener,
 	                  public RTC::DataProducer::Listener,
 	                  public RTC::DataConsumer::Listener,
+#ifdef MS_SCTP_STACK
+	                  public RTC::SCTP::AssociationListener,
+#else
 	                  public RTC::SctpAssociation::Listener,
+#endif
 	                  public RTC::TransportCongestionControlClient::Listener,
 	                  public RTC::TransportCongestionControlServer::Listener,
 	                  public Channel::ChannelSocket::RequestHandler,
@@ -65,18 +76,18 @@ namespace RTC
 			virtual void OnTransportProducerNewRtpStream(
 			  RTC::Transport* transport,
 			  RTC::Producer* producer,
-			  RTC::RtpStreamRecv* rtpStream,
+			  RTC::RTP::RtpStreamRecv* rtpStream,
 			  uint32_t mappedSsrc) = 0;
 			virtual void OnTransportProducerRtpStreamScore(
 			  RTC::Transport* transport,
 			  RTC::Producer* producer,
-			  RTC::RtpStreamRecv* rtpStream,
+			  RTC::RTP::RtpStreamRecv* rtpStream,
 			  uint8_t score,
 			  uint8_t previousScore) = 0;
 			virtual void OnTransportProducerRtcpSenderReport(
 			  RTC::Transport* transport,
 			  RTC::Producer* producer,
-			  RTC::RtpStreamRecv* rtpStream,
+			  RTC::RTP::RtpStreamRecv* rtpStream,
 			  bool first) = 0;
 			virtual void OnTransportProducerRtpPacketReceived(
 			  RTC::Transport* transport, RTC::Producer* producer, RTC::RTP::Packet* packet) = 0;
@@ -208,7 +219,7 @@ namespace RTC
 		  size_t len,
 		  uint32_t ppid,
 		  onQueuedCallback* = nullptr)                             = 0;
-		virtual void SendSctpData(const uint8_t* data, size_t len) = 0;
+		virtual bool SendSctpData(const uint8_t* data, size_t len) = 0;
 		virtual void RecvStreamClosed(uint32_t ssrc)               = 0;
 		virtual void SendStreamClosed(uint32_t ssrc)               = 0;
 		void DistributeAvailableOutgoingBitrate();
@@ -232,14 +243,14 @@ namespace RTC
 		void OnProducerPaused(RTC::Producer* producer) override;
 		void OnProducerResumed(RTC::Producer* producer) override;
 		void OnProducerNewRtpStream(
-		  RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc) override;
+		  RTC::Producer* producer, RTC::RTP::RtpStreamRecv* rtpStream, uint32_t mappedSsrc) override;
 		void OnProducerRtpStreamScore(
 		  RTC::Producer* producer,
-		  RTC::RtpStreamRecv* rtpStream,
+		  RTC::RTP::RtpStreamRecv* rtpStream,
 		  uint8_t score,
 		  uint8_t previousScore) override;
 		void OnProducerRtcpSenderReport(
-		  RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, bool first) override;
+		  RTC::Producer* producer, RTC::RTP::RtpStreamRecv* rtpStream, bool first) override;
 		void OnProducerRtpPacketReceived(RTC::Producer* producer, RTC::RTP::Packet* packet) override;
 		void OnProducerSendRtcpPacket(RTC::Producer* producer, RTC::RTCP::Packet* packet) override;
 		void OnProducerNeedWorstRemoteFractionLost(
@@ -280,6 +291,26 @@ namespace RTC
 		  onQueuedCallback* cb = nullptr) override;
 		void OnDataConsumerDataProducerClosed(RTC::DataConsumer* dataConsumer) override;
 
+#ifdef MS_SCTP_STACK
+		/* Pure virtual methods inherited from RTC::SCTP::AssociationListener. */
+	public:
+		bool OnAssociationSendData(const uint8_t* data, size_t len) override;
+		void OnAssociationConnecting() override;
+		void OnAssociationConnected() override;
+		void OnAssociationFailed(RTC::SCTP::Types::ErrorKind errorKind, std::string_view errorMessage) override;
+		void OnAssociationClosed(RTC::SCTP::Types::ErrorKind errorKind, std::string_view errorMessage) override;
+		void OnAssociationRestarted() override;
+		void OnAssociationError(RTC::SCTP::Types::ErrorKind errorKind, std::string_view errorMessage) override;
+		void OnAssociationMessageReceived(RTC::SCTP::Message message) override;
+		void OnAssociationStreamsResetPerformed(std::span<const uint16_t> outboundStreamIds) override;
+		void OnAssociationStreamsResetFailed(
+		  std::span<const uint16_t> outboundStreamIds, std::string_view errorMessage) override;
+		void OnAssociationInboundStreamsReset(std::span<const uint16_t> inboundStreamIds) override;
+		void OnAssociationStreamBufferedAmountLow(uint16_t streamId) override;
+		void OnAssociationTotalBufferedAmountLow() override;
+		bool OnAssociationIsTransportReadyForSctp() override;
+		// TODO: SCTP: Add OnAssociationLifecycleMessageXxxxxx() methods.
+#else
 		/* Pure virtual methods inherited from RTC::SctpAssociation::Listener. */
 	public:
 		void OnSctpAssociationConnecting(RTC::SctpAssociation* sctpAssociation) override;
@@ -296,6 +327,7 @@ namespace RTC
 		  uint32_t ppid) override;
 		void OnSctpAssociationBufferedAmount(
 		  RTC::SctpAssociation* sctpAssociation, uint32_t bufferedAmount) override;
+#endif
 
 		/* Pure virtual methods inherited from RTC::TransportCongestionControlClient::Listener. */
 	public:
@@ -333,7 +365,11 @@ namespace RTC
 		RTC::Shared* shared{ nullptr };
 		size_t maxMessageSize{ 262144u };
 		// Allocated by this.
+#ifdef MS_SCTP_STACK
+		std::unique_ptr<RTC::SCTP::AssociationInterface> sctpAssociation{ nullptr };
+#else
 		RTC::SctpAssociation* sctpAssociation{ nullptr };
+#endif
 
 	private:
 		// Passed by argument.
@@ -354,7 +390,7 @@ namespace RTC
 		// Others.
 		bool direct{ false }; // Whether this Transport allows direct communication.
 		bool destroying{ false };
-		struct RTC::RtpHeaderExtensionIds recvRtpHeaderExtensionIds;
+		struct RTC::RTP::HeaderExtensionIds recvRtpHeaderExtensionIds;
 		RTC::RtpListener rtpListener;
 		RTC::SctpListener sctpListener;
 		RTC::RateCalculator recvTransmission;

@@ -30,22 +30,6 @@ Creates a prebuilt of `mediasoup-worker` binary in the `worker/prebuild` folder.
 
 Runs both `lint:node` and `lint:worker` tasks.
 
-#### Install clang-format
-
-A specific clang-format version is required to be installed in the system, which is defined in [clang-format-mjs](../worker/scripts/clang-format.mjs).
-
-macOS:
-
-```bash
-brew install clang-format@VERSION
-```
-
-Linux:
-
-```bash
-sudo apt-get install clang-format-VERSION
-```
-
 ### `npm run lint:node`
 
 Validates mediasoup TypeScript files using [ESLint](https://eslint.org), [Prettier](https://prettier.io) and [Knip](https://knip.dev/).
@@ -60,8 +44,6 @@ See [Install clang-format](#install-clang-format) for requirements.
 
 Runs both `format:node` and `format:worker` tasks.
 
-See [Install clang-format](#install-clang-format) for requirements.
-
 ### `npm run format:node`
 
 Format TypeScript and JavaScript code using [Prettier](https://prettier.io).
@@ -71,6 +53,16 @@ Format TypeScript and JavaScript code using [Prettier](https://prettier.io).
 Rewrites mediasoup worker C++ files using [clang-format](https://clang.llvm.org/docs/ClangFormat.html). It invokes `invoke format` below.
 
 See [Install clang-format](#install-clang-format) for requirements.
+
+### `npm run tidy:worker`
+
+Runs [clang-tidy](http://clang.llvm.org/extra/clang-tidy) and performs C++ code checks following `worker/.clang-tidy` rules. It invokes `invoke tidy` below.
+
+See [Install clang-tidy](#install-clang-tidy) for requirements.
+
+### `npm run tidy:worker:fix`
+
+Same as `npm run tidy:worker` but it also applies fixes.
 
 ### `npm run flatc`
 
@@ -218,13 +210,52 @@ Builds a Xcode project for the mediasoup worker subproject.
 
 Validates mediasoup worker C++ files using [clang-format](https://clang.llvm.org/docs/ClangFormat.html) and rules in `worker/.clang-format`.
 
-See [Install clang-format](#install-clang-format) for requirements.
+**Requirements:**
+
+- A specific version of `clang-format`is required. See [Install clang-format](#install-clang-format).
+- `clang-format-VERSION` or `clang-format` (corresponding to the required version) must be in the `PATH`. If not, add it before running the command.
 
 ### `invoke format`
 
 Rewrites mediasoup worker C++ files using [clang-format](https://clang.llvm.org/docs/ClangFormat.html).
 
-See [Install clang-format](#install-clang-format) for requirements.
+**Requirements:**
+
+- A specific version of `clang-format`is required. See [Install clang-format](#install-clang-format).
+- `clang-format-VERSION` or `clang-format` (corresponding to the required version) must be in the `PATH`. If not, add it before running the command.
+
+### `invoke tidy`
+
+Runs [clang-tidy](http://clang.llvm.org/extra/clang-tidy) and performs C++ code checks following `worker/.clang-tidy` rules.
+
+**Requirements:**
+
+- `invoke clean` must have been called first.
+- A specific version of `clang-tidy`is required. See [Install clang-tidy](#install-clang-tidy).
+- `clang-tidy-VERSION` or `clang-tidy` (corresponding to the required version) must be in the `PATH`. If not, add it before running the command. Same for other `clang-tidy` related executables such as `run-clang-tidy` and `clang-apply-replacements`,
+
+**Environment variables:**
+
+- "MEDIASOUP_TIDY_CHECKS": Optional. Comma separated list of checks. Overrides the checks defined in `worker/.clang-tidy` file.
+- "MEDIASOUP_TIDY_FILES": Optional. Space separated source file paths to process. All `.cpp` files will be processes by default.
+  - File paths must be relative to `worker/` folder.
+  - File paths can use [glob](https://github.com/isaacs/node-glob) syntax. Example: `"src/RTC/SCTP/**/*.cpp"`.
+
+**Usage example in macOS:**
+
+```bash
+PATH="/opt/homebrew/opt/llvm/bin/:$PATH" invoke tidy
+```
+
+It may happens that `clang-tidy` doesn't know where C++ standard libraries are so it shows lot of warnings about them. Depending on your local setup this may work:
+
+```bash
+PATH="/opt/homebrew/opt/llvm/bin/:$PATH" CPATH=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1 invoke tidy
+```
+
+### `invoke tidy-fix`
+
+Same as `invoke tidy` but it also applies fixes.
 
 ### `invoke test`
 
@@ -237,33 +268,6 @@ Run test with Address Sanitizer with `-fsanitize=address`.
 ### `invoke test-asan-undefined`
 
 Run test with Address Sanitizer with `-fsanitize=undefined`.
-
-### `invoke test-asan-thread`
-
-Run test with Address Sanitizer with `-fsanitize=thread`.
-
-### `invoke tidy`
-
-Runs [clang-tidy](http://clang.llvm.org/extra/clang-tidy) and performs C++ code checks following `worker/.clang-tidy` rules.
-
-**Requirements:**
-
-- `invoke clean` and `invoke mediasoup-worker` must have been called first.
-- [clang-tools-extra](https://clang.llvm.org/extra) is required.
-  - In OSX install it with `brew install llvm`.
-  - In linux the package name is `clang-tools-extra`.
-
-**Environment variables:**
-
-- "MEDIASOUP_TIDY_CHECKS": Comma separated list of checks. Overrides the checks defined in `worker/.clang-tidy` file.
-- "MEDIASOUP_TIDY_FILES": Space separated source files to process, including their path. All `.cpp` files will be processes by default.
-- "MEDIASOUP_CLANG_TIDY_DIR": Path to directory containing clang tools (`run-clang-tidy`, `clang-tidy`, `clang-apply-replacements`).
-
-**Usage example in macOS:**
-
-```bash
-MEDIASOUP_CLANG_TIDY_DIR=/opt/homebrew/opt/llvm/bin/ invoke tidy
-```
 
 ### `invoke fuzzer`
 
@@ -285,16 +289,9 @@ Runs all fuzzer cases.
 
 Builds a Linux Ubuntu Docker image with fuzzer capable clang++ and all dependencies to run mediasoup.
 
-**NOTE:** Before running this command, a specific version of Linux clang must be downloaded. To get it, run:
-
-```bash
-cd worker
-scripts/get-dep.sh clang-fuzzer
-```
-
 ### `invoke docker-run`
 
-Runs a container of the Ubuntu Docker image created with `invoke docker`. It automatically executes a `bash` session in the `/mediasoup` directory, which is a Docker volume that points to the mediasoup root folder.
+Runs a container of the Ubuntu Docker image created with `invoke docker`. It automatically executes a `bash` session in the mediasoup directory, which is a Docker volume that points to the mediasoup root folder.
 
 **NOTE:** To install and run mediasoup in the container, previous installation (if any) must be properly cleaned by entering the `worker` directory and running `invoke clean-all`.
 
@@ -304,9 +301,20 @@ Builds a Linux Alpine Docker image with all dependencies to run mediasoup.
 
 ### `invoke docker-alpine-run`
 
-Runs a container of the Alpine Docker image created with `invoke docker-alpine`. It automatically executes an `ash` session in the `/mediasoup` directory, which is a Docker volume that points to the mediasoup root folder.
+Runs a container of the Alpine Docker image created with `invoke docker-alpine`. It automatically executes an `ash` session in the mediasoup directory, which is a Docker volume that points to the mediasoup root folder.
 
 **NOTE:** To install and run mediasoup in the container, previous installation (if any) must be properly cleaned by entering the `worker` directory and running `invoke clean-all`.
+
+### `invoke docker-386`
+
+Builds a 386 Linux Debian (32 bits arch) Docker image with all dependencies to run mediasoup.
+
+### `invoke docker-alpine-386`
+
+Runs a container of the 386 Linux Debian (32 bits arch) Docker image created with `invoke docker-386`. It automatically executes an `ash` session in the mediasoup directory, which is a Docker volume that points to the mediasoup root folder.
+
+**NOTE:** To install and run mediasoup in the container, previous installation (if any) must be properly cleaned by entering the `worker` directory and running `invoke clean-all`.
+**NOTE:** Due to the very old Node v18 in this image, in order to run mediasoup Node tests, `npm ci` must be executed with `--ignore-scripts --engine-strict=false` arguments.
 
 ## Makefile
 
@@ -319,3 +327,35 @@ All tasks defined in `tasks.py` (see above) are available in `Makefile`. There i
   cd worker
   make update-wrap-file SUBPROJECT=openssl
   ```
+
+## Install clang-format
+
+A specific `clang-format` version is required to be installed in the system, which is defined in [clang-scripts.mjs](../worker/scripts/clang-scripts.mjs).
+
+macOS:
+
+```bash
+brew install clang-format@VERSION
+```
+
+Linux:
+
+```bash
+apt-get install clang-format-VERSION
+```
+
+## Install clang-tidy
+
+A specific `clang-tidy` version is required to be installed in the system, which is defined in [clang-scripts.mjs](../worker/scripts/clang-scripts.mjs).
+
+macOS:
+
+```bash
+brew install clang-tidy@VERSION
+```
+
+Linux:
+
+```bash
+apt-get install clang-tidy-VERSION
+```

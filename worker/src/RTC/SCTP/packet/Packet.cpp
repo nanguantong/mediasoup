@@ -30,11 +30,17 @@ namespace RTC
 	{
 		/* Class methods. */
 
+		bool Packet::IsSctp(const uint8_t* /*buffer*/, size_t bufferLength)
+		{
+			return (
+			  bufferLength >= Packet::CommonHeaderLength && Utils::Byte::IsPaddedTo4Bytes(bufferLength));
+		}
+
 		Packet* Packet::Parse(const uint8_t* buffer, size_t bufferLength)
 		{
 			MS_TRACE();
 
-			if ((bufferLength < Packet::CommonHeaderLength) || !Utils::Byte::IsPaddedTo4Bytes(bufferLength))
+			if (!Packet::IsSctp(buffer, bufferLength))
 			{
 				MS_WARN_TAG(sctp, "not an SCTP Packet");
 
@@ -64,13 +70,13 @@ namespace RTC
 
 				if (!Chunk::IsChunk(ptr, chunkMaxBufferLength, chunkType, chunkLength, padding))
 				{
-					MS_WARN_TAG(sctp, "not a SCTP Chunk");
+					MS_WARN_TAG(sctp, "not an SCTP Chunk");
 
 					delete packet;
 					return nullptr;
 				}
 
-				Chunk* chunk{ nullptr };
+				Chunk* chunk{ nullptr }; // NOLINT(misc-const-correctness)
 
 				MS_DEBUG_DEV("parsing SCTP Chunk [ptr:%zu, type:%" PRIu8 "]", ptr - buffer, chunkType);
 
@@ -371,6 +377,8 @@ namespace RTC
 		{
 			MS_TRACE();
 
+			AssertDoesNotNeedConsolidation();
+
 			const size_t length = GetLength() + chunk->GetLength();
 
 			// Let's append the Chunk at the end of existing Chunks.
@@ -392,7 +400,7 @@ namespace RTC
 			this->chunks.push_back(clonedChunk);
 		}
 
-		void Packet::SetCRC32cChecksum()
+		void Packet::WriteCRC32cChecksum()
 		{
 			MS_TRACE();
 
@@ -423,22 +431,44 @@ namespace RTC
 		{
 			MS_TRACE();
 
+			this->needsConsolidation = true;
+
 			// When the application completes the Chunk it must call
 			// `chunk->Consolidate()` and that will trigger this event.
 			chunk->SetConsolidatedListener(
 			  [this, chunk]()
 			  {
-				  // Fix buffer length assigned to the Chunk.
-				  chunk->SetBufferLength(chunk->GetLength());
+				  try
+				  {
+					  // Fix buffer length assigned to the Chunk.
+					  chunk->SetBufferLength(chunk->GetLength());
 
-				  // Update Packet length.
-				  // NOTE: This will throw if there is no enough space in the Packet
-				  // buffer.
-				  SetLength(GetLength() + chunk->GetLength());
+					  // Update Packet length.
+					  // NOTE: This will throw if there is no enough space in the Packet
+					  // buffer.
+					  SetLength(GetLength() + chunk->GetLength());
 
-				  // Add the Chunk to the list.
-				  this->chunks.push_back(chunk);
+					  // Add the Chunk to the list.
+					  this->chunks.push_back(chunk);
+					  this->needsConsolidation = false;
+				  }
+				  catch (const MediaSoupError& error)
+				  {
+					  this->needsConsolidation = false;
+
+					  throw;
+				  }
 			  });
+		}
+
+		void Packet::AssertDoesNotNeedConsolidation() const
+		{
+			MS_TRACE();
+
+			if (this->needsConsolidation)
+			{
+				MS_THROW_ERROR("Packet needs consolidation of some ongoing Chunk");
+			}
 		}
 	} // namespace SCTP
 } // namespace RTC

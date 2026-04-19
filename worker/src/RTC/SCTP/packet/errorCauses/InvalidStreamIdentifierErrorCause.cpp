@@ -4,6 +4,7 @@
 #include "RTC/SCTP/packet/errorCauses/InvalidStreamIdentifierErrorCause.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
+#include <string>
 
 namespace RTC
 {
@@ -138,6 +139,13 @@ namespace RTC
 			SoftCloneInto(softClonedErrorCause);
 
 			return softClonedErrorCause;
+		}
+
+		const std::string InvalidStreamIdentifierErrorCause::ContentToString() const
+		{
+			MS_TRACE();
+
+			return "stream:" + std::to_string(GetStreamIdentifier());
 		}
 
 		void InvalidStreamIdentifierErrorCause::SetReserved()

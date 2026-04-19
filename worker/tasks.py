@@ -22,7 +22,6 @@ import sys;
 import os;
 import inspect;
 import shutil;
-import glob;
 from contextlib import contextmanager;
 # We import this from a custom location and pylint doesn't know.
 from invoke import task, call; # pylint: disable=import-error
@@ -370,7 +369,36 @@ def format(ctx):
         );
 
 
-@task(pre=[setup, flatc])
+@task(pre=[call(setup, meson_args=MESON_ARGS + ' -Dms_build_tests=true')])
+def tidy(ctx):
+    """
+    Performs C++ code checks according to `worker/.clang-tidy` rules
+    """
+    with cd_worker():
+        ctx.run(
+            f'"{NPM}" run tidy --prefix scripts/',
+            echo=True,
+            pty=PTY_SUPPORTED,
+            shell=SHELL
+        );
+
+
+@task(pre=[call(setup, meson_args=MESON_ARGS + ' -Dms_build_tests=true')])
+def tidy_fix(ctx):
+    """
+    Performs C++ code checks according to `worker/.clang-tidy` rules and applies
+    fixes
+    """
+    with cd_worker():
+        ctx.run(
+            f'"{NPM}" run tidy:fix --prefix scripts/',
+            echo=True,
+            pty=PTY_SUPPORTED,
+            shell=SHELL
+        );
+
+
+@task(pre=[call(setup, meson_args=MESON_ARGS + ' -Dms_build_tests=true'), flatc])
 def test(ctx):
     """
     Run worker tests
@@ -402,7 +430,7 @@ def test(ctx):
         );
 
 
-@task(pre=[call(setup, meson_args=MESON_ARGS + ' -Db_sanitize=address -Db_lundef=false'), flatc])
+@task(pre=[call(setup, meson_args=MESON_ARGS + ' -Dms_build_tests=true -Db_sanitize=address -Db_lundef=false'), flatc])
 def test_asan_address(ctx):
     """
     Run worker test with Address Sanitizer with '-fsanitize=address'
@@ -426,14 +454,15 @@ def test_asan_address(ctx):
 
     with cd_worker():
         ctx.run(
-            f'ASAN_OPTIONS=detect_leaks=1 symbolize=1 detect_stack_use_after_return=1 strict_init_order=1 check_initialization_order=1 detect_container_overflow=1 "{BUILD_DIR}/mediasoup-worker-test-asan-address" --invisibles {mediasoup_test_tags}',
+            f'"{BUILD_DIR}/mediasoup-worker-test-asan-address" --invisibles {mediasoup_test_tags}',
             echo=True,
             pty=PTY_SUPPORTED,
-            shell=SHELL
+            shell=SHELL,
+            env={**os.environ, 'ASAN_OPTIONS': 'halt_on_error=1:print_stacktrace=1:detect_leaks=1:symbolize=1:detect_stack_use_after_return=1:strict_init_order=1:check_initialization_order=1:detect_container_overflow=1'}
         );
 
 
-@task(pre=[call(setup, meson_args=MESON_ARGS + ' -Db_sanitize=undefined -Db_lundef=false'), flatc])
+@task(pre=[call(setup, meson_args=MESON_ARGS + ' -Dms_build_tests=true -Db_sanitize=undefined -Db_lundef=false'), flatc])
 def test_asan_undefined(ctx):
     """
     Run worker test with undefined Sanitizer with -fsanitize=undefined
@@ -460,67 +489,10 @@ def test_asan_undefined(ctx):
             f'"{BUILD_DIR}/mediasoup-worker-test-asan-undefined" --invisibles {mediasoup_test_tags}',
             echo=True,
             pty=PTY_SUPPORTED,
-            shell=SHELL
-        );
-
-
-@task(pre=[call(setup, meson_args=MESON_ARGS + ' -Db_sanitize=thread -Db_lundef=false'), flatc])
-def test_asan_thread(ctx):
-    """
-    Run worker test with thread Sanitizer with -fsanitize=thread
-    """
-    with cd_worker():
-        ctx.run(
-            f'"{MESON}" compile -C "{BUILD_DIR}" -j {NUM_CORES} mediasoup-worker-test-asan-thread',
-            echo=True,
-            pty=PTY_SUPPORTED,
-            shell=SHELL
-        );
-    with cd_worker():
-        ctx.run(
-            f'"{MESON}" install -C "{BUILD_DIR}" --no-rebuild --tags mediasoup-worker-test-asan-thread',
-            echo=True,
-            pty=PTY_SUPPORTED,
-            shell=SHELL
-        );
-
-    mediasoup_test_tags = os.getenv('MEDIASOUP_TEST_TAGS') or '';
-
-    with cd_worker():
-        ctx.run(
-            f'ASAN_OPTIONS=detect_leaks=1 "{BUILD_DIR}/mediasoup-worker-test-asan-thread" --invisibles {mediasoup_test_tags}',
-            echo=True,
-            pty=PTY_SUPPORTED,
-            shell=SHELL
-        );
-
-
-@task
-def tidy(ctx):
-    """
-    Perform C++ checks with clang-tidy
-    """
-    mediasoup_tidy_checks = os.getenv('MEDIASOUP_TIDY_CHECKS') or '';
-    mediasoup_tidy_files = os.getenv('MEDIASOUP_TIDY_FILES') or '';
-    mediasoup_clang_tidy_dir = os.getenv('MEDIASOUP_CLANG_TIDY_DIR');
-
-    # MEDIASOUP_CLANG_TIDY_DIR env variable is mandatory.
-    # NOTE: sys.exit(text) exists the program with status code 1.
-    if not mediasoup_clang_tidy_dir:
-        sys.exit('missing MEDIASOUP_CLANG_TIDY_DIR env variable');
-
-    if mediasoup_tidy_checks:
-        mediasoup_tidy_checks = '-*,' + mediasoup_tidy_checks;
-
-    if not mediasoup_tidy_files:
-        mediasoup_tidy_files = " ".join(glob.glob("src/**/*.cpp", recursive=True))
-
-    with cd_worker():
-        ctx.run(
-            f'"{PYTHON}" "{mediasoup_clang_tidy_dir}/run-clang-tidy" -clang-tidy-binary="{mediasoup_clang_tidy_dir}/clang-tidy" -clang-apply-replacements-binary="{mediasoup_clang_tidy_dir}/clang-apply-replacements" -p="{BUILD_DIR}" -j={NUM_CORES} -fix -checks={mediasoup_tidy_checks} {mediasoup_tidy_files}',
-            echo=True,
-            pty=PTY_SUPPORTED,
-            shell=SHELL
+            shell=SHELL,
+            # Exit with error if there are issues.
+            # NOTE: Ignore well known UBSan errors in OpenSSL.
+            env={**os.environ, 'UBSAN_OPTIONS': 'halt_on_error=1:print_stacktrace=1:suppressions=ubsan_suppressions.txt'}
         );
 
 
@@ -631,6 +603,44 @@ def docker_alpine_run(ctx):
     with cd_worker():
         ctx.run(
             f'"{DOCKER}" run --name=mediasoupDockerAlpine -it --rm --privileged --cap-add SYS_PTRACE -v "{WORKER_DIR}/../:/foo bar/mediasoup" mediasoup/docker-alpine:latest',
+            echo=True,
+            pty=True, # NOTE: Needed to enter the terminal of the Docker image.
+            shell=SHELL
+        );
+
+
+@task
+def docker_386(ctx):
+    """
+    Build a 386 Linux Debian (32 bits arch) Docker image
+    """
+    if os.getenv('DOCKER_NO_CACHE') == 'true':
+        with cd_worker():
+            ctx.run(
+                f'"{DOCKER}" build --platform linux/386 -f Dockerfile.386 --no-cache --tag mediasoup/docker-386:latest .',
+                echo=True,
+                pty=PTY_SUPPORTED,
+                shell=SHELL
+            );
+    else:
+        with cd_worker():
+            ctx.run(
+                f'"{DOCKER}" build --platform linux/386 -f Dockerfile.386 --tag mediasoup/docker-386:latest .',
+                echo=True,
+                pty=PTY_SUPPORTED,
+                shell=SHELL
+            );
+
+
+@task
+def docker_386_run(ctx):
+    """
+    Run a container of the 386 Linux Debian (32 bits arch) Docker image created
+    in the docker_386 task
+    """
+    with cd_worker():
+        ctx.run(
+            f'"{DOCKER}" run --name=mediasoupDocker386 -it --rm --privileged --cap-add SYS_PTRACE -v "{WORKER_DIR}/../:/foo bar/mediasoup" mediasoup/docker-386:latest',
             echo=True,
             pty=True, # NOTE: Needed to enter the terminal of the Docker image.
             shell=SHELL

@@ -2,20 +2,18 @@
 #include "MediaSoupErrors.hpp"
 #include "RTC/SCTP/packet/Parameter.hpp"
 #include "RTC/SCTP/packet/parameters/CookiePreservativeParameter.hpp"
-#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
+#include "RTC/SCTP/sctpCommon.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 
-using namespace RTC::SCTP;
-
-SCENARIO("Cookie Preservative Parameter (9)", "[sctp][serializable]")
+SCENARIO("Cookie Preservative Parameter (9)", "[serializable][sctp][parameter]")
 {
-	ResetBuffers();
+	sctpCommon::ResetBuffers();
 
 	SECTION("CookiePreservativeParameter::Parse() succeeds")
 	{
 		// clang-format off
-		uint8_t buffer[] =
+		alignas(4) uint8_t buffer[] =
 		{
 			// Type:9 (COOKIE_PRESERVATIVE), Length: 8
 			0x00, 0x09, 0x00, 0x08,
@@ -26,52 +24,53 @@ SCENARIO("Cookie Preservative Parameter (9)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		auto* parameter = CookiePreservativeParameter::Parse(buffer, sizeof(buffer));
+		auto* parameter = RTC::SCTP::CookiePreservativeParameter::Parse(buffer, sizeof(buffer));
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
 		  /*buffer*/ buffer,
 		  /*bufferLength*/ sizeof(buffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::COOKIE_PRESERVATIVE,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::COOKIE_PRESERVATIVE,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::STOP);
 
 		REQUIRE(parameter->GetLifeSpanIncrement() == 4278194466);
 
 		/* Serialize it. */
 
-		parameter->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+		parameter->Serialize(sctpCommon::SerializeBuffer, sizeof(sctpCommon::SerializeBuffer));
 
 		std::memset(buffer, 0x00, sizeof(buffer));
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
-		  /*buffer*/ SerializeBuffer,
-		  /*bufferLength*/ sizeof(SerializeBuffer),
+		  /*buffer*/ sctpCommon::SerializeBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::SerializeBuffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::COOKIE_PRESERVATIVE,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::COOKIE_PRESERVATIVE,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::STOP);
 
 		REQUIRE(parameter->GetLifeSpanIncrement() == 4278194466);
 
 		/* Clone it. */
 
-		auto* clonedParameter = parameter->Clone(CloneBuffer, sizeof(CloneBuffer));
+		auto* clonedParameter =
+		  parameter->Clone(sctpCommon::CloneBuffer, sizeof(sctpCommon::CloneBuffer));
 
-		std::memset(SerializeBuffer, 0x00, sizeof(SerializeBuffer));
+		std::memset(sctpCommon::SerializeBuffer, 0x00, sizeof(sctpCommon::SerializeBuffer));
 
 		delete parameter;
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ clonedParameter,
-		  /*buffer*/ CloneBuffer,
-		  /*bufferLength*/ sizeof(CloneBuffer),
+		  /*buffer*/ sctpCommon::CloneBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::CloneBuffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::COOKIE_PRESERVATIVE,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::COOKIE_PRESERVATIVE,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::STOP);
 
 		REQUIRE(clonedParameter->GetLifeSpanIncrement() == 4278194466);
 
@@ -82,7 +81,7 @@ SCENARIO("Cookie Preservative Parameter (9)", "[sctp][serializable]")
 	{
 		// Wrong type.
 		// clang-format off
-		uint8_t buffer1[] =
+		alignas(4) uint8_t buffer1[] =
 		{
 			// Type:9 (IPV6_ADDRESS), Length: 8
 			0x00, 0x06, 0x00, 0x08,
@@ -91,11 +90,11 @@ SCENARIO("Cookie Preservative Parameter (9)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!CookiePreservativeParameter::Parse(buffer1, sizeof(buffer1)));
+		REQUIRE(!RTC::SCTP::CookiePreservativeParameter::Parse(buffer1, sizeof(buffer1)));
 
 		// Wrong Length field.
 		// clang-format off
-		uint8_t buffer2[] =
+		alignas(4) uint8_t buffer2[] =
 		{
 			// Type:9 (COOKIE_PRESERVATIVE), Length: 7
 			0x00, 0x09, 0x00, 0x07,
@@ -104,11 +103,11 @@ SCENARIO("Cookie Preservative Parameter (9)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!CookiePreservativeParameter::Parse(buffer2, sizeof(buffer2)));
+		REQUIRE(!RTC::SCTP::CookiePreservativeParameter::Parse(buffer2, sizeof(buffer2)));
 
 		// Wrong Length field.
 		// clang-format off
-		uint8_t buffer3[] =
+		alignas(4) uint8_t buffer3[] =
 		{
 			// Type:9 (COOKIE_PRESERVATIVE), Length: 9
 			0x00, 0x09, 0x00, 0x09,
@@ -118,11 +117,11 @@ SCENARIO("Cookie Preservative Parameter (9)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!CookiePreservativeParameter::Parse(buffer3, sizeof(buffer3)));
+		REQUIRE(!RTC::SCTP::CookiePreservativeParameter::Parse(buffer3, sizeof(buffer3)));
 
 		// Wrong buffer length.
 		// clang-format off
-		uint8_t buffer4[] =
+		alignas(4) uint8_t buffer4[] =
 		{
 			// Type:5 (IPV4_ADDRESS), Length: 8
 			0x00, 0x05, 0x00, 0x08,
@@ -131,21 +130,22 @@ SCENARIO("Cookie Preservative Parameter (9)", "[sctp][serializable]")
 		};
 		// clang-format on
 
-		REQUIRE(!CookiePreservativeParameter::Parse(buffer4, sizeof(buffer4)));
+		REQUIRE(!RTC::SCTP::CookiePreservativeParameter::Parse(buffer4, sizeof(buffer4)));
 	}
 
 	SECTION("CookiePreservativeParameter::Factory() succeeds")
 	{
-		auto* parameter = CookiePreservativeParameter::Factory(FactoryBuffer, sizeof(FactoryBuffer));
+		auto* parameter = RTC::SCTP::CookiePreservativeParameter::Factory(
+		  sctpCommon::FactoryBuffer, sizeof(sctpCommon::FactoryBuffer));
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
+		  /*buffer*/ sctpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::FactoryBuffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::COOKIE_PRESERVATIVE,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::COOKIE_PRESERVATIVE,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::STOP);
 
 		REQUIRE(parameter->GetLifeSpanIncrement() == 0);
 
@@ -155,30 +155,30 @@ SCENARIO("Cookie Preservative Parameter (9)", "[sctp][serializable]")
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parameter,
-		  /*buffer*/ FactoryBuffer,
-		  /*bufferLength*/ sizeof(FactoryBuffer),
+		  /*buffer*/ sctpCommon::FactoryBuffer,
+		  /*bufferLength*/ sizeof(sctpCommon::FactoryBuffer),
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::COOKIE_PRESERVATIVE,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::COOKIE_PRESERVATIVE,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::STOP);
 
 		REQUIRE(parameter->GetLifeSpanIncrement() == 88776655);
 
 		/* Parse itself and compare. */
 
 		auto* parsedParameter =
-		  CookiePreservativeParameter::Parse(parameter->GetBuffer(), parameter->GetLength());
+		  RTC::SCTP::CookiePreservativeParameter::Parse(parameter->GetBuffer(), parameter->GetLength());
 
 		delete parameter;
 
 		CHECK_SCTP_PARAMETER(
 		  /*parameter*/ parsedParameter,
-		  /*buffer*/ FactoryBuffer,
+		  /*buffer*/ sctpCommon::FactoryBuffer,
 		  /*bufferLength*/ 8,
 		  /*length*/ 8,
-		  /*parameterType*/ Parameter::ParameterType::COOKIE_PRESERVATIVE,
+		  /*parameterType*/ RTC::SCTP::Parameter::ParameterType::COOKIE_PRESERVATIVE,
 		  /*unknownType*/ false,
-		  /*actionForUnknownParameterType*/ Parameter::ActionForUnknownParameterType::STOP);
+		  /*actionForUnknownParameterType*/ RTC::SCTP::Parameter::ActionForUnknownParameterType::STOP);
 
 		REQUIRE(parsedParameter->GetLifeSpanIncrement() == 88776655);
 

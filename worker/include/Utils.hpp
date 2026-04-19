@@ -4,12 +4,13 @@
 #include "common.hpp"
 #include "RTC/Consts.hpp"
 #include <openssl/evp.h>
+#include <cassert>
 #include <cmath>
-#include <cstdint>
 #include <cstring> // std::memcmp(), std::memcpy()
 #include <limits>  // std::numeric_limits
+#include <random>  // std::mt19937_64, std::uniform_int_distribution, std::random_device
 #include <string>
-#include <type_traits> // std::enable_if, std::is_same_v
+#include <type_traits> // std::enable_if, std::is_same_v, std::is_unsigned
 #ifdef _WIN32
 #include <ws2ipdef.h>
 // https://stackoverflow.com/a/24550632/2085408
@@ -231,9 +232,21 @@ namespace Utils
 	{
 	public:
 		static void ClassInit();
+
 		static void ClassDestroy();
 
-		static uint32_t GetRandomUInt(uint32_t min, uint32_t max);
+		template<typename T>
+		static T GetRandomUInt(T min, T max)
+		{
+			static_assert(
+			  std::is_same_v<T, uint16_t> || std::is_same_v<T, uint32_t> || std::is_same_v<T, uint64_t> ||
+			    std::is_same_v<T, size_t>,
+			  "T must be uint16_t, uint32_t, uint64_t, size_t");
+
+			std::uniform_int_distribution<T> dist(min, max);
+
+			return dist(Crypto::rng);
+		}
 
 		static std::string GetRandomString(size_t len);
 
@@ -241,12 +254,12 @@ namespace Utils
 
 		static uint32_t GetCRC32c(const uint8_t* data, size_t size);
 
-		static const uint8_t* GetHmacSha1(const std::string& key, const uint8_t* data, size_t len);
+		static const uint8_t* GetHmacSha1(const char* key, size_t keyLen, const uint8_t* data, size_t len);
 
 		static void WriteRandomBytes(uint8_t* buffer, size_t len);
 
 	private:
-		thread_local static uint32_t seed;
+		thread_local static std::mt19937_64 rng;
 		thread_local static EVP_MAC* mac;
 		thread_local static EVP_MAC_CTX* hmacSha1Ctx;
 		thread_local static uint8_t hmacSha1Buffer[];
@@ -271,15 +284,12 @@ namespace Utils
 		static uint8_t* Base64Decode(const std::string& str, size_t& outLen);
 	};
 
-	// T is the base type (uint16_t, uint32_t, ...).
-	// N is the max number of bits used in T.
-	template<typename T, uint8_t N = 0>
 	class Number
 	{
-	private:
-		static constexpr T MaxValue = (N == 0) ? std::numeric_limits<T>::max() : ((1 << N) - 1);
-
 	public:
+		// T is the base type (uint16_t, uint32_t, ...).
+		// N is the max number of bits used in T.
+		template<typename T, uint8_t N = 0>
 		static bool IsEqualThan(T lhs, T rhs)
 		{
 			static_assert(
@@ -287,18 +297,25 @@ namespace Utils
 			    std::is_same_v<T, uint64_t>,
 			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
 
+			constexpr T MaxValue = (N == 0) ? std::numeric_limits<T>::max() : ((1 << N) - 1);
+
 			lhs &= MaxValue;
 			rhs &= MaxValue;
 
 			return (lhs == rhs);
 		}
 
+		// T is the base type (uint16_t, uint32_t, ...).
+		// N is the max number of bits used in T.
+		template<typename T, uint8_t N = 0>
 		static bool IsHigherThan(T lhs, T rhs)
 		{
 			static_assert(
 			  std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> || std::is_same_v<T, uint32_t> ||
 			    std::is_same_v<T, uint64_t>,
 			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
+
+			constexpr T MaxValue = (N == 0) ? std::numeric_limits<T>::max() : ((1 << N) - 1);
 
 			lhs &= MaxValue;
 			rhs &= MaxValue;
@@ -307,12 +324,17 @@ namespace Utils
 			       ((rhs > lhs) && (rhs - lhs > MaxValue / 2));
 		}
 
+		// T is the base type (uint16_t, uint32_t, ...).
+		// N is the max number of bits used in T.
+		template<typename T, uint8_t N = 0>
 		static bool IsLowerThan(T lhs, T rhs)
 		{
 			static_assert(
 			  std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> || std::is_same_v<T, uint32_t> ||
 			    std::is_same_v<T, uint64_t>,
 			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
+
+			constexpr T MaxValue = (N == 0) ? std::numeric_limits<T>::max() : ((1 << N) - 1);
 
 			lhs &= MaxValue;
 			rhs &= MaxValue;
@@ -321,12 +343,17 @@ namespace Utils
 			       ((lhs > rhs) && (lhs - rhs > MaxValue / 2));
 		}
 
+		// T is the base type (uint16_t, uint32_t, ...).
+		// N is the max number of bits used in T.
+		template<typename T, uint8_t N = 0>
 		static bool IsHigherOrEqualThan(T lhs, T rhs)
 		{
 			static_assert(
 			  std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> || std::is_same_v<T, uint32_t> ||
 			    std::is_same_v<T, uint64_t>,
 			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
+
+			constexpr T MaxValue = (N == 0) ? std::numeric_limits<T>::max() : ((1 << N) - 1);
 
 			lhs &= MaxValue;
 			rhs &= MaxValue;
@@ -335,6 +362,9 @@ namespace Utils
 			       ((rhs > lhs) && (rhs - lhs > MaxValue / 2));
 		}
 
+		// T is the base type (uint16_t, uint32_t, ...).
+		// N is the max number of bits used in T.
+		template<typename T, uint8_t N = 0>
 		static bool IsLowerOrEqualThan(T lhs, T rhs)
 		{
 			static_assert(
@@ -342,11 +372,117 @@ namespace Utils
 			    std::is_same_v<T, uint64_t>,
 			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
 
+			constexpr T MaxValue = (N == 0) ? std::numeric_limits<T>::max() : ((1 << N) - 1);
+
 			lhs &= MaxValue;
 			rhs &= MaxValue;
 
 			return (lhs == rhs) || ((rhs > lhs) && (rhs - lhs <= MaxValue / 2)) ||
 			       ((lhs > rhs) && (lhs - rhs > MaxValue / 2));
+		}
+
+		/**
+		 * Calculates the forward difference between two wrapping numbers.
+		 *
+		 * Example:
+		 * ```c++
+		 * uint8_t x = 253;
+		 * uint8_t y = 2;
+		 *
+		 * ForwardDiff(x, y) == 5
+		 * ```
+		 *
+		 *   252   253   254   255    0     1     2     3
+		 * #################################################
+		 * |     |  x  |     |     |     |     |  y  |     |
+		 * #################################################
+		 *          |----->----->----->----->----->
+		 *
+		 * ForwardDiff(y, x) == 251
+		 *
+		 *   252   253   254   255    0     1     2     3
+		 * #################################################
+		 * |     |  x  |     |     |     |     |  y  |     |
+		 * #################################################
+		 * -->----->                              |----->---
+		 *
+		 * If M > 0 then wrapping occurs at M, if M == 0 then wrapping occurs at the
+		 * largest value representable by T.
+		 */
+		template<typename T, T M>
+		static T ForwardDiff(T a, T b) requires(M > 0)
+		{
+			static_assert(std::is_unsigned<T>::value, "type must be an unsigned integer");
+
+			assert(a < M);
+			assert(b < M);
+
+			return a <= b ? b - a : M - (a - b);
+		}
+
+		template<typename T, T M>
+		static T ForwardDiff(T a, T b) requires(M == 0)
+		{
+			static_assert(std::is_unsigned<T>::value, "type must be an unsigned integer");
+
+			return b - a;
+		}
+
+		template<typename T>
+		static T ForwardDiff(T a, T b)
+		{
+			return ForwardDiff<T, 0>(a, b);
+		}
+
+		/**
+		 * Calculates the reverse difference between two wrapping numbers.
+		 *
+		 * Example:
+		 * ```c++
+		 * uint8_t x = 253;
+		 * uint8_t y = 2;
+		 *
+		 * ReverseDiff(y, x) == 5
+		 *
+		 *   252   253   254   255    0     1     2     3
+		 * #################################################
+		 * |     |  x  |     |     |     |     |  y  |     |
+		 * #################################################
+		 *          <-----<-----<-----<-----<-----|
+		 *
+		 * ReverseDiff(x, y) == 251
+		 *
+		 *   252   253   254   255    0     1     2     3
+		 * #################################################
+		 * |     |  x  |     |     |     |     |  y  |     |
+		 * #################################################
+		 * ---<-----|                             |<-----<--
+		 *
+		 * If M > 0 then wrapping occurs at M, if M == 0 then wrapping occurs at the
+		 * largest value representable by T.
+		 */
+		template<typename T, T M>
+		static T ReverseDiff(T a, T b) requires(M > 0)
+		{
+			static_assert(std::is_unsigned<T>::value, "type must be an unsigned integer");
+
+			assert(a < M);
+			assert(b < M);
+
+			return b <= a ? a - b : M - (b - a);
+		}
+
+		template<typename T, T M>
+		static T ReverseDiff(T a, T b) requires(M == 0)
+		{
+			static_assert(std::is_unsigned<T>::value, "type must be an unsigned integer");
+			return a - b;
+		}
+
+		template<typename T>
+		static T ReverseDiff(T a, T b)
+		{
+			return ReverseDiff<T, 0>(a, b);
 		}
 	};
 

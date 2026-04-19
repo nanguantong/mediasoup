@@ -27,7 +27,15 @@ namespace RTC
 				PRIV
 			};
 
+#ifdef MS_TEST
+		public:
+#else
 		private:
+#endif
+			/**
+			 * @remarks
+			 * - This struct is guaranteed to be aligned to 1 byte.
+			 */
 			struct Header
 			{
 				SdesItem::Type type;
@@ -38,7 +46,7 @@ namespace RTC
 		public:
 			static const size_t HeaderSize = 2;
 			static SdesItem* Parse(const uint8_t* data, size_t len);
-			static const std::string& Type2String(SdesItem::Type type);
+			static const std::string& TypeToString(SdesItem::Type type);
 
 		public:
 			explicit SdesItem(Header* header) : header(header)
@@ -76,7 +84,7 @@ namespace RTC
 			std::unique_ptr<uint8_t[]> raw;
 
 		private:
-			static absl::flat_hash_map<SdesItem::Type, std::string> type2String;
+			static const absl::flat_hash_map<SdesItem::Type, std::string> Type2String;
 		};
 
 		class SdesChunk

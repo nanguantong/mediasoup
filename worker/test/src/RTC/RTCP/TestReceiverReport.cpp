@@ -1,16 +1,13 @@
 #include "common.hpp"
 #include "RTC/RTCP/ReceiverReport.hpp"
-#include "RTC/RTCP/SenderReport.hpp" // sizeof(SenderReport::Header)
 #include <catch2/catch_test_macros.hpp>
 
-using namespace RTC::RTCP;
-
-namespace TestReceiverReport
+SCENARIO("RTCP ReceiverReport", "[rtcp][receiver-report]")
 {
 	// RTCP Receiver Report Packet.
 
 	// clang-format off
-	uint8_t buffer[] =
+	alignas(4) uint8_t buffer[] =
 	{
 		0x81, 0xc9, 0x00, 0x07, // Type: 201 (Receiver Report), Count: 1, Length: 7
 		0x5d, 0x93, 0x15, 0x34, // Sender SSRC: 0x5d931534
@@ -25,17 +22,19 @@ namespace TestReceiverReport
 	// clang-format on
 
 	// Receiver Report buffer start point.
-	uint8_t* rrBuffer = buffer + Packet::CommonHeaderSize + sizeof(uint32_t) /*Sender SSRC*/;
+	const uint8_t* rrBuffer =
+	  buffer + RTC::RTCP::Packet::CommonHeaderSize + sizeof(uint32_t); // Sender SSRC.
 
-	uint32_t ssrc{ 0x01932db4 };
-	uint8_t fractionLost{ 0 };
-	int32_t totalLost{ -1 };
-	uint32_t lastSeq{ 0 };
-	uint32_t jitter{ 0 };
-	uint32_t lastSenderReport{ 0 };
-	uint32_t delaySinceLastSenderReport{ 5 };
+	const uint32_t ssrc{ 0x01932db4 };
+	const uint8_t fractionLost{ 0 };
+	const int32_t totalLost{ -1 };
+	const uint32_t lastSeq{ 0 };
+	const uint32_t jitter{ 0 };
+	const uint32_t lastSenderReport{ 0 };
+	const uint32_t delaySinceLastSenderReport{ 5 };
 
-	void verify(ReceiverReport* report)
+	// NOTE: No need to pass const integers to the lambda.
+	auto verify = [](RTC::RTCP::ReceiverReport* report)
 	{
 		REQUIRE(report->GetSsrc() == ssrc);
 		REQUIRE(report->GetFractionLost() == fractionLost);
@@ -44,16 +43,17 @@ namespace TestReceiverReport
 		REQUIRE(report->GetJitter() == jitter);
 		REQUIRE(report->GetLastSenderReport() == lastSenderReport);
 		REQUIRE(report->GetDelaySinceLastSenderReport() == delaySinceLastSenderReport);
+	};
+
+	SECTION("alignof() RTCP structs")
+	{
+		REQUIRE(alignof(RTC::RTCP::ReceiverReport::Header) == 4);
 	}
-} // namespace TestReceiverReport
 
-using namespace TestReceiverReport;
-
-SCENARIO("RTCP RR parsing", "[parser][rtcp][rr]")
-{
 	SECTION("parse RR packet with a single report")
 	{
-		std::unique_ptr<ReceiverReportPacket> packet{ ReceiverReportPacket::Parse(buffer, sizeof(buffer)) };
+		std::unique_ptr<RTC::RTCP::ReceiverReportPacket> packet{ RTC::RTCP::ReceiverReportPacket::Parse(
+			buffer, sizeof(buffer)) };
 
 		REQUIRE(packet->GetCount() == 1);
 
@@ -63,14 +63,15 @@ SCENARIO("RTCP RR parsing", "[parser][rtcp][rr]")
 
 		SECTION("serialize packet instance")
 		{
-			uint8_t serialized[sizeof(buffer)] = { 0 };
+			alignas(4) uint8_t serialized[sizeof(buffer)] = { 0 };
 
 			packet->Serialize(serialized);
 
-			std::unique_ptr<ReceiverReportPacket> packet2{ ReceiverReportPacket::Parse(
-				serialized, sizeof(buffer)) };
+			std::unique_ptr<RTC::RTCP::ReceiverReportPacket> packet2{
+				RTC::RTCP::ReceiverReportPacket::Parse(serialized, sizeof(buffer))
+			};
 
-			REQUIRE(packet2->GetType() == Type::RR);
+			REQUIRE(packet2->GetType() == RTC::RTCP::Type::RR);
 			REQUIRE(packet2->GetCount() == 1);
 			REQUIRE(packet2->GetSize() == 32);
 
@@ -91,8 +92,8 @@ SCENARIO("RTCP RR parsing", "[parser][rtcp][rr]")
 
 	SECTION("parse RR")
 	{
-		std::unique_ptr<ReceiverReport> report{ ReceiverReport::Parse(
-			rrBuffer, ReceiverReport::HeaderSize) };
+		std::unique_ptr<RTC::RTCP::ReceiverReport> report{ RTC::RTCP::ReceiverReport::Parse(
+			rrBuffer, RTC::RTCP::ReceiverReport::HeaderSize) };
 
 		REQUIRE(report);
 
@@ -103,12 +104,12 @@ SCENARIO("RTCP RR parsing", "[parser][rtcp][rr]")
 	{
 		const size_t count = 33;
 
-		ReceiverReportPacket packet;
+		RTC::RTCP::ReceiverReportPacket packet;
 
 		for (size_t i = 1; i <= count; i++)
 		{
 			// Create report and add to packet.
-			ReceiverReport* report = new ReceiverReport();
+			auto* report = new RTC::RTCP::ReceiverReport();
 
 			report->SetSsrc(i);
 			report->SetFractionLost(i);
@@ -123,13 +124,14 @@ SCENARIO("RTCP RR parsing", "[parser][rtcp][rr]")
 
 		REQUIRE(packet.GetCount() == count);
 
-		uint8_t buffer[1500] = { 0 };
+		alignas(4) uint8_t buffer[1500] = { 0 };
 
 		// Serialization must contain 2 RR packets since report count exceeds 31.
 		packet.Serialize(buffer);
 
-		std::unique_ptr<ReceiverReportPacket> packet2{ static_cast<ReceiverReportPacket*>(
-			Packet::Parse(buffer, sizeof(buffer))) };
+		std::unique_ptr<RTC::RTCP::ReceiverReportPacket> packet2{
+			static_cast<RTC::RTCP::ReceiverReportPacket*>(RTC::RTCP::Packet::Parse(buffer, sizeof(buffer)))
+		};
 
 		REQUIRE(packet2 != nullptr);
 		REQUIRE(packet2->GetCount() == 31);
@@ -149,7 +151,7 @@ SCENARIO("RTCP RR parsing", "[parser][rtcp][rr]")
 			REQUIRE(report->GetDelaySinceLastSenderReport() == i);
 		}
 
-		ReceiverReportPacket* packet3 = static_cast<ReceiverReportPacket*>(packet2->GetNext());
+		auto* packet3 = static_cast<RTC::RTCP::ReceiverReportPacket*>(packet2->GetNext());
 
 		REQUIRE(packet3 != nullptr);
 		REQUIRE(packet3->GetCount() == 2);
@@ -175,7 +177,7 @@ SCENARIO("RTCP RR parsing", "[parser][rtcp][rr]")
 	SECTION("create RR report")
 	{
 		// Create local report and check content.
-		ReceiverReport report1;
+		RTC::RTCP::ReceiverReport report1;
 
 		report1.SetSsrc(ssrc);
 		report1.SetFractionLost(fractionLost);
@@ -189,7 +191,7 @@ SCENARIO("RTCP RR parsing", "[parser][rtcp][rr]")
 
 		SECTION("create a report out of the existing one")
 		{
-			ReceiverReport report2(&report1);
+			RTC::RTCP::ReceiverReport report2(&report1);
 
 			verify(&report2);
 		}

@@ -4,6 +4,7 @@
 #include "RTC/RTP/SharedPacket.hpp"
 #include "Logger.hpp"
 #include "RTC/Serializable.hpp"
+#include <new> // std::align_val_t{
 
 namespace RTC
 {
@@ -16,18 +17,22 @@ namespace RTC
 		static constexpr size_t PacketBufferLengthIncrement{ 100 };
 		// Callback to pass to every cloned RTP Packet to deallocate its buffer once
 		// the Packet releases its buffer (for example when the Packet is destroyed).
-		static thread_local Serializable::BufferReleasedListener PacketBufferReleasedListener =
+		thread_local Serializable::BufferReleasedListener PacketBufferReleasedListener =
+		  // NOLINTNEXTLINE(misc-unused-parameters, readability-non-const-parameter)
 		  [](const Serializable* packet, uint8_t* buffer)
 		{
-			delete[] buffer;
+			// NOTE: Needed since we allocated it using
+			::operator delete[](buffer, std::align_val_t{ 4 });
 
 #ifdef MS_DUMP_RTP_SHARED_PACKET_MEMORY_USAGE
 			SharedPacket::allocatedMemory -= packet->GetBufferLength();
 
 			MS_DUMP_CLEAN(
 			  0,
-			  "[RTC::RTP::SharedPacket] memory deallocated [packet buffer:%zu, total allocated memory:%" PRIu64
+			  "[worker.pid:%" PRIu64
+			  "] [RTC::RTP::SharedPacket] memory deallocated [packet buffer:%zu, total allocated memory:%" PRIu64
 			  "]",
+			  Logger::pid,
 			  packet->GetBufferLength(),
 			  SharedPacket::allocatedMemory);
 #endif
@@ -42,13 +47,13 @@ namespace RTC
 		/* Instance methods. */
 
 		SharedPacket::SharedPacket()
-		  : sharedPtr(std::make_shared<std::unique_ptr<RTC::RTP::Packet>>(nullptr))
+		  : sharedPtr(std::make_shared<std::unique_ptr<RTP::Packet>>(nullptr))
 		{
 			MS_TRACE();
 		}
 
-		SharedPacket::SharedPacket(RTC::RTP::Packet* packet)
-		  : sharedPtr(std::make_shared<std::unique_ptr<RTC::RTP::Packet>>(nullptr))
+		SharedPacket::SharedPacket(RTP::Packet* packet)
+		  : sharedPtr(std::make_shared<std::unique_ptr<RTP::Packet>>(nullptr))
 		{
 			MS_TRACE();
 
@@ -73,7 +78,7 @@ namespace RTC
 			MS_DUMP_CLEAN(indentation, "</SharedPacket>");
 		}
 
-		void SharedPacket::Assign(RTC::RTP::Packet* packet)
+		void SharedPacket::Assign(RTP::Packet* packet)
 		{
 			MS_TRACE();
 
@@ -94,7 +99,7 @@ namespace RTC
 			this->sharedPtr->reset(nullptr);
 		}
 
-		void SharedPacket::AssertSamePacket(const RTC::RTP::Packet* otherPacket) const
+		void SharedPacket::AssertSamePacket(const RTP::Packet* otherPacket) const
 		{
 			MS_TRACE();
 
@@ -140,13 +145,16 @@ namespace RTC
 			}
 		}
 
-		void SharedPacket::StorePacket(RTC::RTP::Packet* packet)
+		void SharedPacket::StorePacket(RTP::Packet* packet)
 		{
 			MS_TRACE();
 
 			const size_t bufferLength = packet->GetLength() + PacketBufferLengthIncrement;
-			auto* buffer              = new uint8_t[bufferLength];
-			auto* clonedPacket        = packet->Clone(buffer, bufferLength);
+
+			// NOTE: Buffer must be 4-byte aligned since RTP packet parsing casts it to
+			// structs (e.g. FixedHeader, HeaderExtension) that require 4-byte alignment.
+			auto* buffer = static_cast<uint8_t*>(::operator new[](bufferLength, std::align_val_t{ 4 }));
+			auto* clonedPacket = packet->Clone(buffer, bufferLength);
 
 			// Set a listener in the Packet to deallocate its buffer once the Packet
 			// is destroyed or releases its internal buffer.
@@ -159,8 +167,10 @@ namespace RTC
 
 			MS_DUMP_CLEAN(
 			  0,
-			  "[RTC::RTP::SharedPacket] memory allocated [packet buffer:%zu, total allocated memory:%" PRIu64
+			  "[worker.pid:%" PRIu64
+			  "] [RTC::RTP::SharedPacket] memory allocated [packet buffer:%zu, total allocated memory:%" PRIu64
 			  "]",
+			  Logger::pid,
 			  clonedPacket->GetBufferLength(),
 			  SharedPacket::allocatedMemory);
 #endif
