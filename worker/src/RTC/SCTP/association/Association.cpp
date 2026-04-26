@@ -119,11 +119,11 @@ namespace RTC
 			  // Add OS.
 			  // TODO: SCTP: We should put here current value which may be different after
 			  // negotiation with peer and reconfig.
-			  this->sctpOptions.maxOutboundStreams,
+			  this->sctpOptions.announcedMaxOutboundStreams,
 			  // Add MIS.
 			  // TODO: SCTP: We should put here current value which may be different after
 			  // negotiation with peer and reconfig.
-			  this->sctpOptions.maxInboundStreams,
+			  this->sctpOptions.announcedMaxInboundStreams,
 			  // Add maxMessageSize.
 			  this->sctpOptions.maxSendMessageSize,
 			  // Add sendBufferSize.
@@ -266,7 +266,9 @@ namespace RTC
 				// from ShutdownAckSent to ShutdownPending, which is illegal.
 				//
 				// @see https://issues.webrtc.org/issues/42222897
-				if (this->state != State::SHUTDOWN_SENT && this->state != State::SHUTDOWN_ACK_SENT)
+				if (
+				  this->state != State::SHUTDOWN_SENT && this->state != State::SHUTDOWN_ACK_SENT &&
+				  this->state != State::SHUTDOWN_RECEIVED && this->state != State::SHUTDOWN_PENDING)
 				{
 					this->t1InitTimer->Stop();
 					this->t1CookieTimer->Stop();
@@ -340,15 +342,15 @@ namespace RTC
 				.txMessagesCount = this->privateMetrics.txMessagesCount,
 				.rxPacketsCount  = this->privateMetrics.rxPacketsCount,
 				.rxMessagesCount = this->privateMetrics.rxMessagesCount,
-				// .rtxPacketsCount = this->tcb->GetRetransmissionQueue().GetRtxPacketsCount(),
-				// .rtxBytesCount   = this->tcb->GetRetransmissionQueue().GetRtxBytesCount(),
-				// .cwndBytes       = this->tcb->GetCwnd(),
-				.srttMs = this->tcb->GetCurrentSrttMs(),
+				.rtxPacketsCount = this->tcb->GetRetransmissionQueue().GetRtxPacketsCount(),
+				.rtxBytesCount   = this->tcb->GetRetransmissionQueue().GetRtxBytesCount(),
+				.cwndBytes       = this->tcb->GetCwnd(),
+				.srttMs          = this->tcb->GetCurrentSrttMs(),
 				// .unackDataCount =
 				//   this->tcb->GetRetransmissionQueue().GetUnackedItems() +
 				//   (this->sendQueue.GetTotalBufferedAmount() + packetPayloadLength - 1) / packetPayloadLength,
-				// .peerRwndBytes                = this->tcb->GetRetransmissionQueue().GetRwnd(),
-				.peerImplementation           = this->privateMetrics.peerImplementation,
+				.peerRwndBytes      = static_cast<uint32_t>(this->tcb->GetRetransmissionQueue().GetRwnd()),
+				.peerImplementation = this->privateMetrics.peerImplementation,
 				.negotiatedMaxOutboundStreams = this->privateMetrics.negotiatedMaxOutboundStreams,
 				.negotiatedMaxInboundStreams  = this->privateMetrics.negotiatedMaxInboundStreams,
 				.usesPartialReliability       = this->privateMetrics.usesPartialReliability,
@@ -417,7 +419,7 @@ namespace RTC
 			// this->sendQueue.SetBufferedAmountLowThreshold(streamId, bytes);
 		}
 
-		Types::ResetStreamsStatus Association::ResetStreams(std::span<const uint16_t> /*outboundStreamIds*/)
+		Types::ResetStreamsStatus Association::ResetStreams(std::span<const uint16_t> outboundStreamIds)
 		{
 			MS_TRACE();
 
@@ -441,8 +443,7 @@ namespace RTC
 				return Types::ResetStreamsStatus::NOT_SUPPORTED;
 			}
 
-			// TODO: SCTP: Implement it.
-			// this->tcb->GetStreamResetHandler().ResetStreams(outboundStreamIds);
+			this->tcb->GetStreamResetHandler().ResetStreams(outboundStreamIds);
 
 			MaySendResetStreamsRequest();
 			AssertStateIsConsistent();
@@ -465,17 +466,17 @@ namespace RTC
 			}
 
 			// TODO: SCTP: Uncomment.
-			// const uint64_t now = DepLibUV::GetTimeMs();
+			// const uint64_t nowMs = DepLibUV::GetTimeMs();
 
 			this->privateMetrics.txMessagesCount++;
 
 			// TODO: SCTP: Implement it.
-			// this->sendQueue.AddMessage(now, std::move(message), sendMessageOptions);
+			// this->sendQueue.AddMessage(nowMs, std::move(message), sendMessageOptions);
 
 			if (this->tcb)
 			{
 				// TODO: SCTP: Implement it.
-				// this->tcb->SendBufferedPackets(now);
+				// this->tcb->SendBufferedPackets(nowMs);
 			}
 
 			AssertStateIsConsistent();
@@ -491,7 +492,7 @@ namespace RTC
 			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
 
 			// TODO: SCTP: Uncomment.
-			// const uint64_t now = DepLibUV::GetTimeMs();
+			// const uint64_t nowMs = DepLibUV::GetTimeMs();
 			std::vector<Types::SendMessageStatus> statuses;
 
 			statuses.reserve(messages.size());
@@ -510,13 +511,13 @@ namespace RTC
 				this->privateMetrics.txMessagesCount++;
 
 				// TODO: SCTP: Implement it.
-				// this->sendQueue.AddMessage(now, std::move(message), sendMessageOptions);
+				// this->sendQueue.AddMessage(nowMs, std::move(message), sendMessageOptions);
 			}
 
 			if (this->tcb)
 			{
 				// TODO: SCTP: Implement it.
-				// this->tcb->SendBufferedPackets(now);
+				// this->tcb->SendBufferedPackets(nowMs);
 			}
 
 			AssertStateIsConsistent();
@@ -546,13 +547,16 @@ namespace RTC
 				}
 			}
 
-			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
-
 			this->privateMetrics.rxPacketsCount++;
 
 			// If we are received SCTP data from the remote peer it means that we may
 			// initiate the SCTP association (if not already connected).
 			MayConnect();
+
+			// NOTE: It's important to create the deferrer here, otherwise it may
+			// happen that MayConnect() ends calling to Connect() so we end with two
+			// nested deferreds (and hence an assertion).
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
 
 			std::unique_ptr<Packet> receivedPacket{ Packet::Parse(data, len) };
 
@@ -581,7 +585,7 @@ namespace RTC
 			{
 				const auto* receivedChunk = *it;
 
-				if (!ProcessReceivedChunk(receivedPacket.get(), receivedChunk))
+				if (!HandleReceivedChunk(receivedPacket.get(), receivedChunk))
 				{
 					break;
 				}
@@ -734,9 +738,11 @@ namespace RTC
 				  return this->state == State::ESTABLISHED;
 			  });
 
-			this->privateMetrics.negotiatedMaxOutboundStreams = negotiatedCapabilities.maxOutboundStreams;
-			this->privateMetrics.negotiatedMaxInboundStreams  = negotiatedCapabilities.maxInboundStreams;
-			this->privateMetrics.usesPartialReliability       = negotiatedCapabilities.partialReliability;
+			this->privateMetrics.negotiatedMaxOutboundStreams =
+			  negotiatedCapabilities.negotiatedMaxOutboundStreams;
+			this->privateMetrics.negotiatedMaxInboundStreams =
+			  negotiatedCapabilities.negotiatedMaxInboundStreams;
+			this->privateMetrics.usesPartialReliability  = negotiatedCapabilities.partialReliability;
 			this->privateMetrics.usesMessageInterleaving = negotiatedCapabilities.messageInterleaving;
 			this->privateMetrics.usesReConfig            = negotiatedCapabilities.reConfig;
 			this->privateMetrics.usesZeroChecksum        = negotiatedCapabilities.zeroChecksum;
@@ -774,8 +780,8 @@ namespace RTC
 
 			initChunk->SetInitiateTag(this->preTcb.localVerificationTag);
 			initChunk->SetAdvertisedReceiverWindowCredit(this->sctpOptions.maxReceiverWindowBufferSize);
-			initChunk->SetNumberOfOutboundStreams(this->sctpOptions.maxOutboundStreams);
-			initChunk->SetNumberOfInboundStreams(this->sctpOptions.maxInboundStreams);
+			initChunk->SetNumberOfOutboundStreams(this->sctpOptions.announcedMaxOutboundStreams);
+			initChunk->SetNumberOfInboundStreams(this->sctpOptions.announcedMaxInboundStreams);
 			initChunk->SetInitialTsn(this->preTcb.localInitialTsn);
 
 			// Insert capabilities related Parameters in the INIT Chunk.
@@ -829,10 +835,10 @@ namespace RTC
 
 			AssertHasTcb();
 
-			// TODO: SCTP: Implement it.
-			// if (this->tcb->GetRetransmissionQueue().GetUnackedItems() != 0) {
-			//   return;
-			// }
+			if (this->tcb->GetRetransmissionQueue().GetUnackedItems() != 0)
+			{
+				return;
+			}
 
 			// https://datatracker.ietf.org/doc/html/rfc9260#section-9.2
 			//
@@ -906,37 +912,13 @@ namespace RTC
 
 			AssertHasTcb();
 
-			// TODO: SCTP: I don't like this. I don't want to use Packet::AddChunk() (which
-			// clones the given Chunk). I want to use Packet::BuildChunkInPlace() so
-			// we need that `tcb->GetStreamResetHandler().MakeStreamResetRequest()`
-			// doesn't return a `ReConfigChunk` but something different such as the
-			// Re-configuration Request Parameter(s) (OutgoingSSNResetRequestParameter):
-			// https://datatracker.ietf.org/doc/html/rfc6525#section-8.2
-			// Mmmm, but not even that because we also want to use
-			// ReConfigChunk::BuildParameterInPlace() instead of AddParameter() for
-			// same reasons... Ok, let's see.
-			// NOTE: What about if we do some std::move() somewhere?
+			if (this->tcb->GetStreamResetHandler().ShouldCreateStreamResetRequest())
+			{
+				auto packet = this->tcb->CreatePacket();
 
-			// const auto* reConfigChunk =
-			//     this->tcb->GetStreamResetHandler().MakeStreamResetRequest();
-			// const auto* outgoingSSNResetRequestParameter =
-			//   this->tcb->GetStreamResetHandler().MakeOutgoingSSNResetRequestParameter();
-
-			// if (!outgoingSSNResetRequestParameter)
-			// {
-			// 	return;
-			// }
-
-			// auto packet         = this->tcb->CreatePacket();
-			// auto* reConfigChunk = packet->BuildChunkInPlace<ReConfigChunk>();
-
-			// reConfigChunk->AddParameter(outgoingSSNResetRequestParameter);
-
-			// delete outgoingSSNResetRequestParameter;
-
-			// reConfigChunk->Consolidate();
-
-			// this->packetSender.SendPacket(packet.get());
+				this->tcb->GetStreamResetHandler().CreateStreamResetRequest(packet.get());
+				this->packetSender.SendPacket(packet.get());
+			}
 		}
 
 		void Association::MayDeliverMessages()
@@ -1118,7 +1100,7 @@ namespace RTC
 
 			// https://datatracker.ietf.org/doc/html/rfc9260#section-5.2.4
 			//
-			// This is handled in ProcessReceivedCookieEchoChunk().
+			// This is handled in HandleReceivedCookieEchoChunk().
 			if (receivedPacket->GetChunksCount() >= 1 && receivedPacket->GetChunkAt(0)->GetType() == Chunk::ChunkType::COOKIE_ECHO)
 			{
 				return true;
@@ -1191,7 +1173,7 @@ namespace RTC
 			}
 		}
 
-		bool Association::ProcessReceivedChunk(const Packet* receivedPacket, const Chunk* receivedChunk)
+		bool Association::HandleReceivedChunk(const Packet* receivedPacket, const Chunk* receivedChunk)
 		{
 			MS_TRACE();
 
@@ -1199,21 +1181,21 @@ namespace RTC
 			{
 				case Chunk::ChunkType::INIT:
 				{
-					ProcessReceivedInitChunk(receivedPacket, static_cast<const InitChunk*>(receivedChunk));
+					HandleReceivedInitChunk(receivedPacket, static_cast<const InitChunk*>(receivedChunk));
 
 					break;
 				}
 
 				case Chunk::ChunkType::INIT_ACK:
 				{
-					ProcessReceivedInitAckChunk(receivedPacket, static_cast<const InitAckChunk*>(receivedChunk));
+					HandleReceivedInitAckChunk(receivedPacket, static_cast<const InitAckChunk*>(receivedChunk));
 
 					break;
 				}
 
 				case Chunk::ChunkType::COOKIE_ECHO:
 				{
-					ProcessReceivedCookieEchoChunk(
+					HandleReceivedCookieEchoChunk(
 					  receivedPacket, static_cast<const CookieEchoChunk*>(receivedChunk));
 
 					break;
@@ -1221,7 +1203,7 @@ namespace RTC
 
 				case Chunk::ChunkType::COOKIE_ACK:
 				{
-					ProcessReceivedCookieAckChunk(
+					HandleReceivedCookieAckChunk(
 					  receivedPacket, static_cast<const CookieAckChunk*>(receivedChunk));
 
 					break;
@@ -1229,7 +1211,7 @@ namespace RTC
 
 				case Chunk::ChunkType::SHUTDOWN:
 				{
-					ProcessReceivedShutdownChunk(
+					HandleReceivedShutdownChunk(
 					  receivedPacket, static_cast<const ShutdownChunk*>(receivedChunk));
 
 					break;
@@ -1237,7 +1219,7 @@ namespace RTC
 
 				case Chunk::ChunkType::SHUTDOWN_ACK:
 				{
-					ProcessReceivedShutdownAckChunk(
+					HandleReceivedShutdownAckChunk(
 					  receivedPacket, static_cast<const ShutdownAckChunk*>(receivedChunk));
 
 					break;
@@ -1245,7 +1227,7 @@ namespace RTC
 
 				case Chunk::ChunkType::SHUTDOWN_COMPLETE:
 				{
-					ProcessReceivedShutdownCompleteChunk(
+					HandleReceivedShutdownCompleteChunk(
 					  receivedPacket, static_cast<const ShutdownCompleteChunk*>(receivedChunk));
 
 					break;
@@ -1253,7 +1235,7 @@ namespace RTC
 
 				case Chunk::ChunkType::OPERATION_ERROR:
 				{
-					ProcessReceivedOperationErrorChunk(
+					HandleReceivedOperationErrorChunk(
 					  receivedPacket, static_cast<const OperationErrorChunk*>(receivedChunk));
 
 					break;
@@ -1261,7 +1243,7 @@ namespace RTC
 
 				case Chunk::ChunkType::ABORT:
 				{
-					ProcessReceivedAbortAssociationChunk(
+					HandleReceivedAbortAssociationChunk(
 					  receivedPacket, static_cast<const AbortAssociationChunk*>(receivedChunk));
 
 					break;
@@ -1269,7 +1251,7 @@ namespace RTC
 
 				case Chunk::ChunkType::HEARTBEAT_REQUEST:
 				{
-					ProcessReceivedHeartbeatRequestChunk(
+					HandleReceivedHeartbeatRequestChunk(
 					  receivedPacket, static_cast<const HeartbeatRequestChunk*>(receivedChunk));
 
 					break;
@@ -1277,7 +1259,7 @@ namespace RTC
 
 				case Chunk::ChunkType::HEARTBEAT_ACK:
 				{
-					ProcessReceivedHeartbeatAckChunk(
+					HandleReceivedHeartbeatAckChunk(
 					  receivedPacket, static_cast<const HeartbeatAckChunk*>(receivedChunk));
 
 					break;
@@ -1285,7 +1267,7 @@ namespace RTC
 
 				case Chunk::ChunkType::RE_CONFIG:
 				{
-					ProcessReceivedReConfigChunk(
+					HandleReceivedReConfigChunk(
 					  receivedPacket, static_cast<const ReConfigChunk*>(receivedChunk));
 
 					break;
@@ -1293,7 +1275,7 @@ namespace RTC
 
 				case Chunk::ChunkType::FORWARD_TSN:
 				{
-					ProcessReceivedForwardTsnChunk(
+					HandleReceivedForwardTsnChunk(
 					  receivedPacket, static_cast<const ForwardTsnChunk*>(receivedChunk));
 
 					break;
@@ -1301,7 +1283,7 @@ namespace RTC
 
 				case Chunk::ChunkType::I_FORWARD_TSN:
 				{
-					ProcessReceivedIForwardTsnChunk(
+					HandleReceivedIForwardTsnChunk(
 					  receivedPacket, static_cast<const IForwardTsnChunk*>(receivedChunk));
 
 					break;
@@ -1309,28 +1291,28 @@ namespace RTC
 
 				case Chunk::ChunkType::DATA:
 				{
-					ProcessReceivedDataChunk(receivedPacket, static_cast<const DataChunk*>(receivedChunk));
+					HandleReceivedDataChunk(receivedPacket, static_cast<const DataChunk*>(receivedChunk));
 
 					break;
 				}
 
 				case Chunk::ChunkType::I_DATA:
 				{
-					ProcessReceivedIDataChunk(receivedPacket, static_cast<const IDataChunk*>(receivedChunk));
+					HandleReceivedIDataChunk(receivedPacket, static_cast<const IDataChunk*>(receivedChunk));
 
 					break;
 				}
 
 				case Chunk::ChunkType::SACK:
 				{
-					ProcessReceivedSackChunk(receivedPacket, static_cast<const SackChunk*>(receivedChunk));
+					HandleReceivedSackChunk(receivedPacket, static_cast<const SackChunk*>(receivedChunk));
 
 					break;
 				}
 
 				default:
 				{
-					return ProcessReceivedUnknownChunk(
+					return HandleReceivedUnknownChunk(
 					  receivedPacket, static_cast<const UnknownChunk*>(receivedChunk));
 				}
 			}
@@ -1338,7 +1320,7 @@ namespace RTC
 			return true;
 		}
 
-		void Association::ProcessReceivedInitChunk(
+		void Association::HandleReceivedInitChunk(
 		  const Packet* /*receivedPacket*/, const InitChunk* receivedInitChunk)
 		{
 			MS_TRACE();
@@ -1492,8 +1474,8 @@ namespace RTC
 
 			initAckChunk->SetInitiateTag(localVerificationTag);
 			initAckChunk->SetAdvertisedReceiverWindowCredit(this->sctpOptions.maxReceiverWindowBufferSize);
-			initAckChunk->SetNumberOfOutboundStreams(this->sctpOptions.maxOutboundStreams);
-			initAckChunk->SetNumberOfInboundStreams(this->sctpOptions.maxInboundStreams);
+			initAckChunk->SetNumberOfOutboundStreams(this->sctpOptions.announcedMaxOutboundStreams);
+			initAckChunk->SetNumberOfInboundStreams(this->sctpOptions.announcedMaxInboundStreams);
 			initAckChunk->SetInitialTsn(localInitialTsn);
 
 			// Insert a StateCookieParameter in the INIT_ACK Chunk.
@@ -1525,7 +1507,7 @@ namespace RTC
 			  packet.get(), /*writeChecksum*/ !negotiatedCapabilities.zeroChecksum);
 		}
 
-		void Association::ProcessReceivedInitAckChunk(
+		void Association::HandleReceivedInitAckChunk(
 		  const Packet* /*receivedPacket*/, const InitAckChunk* receivedInitAckChunk)
 		{
 			MS_TRACE();
@@ -1613,13 +1595,13 @@ namespace RTC
 			// TODO: SCTP: tcb->SendBufferedPackets() must check that the remote state cookie
 			// is set in TCB and must send a COOKIE_ECHO Chunk before potentially
 			// buffered messages.
-			// this->tcb->SendBufferedPackets(callbacks_.Now());
+			// this->tcb->SendBufferedPackets(nowMs);
 
 			this->t1CookieTimer->Start();
 			this->listener.OnAssociationConnecting();
 		}
 
-		void Association::ProcessReceivedCookieEchoChunk(
+		void Association::HandleReceivedCookieEchoChunk(
 		  const Packet* receivedPacket, const CookieEchoChunk* receivedCookieEchoChunk)
 		{
 			MS_TRACE();
@@ -1649,7 +1631,7 @@ namespace RTC
 
 			if (this->tcb)
 			{
-				if (!ProcessReceivedCookieEchoChunkWithTcb(receivedPacket, cookie.get()))
+				if (!HandleReceivedCookieEchoChunkWithTcb(receivedPacket, cookie.get()))
 				{
 					return;
 				}
@@ -1714,7 +1696,7 @@ namespace RTC
 			// SACK chunks), but the COOKIE ACK chunk MUST be the first chunk in the
 			// packet."
 			// TODO: SCTP: Implement it. Note that we pass Packet as argument!
-			// this->tcb->SendBufferedPackets(packet.get(), callbacks_.Now());
+			// this->tcb->SendBufferedPackets(packet.get(), nowMs);
 
 			// TODO: SCTP: Remove this since COOKIE_ACK must be sent by
 			// tcb->SendBufferedPackets() call above.
@@ -1722,7 +1704,7 @@ namespace RTC
 			this->packetSender.SendPacket(packet.get());
 		}
 
-		bool Association::ProcessReceivedCookieEchoChunkWithTcb(
+		bool Association::HandleReceivedCookieEchoChunkWithTcb(
 		  const Packet* receivedPacket, const StateCookie* cookie)
 		{
 			MS_TRACE();
@@ -1814,7 +1796,7 @@ namespace RTC
 			return true;
 		}
 
-		void Association::ProcessReceivedCookieAckChunk(
+		void Association::HandleReceivedCookieAckChunk(
 		  const Packet* /*receivedPacket*/, const CookieAckChunk* /*receivedCookieAckChunk*/)
 		{
 			MS_TRACE();
@@ -1838,12 +1820,12 @@ namespace RTC
 			SetState(State::ESTABLISHED, "COOKIE_ACK received");
 
 			// TODO: SCTP: Implement this.
-			// this->tcb->SendBufferedPackets(callbacks_.Now());
+			// this->tcb->SendBufferedPackets(nowMs);
 
 			this->listener.OnAssociationConnected();
 		}
 
-		void Association::ProcessReceivedShutdownChunk(
+		void Association::HandleReceivedShutdownChunk(
 		  const Packet* /*receivedPacket*/, const ShutdownChunk* /*receivedShutdownChunk*/)
 		{
 			MS_TRACE();
@@ -1874,18 +1856,16 @@ namespace RTC
 				// state, restarting its T2-shutdown timer.
 				case State::SHUTDOWN_SENT:
 				{
-					SetState(State::SHUTDOWN_ACK_SENT, "SHUTDOWN received");
 					SendShutdownAckChunk();
+					SetState(State::SHUTDOWN_ACK_SENT, "SHUTDOWN received");
 
 					break;
 				}
 
-				// TODO: dcsctp: This case block should be removed and handled by the
-				// `default` case block.
-				//
-				// @see https://issues.webrtc.org/issues/42222897
 				case State::SHUTDOWN_ACK_SENT:
 				{
+					SendShutdownAckChunk();
+
 					break;
 				}
 
@@ -1913,7 +1893,7 @@ namespace RTC
 			}
 		}
 
-		void Association::ProcessReceivedShutdownAckChunk(
+		void Association::HandleReceivedShutdownAckChunk(
 		  const Packet* receivedPacket, const ShutdownAckChunk* /*receivedShutdownAckChunk*/)
 		{
 			MS_TRACE();
@@ -1972,7 +1952,7 @@ namespace RTC
 			}
 		}
 
-		void Association::ProcessReceivedShutdownCompleteChunk(
+		void Association::HandleReceivedShutdownCompleteChunk(
 		  const Packet* /*receivedPacket*/, const ShutdownCompleteChunk* /*receivedShutdownCompleteChunk*/)
 		{
 			MS_TRACE();
@@ -1992,7 +1972,7 @@ namespace RTC
 			InternalClose(Types::ErrorKind::SUCCESS, "");
 		}
 
-		void Association::ProcessReceivedOperationErrorChunk(
+		void Association::HandleReceivedOperationErrorChunk(
 		  const Packet* /*receivedPacket*/, const OperationErrorChunk* receivedOperationErrorChunk)
 		{
 			MS_TRACE();
@@ -2030,7 +2010,7 @@ namespace RTC
 			this->listener.OnAssociationError(Types::ErrorKind::PEER_REPORTED, errorCausesStr);
 		}
 
-		void Association::ProcessReceivedAbortAssociationChunk(
+		void Association::HandleReceivedAbortAssociationChunk(
 		  const Packet* /*receivedPacket*/, const AbortAssociationChunk* receivedAbortAssociationChunk)
 		{
 			MS_TRACE();
@@ -2068,7 +2048,7 @@ namespace RTC
 			InternalClose(Types::ErrorKind::PEER_REPORTED, errorCausesStr);
 		}
 
-		void Association::ProcessReceivedHeartbeatRequestChunk(
+		void Association::HandleReceivedHeartbeatRequestChunk(
 		  const Packet* /*receivedPacket*/, const HeartbeatRequestChunk* receivedHeartbeatRequestChunk)
 		{
 			MS_TRACE();
@@ -2078,11 +2058,11 @@ namespace RTC
 				return;
 			}
 
-			this->tcb->GetHeartbeatHandler().ProcessReceivedHeartbeatRequestChunk(
+			this->tcb->GetHeartbeatHandler().HandleReceivedHeartbeatRequestChunk(
 			  receivedHeartbeatRequestChunk);
 		}
 
-		void Association::ProcessReceivedHeartbeatAckChunk(
+		void Association::HandleReceivedHeartbeatAckChunk(
 		  const Packet* /*receivedPacket*/, const HeartbeatAckChunk* receivedHeartbeatAckChunk)
 		{
 			MS_TRACE();
@@ -2092,11 +2072,11 @@ namespace RTC
 				return;
 			}
 
-			this->tcb->GetHeartbeatHandler().ProcessReceivedHeartbeatAckChunk(receivedHeartbeatAckChunk);
+			this->tcb->GetHeartbeatHandler().HandleReceivedHeartbeatAckChunk(receivedHeartbeatAckChunk);
 		}
 
-		void Association::ProcessReceivedReConfigChunk(
-		  const Packet* /*receivedPacket*/, const ReConfigChunk* /*receivedReConfigChunk*/)
+		void Association::HandleReceivedReConfigChunk(
+		  const Packet* /*receivedPacket*/, const ReConfigChunk* receivedReConfigChunk)
 		{
 			MS_TRACE();
 
@@ -2105,8 +2085,7 @@ namespace RTC
 				return;
 			}
 
-			// TODO: SCTP: Implement it.
-			// this->tcb->GetStreamResetHandler().HandleReConfig(*std::move(receivedReConfigChunk));
+			this->tcb->GetStreamResetHandler().HandleReceivedReConfigChunk(receivedReConfigChunk);
 
 			// Handling this response may result in outgoing stream resets finishing
 			// (either successfully or with failure). If there still are pending
@@ -2117,30 +2096,30 @@ namespace RTC
 			// If a response was processed, pending to-be-reset streams may now have
 			// become unpaused. Try to send more DATA/I_DATA chunks.
 			// TODO: SCTP: Implement it.
-			// this->tcb->SendBufferedPackets(callbacks_.Now());
+			// this->tcb->SendBufferedPackets(nowMs);
 
 			// If it leaves "deferred reset processing", there may be chunks to
 			// deliver that were queued while waiting for the stream to reset.
 			MayDeliverMessages();
 		}
 
-		void Association::ProcessReceivedForwardTsnChunk(
+		void Association::HandleReceivedForwardTsnChunk(
 		  const Packet* receivedPacket, const ForwardTsnChunk* receivedForwardTsnChunk)
 		{
 			MS_TRACE();
 
-			ProcessReceivedAnyForwardTsnChunk(receivedPacket, receivedForwardTsnChunk);
+			HandleReceivedAnyForwardTsnChunk(receivedPacket, receivedForwardTsnChunk);
 		}
 
-		void Association::ProcessReceivedIForwardTsnChunk(
+		void Association::HandleReceivedIForwardTsnChunk(
 		  const Packet* receivedPacket, const IForwardTsnChunk* receivedIForwardTsnChunk)
 		{
 			MS_TRACE();
 
-			ProcessReceivedAnyForwardTsnChunk(receivedPacket, receivedIForwardTsnChunk);
+			HandleReceivedAnyForwardTsnChunk(receivedPacket, receivedIForwardTsnChunk);
 		}
 
-		void Association::ProcessReceivedAnyForwardTsnChunk(
+		void Association::HandleReceivedAnyForwardTsnChunk(
 		  const Packet* /*receivedPacket*/, const AnyForwardTsnChunk* /*receivedAnyForwardTsnChunk*/)
 		{
 			MS_TRACE();
@@ -2189,23 +2168,23 @@ namespace RTC
 			MayDeliverMessages();
 		}
 
-		void Association::ProcessReceivedDataChunk(
+		void Association::HandleReceivedDataChunk(
 		  const Packet* receivedPacket, const DataChunk* receivedDataChunk)
 		{
 			MS_TRACE();
 
-			ProcessReceivedAnyDataChunk(receivedPacket, receivedDataChunk);
+			HandleReceivedAnyDataChunk(receivedPacket, receivedDataChunk);
 		}
 
-		void Association::ProcessReceivedIDataChunk(
+		void Association::HandleReceivedIDataChunk(
 		  const Packet* receivedPacket, const IDataChunk* receivedIDataChunk)
 		{
 			MS_TRACE();
 
-			ProcessReceivedAnyDataChunk(receivedPacket, receivedIDataChunk);
+			HandleReceivedAnyDataChunk(receivedPacket, receivedIDataChunk);
 		}
 
-		void Association::ProcessReceivedAnyDataChunk(
+		void Association::HandleReceivedAnyDataChunk(
 		  const Packet* /*receivedPacket*/, const AnyDataChunk* receivedAnyDataChunk)
 		{
 			MS_TRACE();
@@ -2323,8 +2302,8 @@ namespace RTC
 			// }
 		}
 
-		void Association::ProcessReceivedSackChunk(
-		  const Packet* /*receivedPacket*/, const SackChunk* /*receivedSackChunk*/)
+		void Association::HandleReceivedSackChunk(
+		  const Packet* /*receivedPacket*/, const SackChunk* receivedSackChunk)
 		{
 			MS_TRACE();
 
@@ -2333,40 +2312,40 @@ namespace RTC
 				return;
 			}
 
-			// TODO: SCTP: Implement it.
-			// if (this->tcb->GetRetransmissionQueue()->ProcessSack(receivedSackChunk))
-			// {
-			// 	MaySendShutdownOrShutdownAckChunk();
+			const uint64_t nowMs = DepLibUV::GetTimeMs();
 
-			// 	// Receiving an ACK may make the Association go into fast recovery mode.
-			// 	//
-			// 	// https://datatracker.ietf.org/doc/html/rfc9260#section-7.2.4
-			// 	//
-			// 	// "If not in Fast Recovery, determine how many of the earliest (i.e.,
-			// 	// lowest TSN) DATA chunks marked for retransmission will fit into a
-			// 	// single packet, subject to constraint of the PMTU of the destination
-			// 	// transport address to which the packet is being sent. Call this value
-			// 	// K. Retransmit those K DATA chunks in a single packet. When a Fast
-			// 	// Retransmit is being performed, the sender SHOULD ignore the value of
-			// 	// cwnd and SHOULD NOT delay retransmission for this single packet."
-			// 	this->tcb->MaySendFastRetransmit();
+			if (this->tcb->GetRetransmissionQueue().HandleReceivedSackChunk(nowMs, receivedSackChunk))
+			{
+				MaySendShutdownOrShutdownAckChunk();
 
-			// 	// Receiving an ACK will decrease outstanding bytes (maybe now below
-			// 	// cwnd?) or indicate packet loss that may result in sending FORWARD-TSN.
-			// 	const uint64_t now = DepLibUV::GetTimeMs();
+				// Receiving an ACK may make the Association go into fast recovery mode.
+				//
+				// https://datatracker.ietf.org/doc/html/rfc9260#section-7.2.4
+				//
+				// "If not in Fast Recovery, determine how many of the earliest (i.e.,
+				// lowest TSN) DATA chunks marked for retransmission will fit into a
+				// single packet, subject to constraint of the PMTU of the destination
+				// transport address to which the packet is being sent. Call this value
+				// K. Retransmit those K DATA chunks in a single packet. When a Fast
+				// Retransmit is being performed, the sender SHOULD ignore the value of
+				// cwnd and SHOULD NOT delay retransmission for this single packet."
+				this->tcb->MaySendFastRetransmit();
 
-			// 	this->tcb->SendBufferedPackets(now);
-			// }
-			// else
-			// {
-			// 	MS_WARN_TAG(
-			// 	  sctp,
-			// 	  "dropping received out-of-order SACK [TSN:%" PRIu32 "]",
-			// 	  receivedSackChunk->GetCumulativeTsnAck());
-			// }
+				// Receiving an ACK will decrease outstanding bytes (maybe now below
+				// cwnd?) or indicate packet loss that may result in sending FORWARD-TSN.
+				// TODO: SCTP: Implement it.
+				// this->tcb->SendBufferedPackets(nowMs);
+			}
+			else
+			{
+				MS_WARN_TAG(
+				  sctp,
+				  "dropping received out-of-order SACK [TSN:%" PRIu32 "]",
+				  receivedSackChunk->GetCumulativeTsnAck());
+			}
 		}
 
-		bool Association::ProcessReceivedUnknownChunk(
+		bool Association::HandleReceivedUnknownChunk(
 		  const Packet* /*receivedPacket*/, const UnknownChunk* receivedUnknownChunk)
 		{
 			MS_TRACE();
@@ -2430,7 +2409,7 @@ namespace RTC
 
 			MS_DEBUG_TAG(
 			  sctp,
-			  "T1-init timer has expired %zu/%s]",
+			  "T1-init timer has expired [%zu/%s]",
 			  this->t1InitTimer->GetExpirationCount(),
 			  maxRestarts ? std::to_string(maxRestarts.value()).c_str() : "Infinite");
 
@@ -2458,7 +2437,7 @@ namespace RTC
 
 			MS_DEBUG_TAG(
 			  sctp,
-			  "T1-cookie timer has expired %zu/%s]",
+			  "T1-cookie timer has expired [%zu/%s]",
 			  this->t1CookieTimer->GetExpirationCount(),
 			  maxRestarts ? std::to_string(maxRestarts.value()).c_str() : "Infinite");
 
@@ -2467,7 +2446,7 @@ namespace RTC
 			if (this->t1CookieTimer->IsRunning())
 			{
 				// TODO: SCTP: Implement it.
-				// this->tcb->SendBufferedPackets(now);
+				// this->tcb->SendBufferedPackets(nowMs);
 			}
 			else
 			{
@@ -2477,9 +2456,12 @@ namespace RTC
 			AssertStateIsConsistent();
 		}
 
-		void Association::OnT2ShutdownTimer(uint64_t& /*baseTimeoutMs*/, bool& /*stop*/)
+		void Association::OnT2ShutdownTimer(uint64_t& baseTimeoutMs, bool& /*stop*/)
 		{
 			MS_TRACE();
+
+			AssertState(State::SHUTDOWN_SENT, State::SHUTDOWN_ACK_SENT);
+			AssertHasTcb();
 
 			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
 
@@ -2493,23 +2475,13 @@ namespace RTC
 
 			// https://datatracker.ietf.org/doc/html/rfc9260#section-9.2
 			//
-			// "If the timer expires, the endpoint MUST resend the SHUTDOWN chunk
-			// with the updated last sequential TSN received from its peer."
-			if (this->t2ShutdownTimer->IsRunning())
-			{
-				SendShutdownChunk();
-			}
-			// https://datatracker.ietf.org/doc/html/rfc9260#section-9.2
-			//
 			// "An endpoint SHOULD limit the number of retransmissions of the
 			// SHUTDOWN chunk to the protocol parameter 'Association.Max.Retrans'. If
 			// this threshold is exceeded, the endpoint SHOULD destroy the TCB and
 			// SHOULD report the peer endpoint unreachable to the upper layer (and
 			// thus the association enters the CLOSED state)."
-			else
+			if (!this->t2ShutdownTimer->IsRunning())
 			{
-				AssertHasTcb();
-
 				auto packet                 = this->tcb->CreatePacket();
 				auto* abortAssociationChunk = packet->BuildChunkInPlace<AbortAssociationChunk>();
 
@@ -2528,9 +2500,33 @@ namespace RTC
 				this->packetSender.SendPacket(packet.get());
 
 				InternalClose(Types::ErrorKind::TOO_MANY_RETRIES, "no SHUTDOWN_ACK chunk received");
+				AssertStateIsConsistent();
+
+				return;
+			}
+
+			// https://datatracker.ietf.org/doc/html/rfc9260#section-9.2
+			//
+			// "the SHUTDOWN chunk receiver MUST send a SHUTDOWN ACK chunk and start
+			// a T2-shutdown timer of its own, entering the SHUTDOWN-ACK-SENT state.
+			// If the timer expires, the endpoint MUST resend the SHUTDOWN ACK chunk."
+			if (this->state == State::SHUTDOWN_ACK_SENT)
+			{
+				SendShutdownAckChunk();
+			}
+			// https://datatracker.ietf.org/doc/html/rfc9260#section-9.2
+			//
+			// "It SHOULD then start the T2-shutdown timer and enter the SHUTDOWN-SENT
+			// state. If the timer expires, the endpoint MUST resend the SHUTDOWN
+			// chunk with the updated last sequential TSN received from its peer."
+			else
+			{
+				SendShutdownChunk();
 			}
 
 			AssertStateIsConsistent();
+
+			baseTimeoutMs = this->tcb->GetCurrentRtoMs();
 		}
 
 		template<typename... States>

@@ -63,12 +63,6 @@ if get_option('ms_dump_rtp_shared_packet_memory_usage')
   ]
 endif
 
-if get_option('ms_sctp_stack')
-  cpp_args += [
-    '-DMS_SCTP_STACK',
-  ]
-endif
-
 cpp = meson.get_compiler('cpp')
 
 # This is a workaround to define FLATBUFFERS_LOCALE_INDEPENDENT=0 outside
@@ -87,6 +81,7 @@ common_sources = [
   'src/DepLibUV.cpp',
   'src/DepLibWebRTC.cpp',
   'src/DepOpenSSL.cpp',
+  # TODO: Remove once we only use built-in SCTP stack.
   'src/DepUsrSCTP.cpp',
   'src/Logger.cpp',
   'src/MediaSoupErrors.cpp',
@@ -128,6 +123,7 @@ common_sources = [
   'src/RTC/RtcLogger.cpp',
   'src/RTC/RtpListener.cpp',
   'src/RTC/RtpObserver.cpp',
+  # TODO: Remove once we only use built-in SCTP stack.
   'src/RTC/SctpAssociation.cpp',
   'src/RTC/SctpListener.cpp',
   'src/RTC/SenderBandwidthEstimator.cpp',
@@ -212,7 +208,9 @@ common_sources = [
   'src/RTC/SCTP/association/StreamResetHandler.cpp',
   'src/RTC/SCTP/association/TransmissionControlBlock.cpp',
   'src/RTC/SCTP/tx/RetransmissionErrorCounter.cpp',
+  'src/RTC/SCTP/tx/RetransmissionQueue.cpp',
   'src/RTC/SCTP/tx/RetransmissionTimeout.cpp',
+  'src/RTC/SCTP/tx/OutstandingData.cpp',
   'src/RTC/SCTP/packet/Packet.cpp',
   'src/RTC/SCTP/packet/TLV.cpp',
   'src/RTC/SCTP/packet/UserData.cpp',
@@ -489,6 +487,7 @@ test_sources = [
   'test/src/RTC/SCTP/common/TestUnwrappedSequenceNumber.cpp',
   'test/src/RTC/SCTP/tx/TestRetransmissionErrorCounter.cpp',
   'test/src/RTC/SCTP/tx/TestRetransmissionTimeout.cpp',
+  'test/src/RTC/SCTP/tx/TestOutstandingData.cpp',
   'test/src/RTC/SCTP/packet/TestPacket.cpp',
   'test/src/RTC/SCTP/packet/TestChunk.cpp',
   'test/src/RTC/SCTP/packet/TestParameter.cpp',
