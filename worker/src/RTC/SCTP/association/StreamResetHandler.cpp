@@ -6,6 +6,7 @@
 #include "Logger.hpp"
 #include "RTC/SCTP/packet/Parameter.hpp"
 #include "RTC/SCTP/packet/parameters/ReconfigurationResponseParameter.hpp"
+#include "handles/BackoffTimerHandle.hpp"
 
 namespace RTC
 {
@@ -15,21 +16,24 @@ namespace RTC
 
 		StreamResetHandler::StreamResetHandler(
 		  AssociationListener& associationListener,
+		  SharedInterface* shared,
 		  TCBContext* tcbContext,
 		  // TODO: SCTP: Implement
 		  // DataTracker* dataTracker,
 		  // ReassemblyQueue* reassemblyQueue,
 		  RetransmissionQueue* retransmissionQueue)
 		  : associationListener(associationListener),
+		    shared(shared),
 		    tcbContext(tcbContext),
 		    retransmissionQueue(retransmissionQueue),
-		    reConfigTimer(
-		      std::make_unique<BackoffTimerHandle>(
-		        /*listener*/ this,
-		        /*baseTimeoutMs*/ 0,
-		        /*backoffAlgorithm*/ BackoffTimerHandle::BackoffAlgorithm::EXPONENTIAL,
-		        /*maxBackoffTimeoutMs*/ std::nullopt,
-		        /*maxRestarts*/ std::nullopt)),
+		    reConfigTimer(this->shared->CreateBackoffTimer(
+		      BackoffTimerHandleInterface::BackoffTimerHandleOptions{
+		        .listener            = this,
+		        .baseTimeoutMs       = 0,
+		        .backoffAlgorithm    = BackoffTimerHandleInterface::BackoffAlgorithm::EXPONENTIAL,
+		        .maxBackoffTimeoutMs = std::nullopt,
+		        .maxRestarts         = std::nullopt,
+		      })),
 		    nextOutgoingReqSeqNbr(tcbContext->GetLocalInitialTsn()),
 		    lastProcessedReqSeqNbr(
 		      this->incomingReConfigRequestSnUnwrapper.Unwrap(tcbContext->GetRemoteInitialTsn() - 1)),
@@ -491,7 +495,8 @@ namespace RTC
 			baseTimeoutMs = this->tcbContext->GetCurrentRtoMs();
 		}
 
-		void StreamResetHandler::OnTimer(BackoffTimerHandle* backoffTimer, uint64_t& baseTimeoutMs, bool& stop)
+		void StreamResetHandler::OnTimer(
+		  BackoffTimerHandleInterface* backoffTimer, uint64_t& baseTimeoutMs, bool& stop)
 		{
 			MS_TRACE();
 

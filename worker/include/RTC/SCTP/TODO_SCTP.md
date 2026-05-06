@@ -46,10 +46,10 @@
 
 - Look for "TODO: SCTP" everywhere.
 
-- Test Chrome with I-DATA (message interleaving):
-
-  ```
-  open -a "Google Chrome Canary" \
-    --args \
-    --force-fieldtrials="WebRTC-DataChannelMessageInterleaving/Enabled/"
+- Test Chrome/Canary with I-DATA (message interleaving):
+  ```bash
+  /Applications/Google\ Chrome\ Canary.app/Contents/MacOS/Google\ Chrome\ Canary \
+    --force-fieldtrials="WebRTC-DataChannelMessageInterleaving/Enabled/" \
+    --enable-logging=stderr \
+    --v=1 \
   ```

@@ -2,6 +2,7 @@
 #define MS_RTC_SCTP_TRANSMISSION_CONTROL_BLOCK_HPP
 
 #include "common.hpp"
+#include "SharedInterface.hpp"
 #include "RTC/SCTP/association/HeartbeatHandler.hpp"
 #include "RTC/SCTP/association/NegotiatedCapabilities.hpp"
 #include "RTC/SCTP/association/PacketSender.hpp"
@@ -13,7 +14,7 @@
 #include "RTC/SCTP/tx/RetransmissionErrorCounter.hpp"
 #include "RTC/SCTP/tx/RetransmissionQueue.hpp"
 #include "RTC/SCTP/tx/RetransmissionTimeout.hpp"
-#include "handles/BackoffTimerHandle.hpp"
+#include "handles/BackoffTimerHandleInterface.hpp"
 #include <string_view>
 #include <vector>
 
@@ -29,12 +30,13 @@ namespace RTC
 		 */
 		class TransmissionControlBlock : public TCBContext,
 		                                 public RetransmissionQueue::Listener,
-		                                 public BackoffTimerHandle::Listener
+		                                 public BackoffTimerHandleInterface::Listener
 		{
 		public:
 			TransmissionControlBlock(
 			  AssociationListener& associationListener,
 			  const SctpOptions& sctpOptions,
+			  SharedInterface* shared,
 			  // TODO: SCTP: Implement it.
 			  // SendQueue& sendQueue,
 			  PacketSender& packetSender,
@@ -269,13 +271,14 @@ namespace RTC
 			void OnRetransmissionQueueClearRetransmissionCounter() override;
 			;
 
-			/* Pure virtual methods inherited from BackoffTimerHandle::Listener. */
+			/* Pure virtual methods inherited from BackoffTimerHandleInterface::Listener. */
 		public:
-			void OnTimer(BackoffTimerHandle* backoffTimer, uint64_t& baseTimeoutMs, bool& stop) override;
+			void OnTimer(BackoffTimerHandleInterface* backoffTimer, uint64_t& baseTimeoutMs, bool& stop) override;
 
 		private:
 			AssociationListener& associationListener;
 			const SctpOptions sctpOptions;
+			SharedInterface* shared;
 			PacketSender& packetSender;
 			uint32_t localVerificationTag{ 0 };
 			uint32_t remoteVerificationTag{ 0 };
@@ -287,10 +290,10 @@ namespace RTC
 			NegotiatedCapabilities negotiatedCapabilities;
 			std::function<bool()> isAssociationEstablished;
 			// The data retransmission timer.
-			const std::unique_ptr<BackoffTimerHandle> t3RtxTimer;
+			const std::unique_ptr<BackoffTimerHandleInterface> t3RtxTimer;
 			// Delayed ack timer, which triggers when acks should be sent (when
 			// delayed).
-			const std::unique_ptr<BackoffTimerHandle> delayedAckTimer;
+			const std::unique_ptr<BackoffTimerHandleInterface> delayedAckTimer;
 			RetransmissionTimeout rto;
 			RetransmissionErrorCounter txErrorCounter;
 			// TODO: SCTP: Implement.

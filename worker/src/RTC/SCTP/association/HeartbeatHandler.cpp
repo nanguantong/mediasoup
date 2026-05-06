@@ -8,6 +8,7 @@
 #include "Utils.hpp"
 #include "RTC/SCTP/packet/parameters/HeartbeatInfoParameter.hpp"
 #include "RTC/SCTP/public/SctpTypes.hpp"
+#include "handles/BackoffTimerHandle.hpp"
 #include <string>
 
 namespace RTC
@@ -21,26 +22,30 @@ namespace RTC
 		/* Instance methods. */
 
 		HeartbeatHandler::HeartbeatHandler(
-		  AssociationListener& associationListener, const SctpOptions& sctpOptions, TCBContext* tcbContext)
+		  AssociationListener& associationListener,
+		  const SctpOptions& sctpOptions,
+		  SharedInterface* shared,
+		  TCBContext* tcbContext)
 		  : associationListener(associationListener),
 		    sctpOptions(sctpOptions),
+		    shared(shared),
 		    tcbContext(tcbContext),
 		    intervalDurationMs(sctpOptions.heartbeatIntervalMs),
 		    intervalDurationShouldIncludeRtt(sctpOptions.heartbeatIntervalIncludeRtt),
-		    intervalTimer(
-		      std::make_unique<BackoffTimerHandle>(
-		        /*listener*/ this,
-		        /*baseTimeoutMs*/ sctpOptions.initialRtoMs,
-		        /*backoffAlgorithm*/ BackoffTimerHandle::BackoffAlgorithm::EXPONENTIAL,
-		        /*maxBackoffTimeoutMs*/ sctpOptions.timerMaxBackoffTimeoutMs,
-		        /*maxRestarts*/ std::nullopt)),
-		    timeoutTimer(
-		      std::make_unique<BackoffTimerHandle>(
-		        /*listener*/ this,
-		        /*baseTimeoutMs*/ sctpOptions.initialRtoMs,
-		        /*backoffAlgorithm*/ BackoffTimerHandle::BackoffAlgorithm::FIXED,
-		        /*maxBackoffTimeoutMs*/ std::nullopt,
-		        /*maxRestarts*/ 0))
+		    intervalTimer(this->shared->CreateBackoffTimer(
+		      BackoffTimerHandleInterface::BackoffTimerHandleOptions{
+		        .listener            = this,
+		        .baseTimeoutMs       = sctpOptions.initialRtoMs,
+		        .backoffAlgorithm    = BackoffTimerHandleInterface::BackoffAlgorithm::EXPONENTIAL,
+		        .maxBackoffTimeoutMs = sctpOptions.timerMaxBackoffTimeoutMs,
+		        .maxRestarts         = std::nullopt })),
+		    timeoutTimer(this->shared->CreateBackoffTimer(
+		      BackoffTimerHandleInterface::BackoffTimerHandleOptions{
+		        .listener            = this,
+		        .baseTimeoutMs       = sctpOptions.initialRtoMs,
+		        .backoffAlgorithm    = BackoffTimerHandleInterface::BackoffAlgorithm::FIXED,
+		        .maxBackoffTimeoutMs = std::nullopt,
+		        .maxRestarts         = 0 }))
 		{
 			MS_TRACE();
 		}
@@ -227,7 +232,8 @@ namespace RTC
 			this->tcbContext->IncrementTxErrorCounter("hearbeat timeout");
 		}
 
-		void HeartbeatHandler::OnTimer(BackoffTimerHandle* backoffTimer, uint64_t& baseTimeoutMs, bool& stop)
+		void HeartbeatHandler::OnTimer(
+		  BackoffTimerHandleInterface* backoffTimer, uint64_t& baseTimeoutMs, bool& stop)
 		{
 			MS_TRACE();
 

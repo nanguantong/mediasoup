@@ -2,6 +2,7 @@
 #define MS_RTC_SCTP_STREAM_RESET_HANDLER_HPP
 
 #include "common.hpp"
+#include "SharedInterface.hpp"
 #include "RTC/SCTP/association/TCBContext.hpp"
 #include "RTC/SCTP/common/UnwrappedSequenceNumber.hpp"
 #include "RTC/SCTP/packet/Packet.hpp"
@@ -11,7 +12,7 @@
 #include "RTC/SCTP/packet/parameters/ReconfigurationResponseParameter.hpp"
 #include "RTC/SCTP/public/AssociationListener.hpp"
 #include "RTC/SCTP/tx/RetransmissionQueue.hpp"
-#include "handles/BackoffTimerHandle.hpp"
+#include "handles/BackoffTimerHandleInterface.hpp"
 #include <span>
 #include <vector>
 
@@ -50,7 +51,7 @@ namespace RTC
 		 * not-yet-sent messages will be discarded, but that may change in the future.
 		 * RFC8831 allows both behaviors.
 		 */
-		class StreamResetHandler : public BackoffTimerHandle::Listener
+		class StreamResetHandler : public BackoffTimerHandleInterface::Listener
 		{
 		private:
 			enum class ReqSeqNbrValidationResult : uint8_t
@@ -166,6 +167,7 @@ namespace RTC
 		public:
 			StreamResetHandler(
 			  AssociationListener& associationListener,
+			  SharedInterface* shared,
 			  TCBContext* tcbContext,
 			  // TODO: SCTP: Implement
 			  // DataTracker* dataTracker,
@@ -254,12 +256,13 @@ namespace RTC
 
 			void OnReConfigTimer(uint64_t& baseTimeoutMs, bool& stop);
 
-			/* Pure virtual methods inherited from BackoffTimerHandle::Listener. */
+			/* Pure virtual methods inherited from BackoffTimerHandleInterface::Listener. */
 		public:
-			void OnTimer(BackoffTimerHandle* backoffTimer, uint64_t& baseTimeoutMs, bool& stop) override;
+			void OnTimer(BackoffTimerHandleInterface* backoffTimer, uint64_t& baseTimeoutMs, bool& stop) override;
 
 		private:
 			AssociationListener& associationListener;
+			SharedInterface* shared;
 			TCBContext* tcbContext;
 			// TODO: SCTP: Implement
 			// DataTracker* dataTracker;,
@@ -267,7 +270,7 @@ namespace RTC
 			// ReassemblyQueue* reassemblyQueue;,
 			RetransmissionQueue* retransmissionQueue;
 			UnwrappedReConfigRequestSn::Unwrapper incomingReConfigRequestSnUnwrapper;
-			const std::unique_ptr<BackoffTimerHandle> reConfigTimer;
+			const std::unique_ptr<BackoffTimerHandleInterface> reConfigTimer;
 			// The next sequence number for outgoing stream requests.
 			uint32_t nextOutgoingReqSeqNbr{ 0 };
 			// The current stream request operation.

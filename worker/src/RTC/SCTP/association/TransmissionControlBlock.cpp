@@ -8,6 +8,7 @@
 #include "RTC/Consts.hpp"
 #include "RTC/SCTP/packet/chunks/DataChunk.hpp"
 #include "RTC/SCTP/packet/chunks/IDataChunk.hpp"
+#include "handles/BackoffTimerHandle.hpp"
 #include <cmath> // std::min()
 #include <string>
 
@@ -24,6 +25,7 @@ namespace RTC
 		TransmissionControlBlock::TransmissionControlBlock(
 		  AssociationListener& associationListener,
 		  const SctpOptions& sctpOptions,
+		  SharedInterface* shared,
 		  PacketSender& packetSender,
 		  // TODO: SCTP: Implement it.
 		  // SendQueue& sendQueue,
@@ -37,6 +39,7 @@ namespace RTC
 		  std::function<bool()> isAssociationEstablished)
 		  : associationListener(associationListener),
 		    sctpOptions(sctpOptions),
+		    shared(shared),
 		    // TODO: SCTP: Implement it.
 		    // sendQueue(sendQueue),
 		    packetSender(packetSender),
@@ -48,20 +51,20 @@ namespace RTC
 		    tieTag(tieTag),
 		    negotiatedCapabilities(negotiatedCapabilities),
 		    isAssociationEstablished(std::move(isAssociationEstablished)),
-		    t3RtxTimer(
-		      std::make_unique<BackoffTimerHandle>(
-		        /*listener*/ this,
-		        /*baseTimeoutMs*/ sctpOptions.initialRtoMs,
-		        /*backoffAlgorithm*/ BackoffTimerHandle::BackoffAlgorithm::EXPONENTIAL,
-		        /*maxBackoffTimeoutMs*/ sctpOptions.timerMaxBackoffTimeoutMs,
-		        /*maxRestarts*/ std::nullopt)),
-		    delayedAckTimer(
-		      std::make_unique<BackoffTimerHandle>(
-		        /*listener*/ this,
-		        /*baseTimeoutMs*/ sctpOptions.delayedAckMaxTimeoutMs,
-		        /*backoffAlgorithm*/ BackoffTimerHandle::BackoffAlgorithm::EXPONENTIAL,
-		        /*maxBackoffTimeoutMs*/ std::nullopt,
-		        /*maxRestarts*/ 0)),
+		    t3RtxTimer(this->shared->CreateBackoffTimer(
+		      BackoffTimerHandleInterface::BackoffTimerHandleOptions{
+		        .listener            = this,
+		        .baseTimeoutMs       = sctpOptions.initialRtoMs,
+		        .backoffAlgorithm    = BackoffTimerHandleInterface::BackoffAlgorithm::EXPONENTIAL,
+		        .maxBackoffTimeoutMs = sctpOptions.timerMaxBackoffTimeoutMs,
+		        .maxRestarts         = std::nullopt })),
+		    delayedAckTimer(this->shared->CreateBackoffTimer(
+		      BackoffTimerHandleInterface::BackoffTimerHandleOptions{
+		        .listener            = this,
+		        .baseTimeoutMs       = sctpOptions.delayedAckMaxTimeoutMs,
+		        .backoffAlgorithm    = BackoffTimerHandleInterface::BackoffAlgorithm::EXPONENTIAL,
+		        .maxBackoffTimeoutMs = std::nullopt,
+		        .maxRestarts         = 0 })),
 		    rto(sctpOptions),
 		    txErrorCounter(sctpOptions),
 		    // TODO: SCTP: Implement.
@@ -81,12 +84,13 @@ namespace RTC
 		      negotiatedCapabilities.messageInterleaving),
 		    streamResetHandler(
 		      this->associationListener,
+		      this->shared,
 		      this,
 		      // TODO: SCTP: Implement.
 		      // std::addressof(this->dataTracker),
 		      // std::addressof(this->reassemblyQueue),
 		      std::addressof(this->retransmissionQueue)),
-		    heartbeatHandler(this->associationListener, sctpOptions, this)
+		    heartbeatHandler(this->associationListener, sctpOptions, this->shared, this)
 		{
 			MS_TRACE();
 		}
@@ -335,7 +339,7 @@ namespace RTC
 		}
 
 		void TransmissionControlBlock::OnTimer(
-		  BackoffTimerHandle* backoffTimer, uint64_t& baseTimeoutMs, bool& stop)
+		  BackoffTimerHandleInterface* backoffTimer, uint64_t& baseTimeoutMs, bool& stop)
 		{
 			MS_TRACE();
 

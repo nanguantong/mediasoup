@@ -5,7 +5,6 @@
 #include "RTC/SCTP/tx/RetransmissionQueue.hpp"
 #include "Logger.hpp"
 #include "Utils.hpp"
-#include "RTC/SCTP/packet/Parameter.hpp"
 #include "RTC/SCTP/packet/chunks/DataChunk.hpp"
 #include "RTC/SCTP/packet/chunks/IDataChunk.hpp"
 #include <cmath>   // std::min()
@@ -25,7 +24,7 @@ namespace RTC
 		  uint32_t remoteAdvertisedReceiverWindowCredit,
 		  // TODO: SCTP: Implement
 		  // SendQueue& sendQueue,
-		  BackoffTimerHandle* t3RtxTimer,
+		  BackoffTimerHandleInterface* t3RtxTimer,
 		  const SctpOptions& sctpOptions,
 		  // NOTE: I don't like default argument values in dcsctp (true and false),
 		  // let's be explicit.

@@ -1,6 +1,7 @@
 #define MS_CLASS "mediasoup-worker"
 // #define MS_LOG_DEV_LEVEL 3
 
+#include "lib.hpp"
 #include "common.hpp"
 #include "DepLibSRTP.hpp"
 #ifdef MS_LIBURING_SUPPORTED
@@ -14,8 +15,11 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Settings.hpp"
+#include "Shared.hpp"
 #include "Utils.hpp"
 #include "Worker.hpp"
+#include "Channel/ChannelMessageRegistrator.hpp"
+#include "Channel/ChannelNotifier.hpp"
 #include "Channel/ChannelSocket.hpp"
 #include "RTC/DtlsTransport.hpp"
 #include "RTC/SrtpSession.hpp"
@@ -81,6 +85,11 @@ extern "C" int mediasoup_worker_run(
 		return 40;
 	}
 #endif
+
+	// Create a Shared singleton.
+	std::unique_ptr<Shared> shared{ new Shared(
+		/*channelMessageRegistrator*/ new Channel::ChannelMessageRegistrator(),
+		/*channelNotifier*/ new Channel::ChannelNotifier(channel.get())) };
 
 	// Initialize the Logger.
 	Logger::ClassInit(channel.get());
@@ -163,8 +172,12 @@ extern "C" int mediasoup_worker_run(
 		// Ignore some signals.
 		ignoreSignals();
 
+		MS_DEBUG_TAG(info, "creating Worker instance");
+
 		// Run the Worker.
-		const Worker worker(channel.get());
+		const Worker worker(channel.get(), shared.get());
+
+		MS_DEBUG_TAG(info, "Worker instance terminated");
 
 		// Free static stuff.
 		DepLibSRTP::ClassDestroy();

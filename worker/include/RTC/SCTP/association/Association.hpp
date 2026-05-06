@@ -2,6 +2,7 @@
 #define MS_RTC_SCTP_ASSOCIATION_HPP
 
 #include "common.hpp"
+#include "SharedInterface.hpp"
 #include "RTC/SCTP/association/AssociationListenerDeferrer.hpp"
 #include "RTC/SCTP/association/NegotiatedCapabilities.hpp"
 #include "RTC/SCTP/association/PacketSender.hpp"
@@ -36,7 +37,7 @@
 #include "RTC/SCTP/public/Message.hpp"
 #include "RTC/SCTP/public/SctpOptions.hpp"
 #include "RTC/SCTP/public/SctpTypes.hpp"
-#include "handles/BackoffTimerHandle.hpp"
+#include "handles/BackoffTimerHandleInterface.hpp"
 #include <FBS/sctpParameters.h>
 #include <span>
 #include <string_view>
@@ -51,7 +52,7 @@ namespace RTC
 		 */
 		class Association : public AssociationInterface,
 		                    public PacketSender::Listener,
-		                    public BackoffTimerHandle::Listener
+		                    public BackoffTimerHandleInterface::Listener
 		{
 		public:
 			/**
@@ -166,7 +167,8 @@ namespace RTC
 			};
 
 		public:
-			explicit Association(const SctpOptions& sctpOptions, AssociationListener* listener);
+			explicit Association(
+			  const SctpOptions& sctpOptions, AssociationListener* listener, SharedInterface* shared);
 
 			~Association() override;
 
@@ -460,9 +462,9 @@ namespace RTC
 		public:
 			void OnPacketSenderPacketSent(PacketSender* packetSender, const Packet* packet, bool sent) override;
 
-			/* Pure virtual methods inherited from BackoffTimerHandle::Listener. */
+			/* Pure virtual methods inherited from BackoffTimerHandleInterface::Listener. */
 		public:
-			void OnTimer(BackoffTimerHandle* backoffTimer, uint64_t& baseTimeoutMs, bool& stop) override;
+			void OnTimer(BackoffTimerHandleInterface* backoffTimer, uint64_t& baseTimeoutMs, bool& stop) override;
 
 		private:
 			// SCTP options given in the constructor.
@@ -470,6 +472,7 @@ namespace RTC
 			// Listener. It's not an `AssociationListener` but an
 			// `AssociationListenerDeferrer` which inherits from `AssociationListener`.
 			AssociationListenerDeferrer listener;
+			SharedInterface* shared;
 			// SCTP association internal state.
 			State state{ State::NEW };
 			// Packet sender.
@@ -487,11 +490,11 @@ namespace RTC
 			// Private metrics.
 			AssociationPrivateMetrics privateMetrics{};
 			// T1-init timer.
-			const std::unique_ptr<BackoffTimerHandle> t1InitTimer;
+			const std::unique_ptr<BackoffTimerHandleInterface> t1InitTimer;
 			// T1-cookie timer.
-			const std::unique_ptr<BackoffTimerHandle> t1CookieTimer;
+			const std::unique_ptr<BackoffTimerHandleInterface> t1CookieTimer;
 			// T2-shutdown timer.
-			const std::unique_ptr<BackoffTimerHandle> t2ShutdownTimer;
+			const std::unique_ptr<BackoffTimerHandleInterface> t2ShutdownTimer;
 		};
 	} // namespace SCTP
 } // namespace RTC

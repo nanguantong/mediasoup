@@ -2,6 +2,12 @@
 
 ### NEXT
 
+- Node: Update TypeScript to v6 ([PR #1790](https://github.com/versatica/mediasoup/pull/1790)).
+
+### 3.19.22
+
+- Node: Avoid "worker died" event when the Node application is closed via signal without calling `worker.close()` ([PR #1788](https://github.com/versatica/mediasoup/pull/1788)).
+
 ### 3.19.21
 
 - Worker: Fix regression in `DirectTransport` when closing a `DataProducer` or `DataConsumer` ([PR #1780](https://github.com/versatica/mediasoup/pull/1780)).
