@@ -1,15 +1,13 @@
 #include "common.hpp"
-#include "DepLibUV.hpp"
-#include "mocks/include/MockShared.hpp"
 #include "RTC/NackGenerator.hpp"
 #include "RTC/RTP/Codecs/PayloadDescriptorHandler.hpp"
 #include "RTC/RTP/Packet.hpp"
-#include "RTC/RTP/rtpCommon.hpp"
-#include "RTC/Serializable.hpp"
+#include "test/include/RTC/RTP/rtpCommon.hpp"
+#include "mocks/include/MockShared.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <vector>
 
-SCENARIO("NACK generator", "[rtp][rtcp][nack]")
+SCENARIO("NackGenerator generator", "[rtp][rtcp][nack]")
 {
 	constexpr unsigned int SendNackDelay{ 0u }; // In ms.
 
@@ -127,7 +125,11 @@ SCENARIO("NACK generator", "[rtp][rtcp][nack]")
 		bool keyFrameRequiredTriggered{ false };
 	};
 
-	mocks::MockShared shared;
+	mocks::MockShared shared(/*getTimeMs*/
+	                         []()
+	                         {
+		                         return 1000;
+	                         });
 
 	auto validate =
 	  [&shared](std::unique_ptr<RTC::RTP::Packet>& packet, std::vector<TestNackGeneratorInput>& inputs)
@@ -304,7 +306,4 @@ SCENARIO("NACK generator", "[rtp][rtcp][nack]")
 
 		validate(packet, inputs);
 	}
-
-	// Must run the loop to wait for UV timers and close them.
-	DepLibUV::RunLoop();
 }

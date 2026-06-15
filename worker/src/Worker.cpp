@@ -5,14 +5,12 @@
 #ifdef MS_LIBURING_SUPPORTED
 #include "DepLibUring.hpp"
 #endif
+#include "FBS/response.h"
+#include "FBS/worker.h"
 #include "DepLibUV.hpp"
-// TODO: Remove once we only use built-in SCTP stack.
-#include "DepUsrSCTP.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Settings.hpp"
-#include "FBS/response.h"
-#include "FBS/worker.h"
 
 /* Instance methods. */
 
@@ -35,13 +33,6 @@ Worker::Worker(::Channel::ChannelSocket* channel, SharedInterface* shared)
 	}
 #endif
 
-	// TODO: Remove once we only use built-in SCTP stack.
-	if (!Settings::configuration.useBuiltInSctpStack)
-	{
-		// Create the Checker instance in DepUsrSCTP.
-		DepUsrSCTP::CreateChecker(this->shared);
-	}
-
 #ifdef MS_LIBURING_SUPPORTED
 	if (DepLibUring::IsEnabled())
 	{
@@ -52,7 +43,7 @@ Worker::Worker(::Channel::ChannelSocket* channel, SharedInterface* shared)
 
 	// Tell the Node process that we are running.
 	this->shared->GetChannelNotifier()->Emit(
-	  std::to_string(Logger::pid), FBS::Notification::Event::WORKER_RUNNING);
+	  std::to_string(Logger::Pid), FBS::Notification::Event::WORKER_RUNNING);
 
 	MS_DEBUG_DEV("starting libuv loop");
 	DepLibUV::RunLoop();
@@ -101,13 +92,6 @@ void Worker::Close()
 	}
 	this->mapWebRtcServers.clear();
 
-	// TODO: Remove once we only use built-in SCTP stack.
-	if (!Settings::configuration.useBuiltInSctpStack)
-	{
-		// Close the Checker instance in DepUsrSCTP.
-		DepUsrSCTP::CloseChecker();
-	}
-
 #ifdef MS_LIBURING_SUPPORTED
 	if (DepLibUring::IsEnabled())
 	{
@@ -153,7 +137,7 @@ flatbuffers::Offset<FBS::Worker::DumpResponse> Worker::FillBuffer(
 	{
 		return FBS::Worker::CreateDumpResponseDirect(
 		  builder,
-		  Logger::pid,
+		  Logger::Pid,
 		  &webRtcServerIds,
 		  &routerIds,
 		  channelMessageHandlers,
@@ -162,11 +146,11 @@ flatbuffers::Offset<FBS::Worker::DumpResponse> Worker::FillBuffer(
 	else
 	{
 		return FBS::Worker::CreateDumpResponseDirect(
-		  builder, Logger::pid, &webRtcServerIds, &routerIds, channelMessageHandlers);
+		  builder, Logger::Pid, &webRtcServerIds, &routerIds, channelMessageHandlers);
 	}
 #else
 	return FBS::Worker::CreateDumpResponseDirect(
-	  builder, Logger::pid, &webRtcServerIds, &routerIds, channelMessageHandlers);
+	  builder, Logger::Pid, &webRtcServerIds, &routerIds, channelMessageHandlers);
 #endif
 }
 
@@ -232,7 +216,7 @@ flatbuffers::Offset<FBS::Worker::ResourceUsageResponse> Worker::FillBufferResour
 	  uvRusage.ru_nivcsw);
 }
 
-RTC::WebRtcServer* Worker::GetWebRtcServer(const std::string& webRtcServerId) const
+RTC::WebRtcServer* Worker::AssertAndGetWebRtcServerById(const std::string& webRtcServerId) const
 {
 	auto it = this->mapWebRtcServers.find(webRtcServerId);
 
@@ -244,7 +228,7 @@ RTC::WebRtcServer* Worker::GetWebRtcServer(const std::string& webRtcServerId) co
 	return it->second;
 }
 
-RTC::Router* Worker::GetRouter(const std::string& routerId) const
+RTC::Router* Worker::AssertAndGetRouterById(const std::string& routerId) const
 {
 	MS_TRACE();
 
@@ -348,7 +332,7 @@ void Worker::HandleRequest(Channel::ChannelRequest* request)
 
 			try
 			{
-				webRtcServer = GetWebRtcServer(webRtcServerId);
+				webRtcServer = AssertAndGetWebRtcServerById(webRtcServerId);
 			}
 			catch (const MediaSoupError& error)
 			{
@@ -403,7 +387,7 @@ void Worker::HandleRequest(Channel::ChannelRequest* request)
 
 			try
 			{
-				router = GetRouter(routerId);
+				router = AssertAndGetRouterById(routerId);
 			}
 			catch (const MediaSoupError& error)
 			{

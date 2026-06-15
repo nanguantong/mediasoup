@@ -1,9 +1,9 @@
-#include "RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
-#include <cstring>                 // std::memset
+#include "test/include/RTC/SCTP/sctpCommon.hpp" // in worker/test/include/
+#include <cstring>                              // std::memset
 
 namespace sctpCommon
 {
-	// NOTE: Buffers must be 4-byte aligned since SCTP Packet parsing casts them
+	// NOTE: Buffers must be 4-byte aligned since SCTP packet parsing casts them
 	// to structs that require 4-byte alignment. Without this, accessing multi-byte
 	// fields would be undefined behavior on strict-alignment architectures.
 	alignas(4) thread_local uint8_t FactoryBuffer[];

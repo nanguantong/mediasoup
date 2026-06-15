@@ -2,7 +2,7 @@
 #include "MediaSoupErrors.hpp"
 #include "RTC/SCTP/packet/Chunk.hpp"
 #include "RTC/SCTP/packet/chunks/ShutdownChunk.hpp"
-#include "RTC/SCTP/sctpCommon.hpp"
+#include "test/include/RTC/SCTP/sctpCommon.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <cstring> // std::memset()
 

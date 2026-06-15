@@ -3,6 +3,7 @@
 
 #include "common.hpp"
 #include "RTC/RTP/Packet.hpp"
+#include "SharedInterface.hpp"
 #include <vector>
 
 namespace RTC
@@ -75,8 +76,9 @@ namespace RTC
 	class RtpDataCounter
 	{
 	public:
-		explicit RtpDataCounter(bool ignorePaddingOnlyPackets, size_t windowSizeMs = 2500)
-		  : ignorePaddingOnlyPackets(ignorePaddingOnlyPackets), rate(windowSizeMs)
+		explicit RtpDataCounter(
+		  SharedInterface* shared, bool ignorePaddingOnlyPackets, size_t windowSizeMs = 2500)
+		  : shared(shared), ignorePaddingOnlyPackets(ignorePaddingOnlyPackets), rate(windowSizeMs)
 		{
 		}
 
@@ -99,6 +101,7 @@ namespace RTC
 		}
 
 	private:
+		SharedInterface* shared{ nullptr };
 		// Whether the size of padding only RTP packets should not be taken into
 		// account
 		bool ignorePaddingOnlyPackets{ false };

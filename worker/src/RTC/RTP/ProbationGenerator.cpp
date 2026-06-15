@@ -3,8 +3,8 @@
 
 #include "RTC/RTP/ProbationGenerator.hpp"
 #include "Logger.hpp"
-#include "Utils.hpp"
 #include "RTC/RtpDictionaries.hpp"
+#include "Utils.hpp"
 #include <cstring> // std::memcpy(), std::memset()
 #include <vector>
 
@@ -14,9 +14,9 @@ namespace RTC
 	{
 		/* Static. */
 
-		thread_local uint8_t ProbationPacketBuffer[ProbationGenerator::ProbationPacketMaxLength];
+		static thread_local uint8_t ProbationPacketBuffer[ProbationGenerator::ProbationPacketMaxLength];
 		static constexpr size_t ProbationPacketExtensionsBufferLength{ 200 };
-		alignas(4) thread_local uint8_t
+		alignas(4) static thread_local uint8_t
 		  ProbationPacketExtensionsBuffer[ProbationPacketExtensionsBufferLength];
 		// 8 bytes, same as RTC::Consts::MidRtpExtensionMaxLength.
 		static const std::string MidValue{ "probator" };
@@ -28,7 +28,7 @@ namespace RTC
 			MS_TRACE();
 
 			// Trick to only fill the padding with zeroes once.
-			thread_local bool mustInitializePayload{ true };
+			static thread_local bool mustInitializePayload{ true };
 
 			if (mustInitializePayload)
 			{
@@ -37,7 +37,7 @@ namespace RTC
 				mustInitializePayload = false;
 			}
 
-			// Create the probation RTP Packet.
+			// Create the probation RTP packet.
 			this->probationPacket.reset(
 			  RTP::Packet::Factory(ProbationPacketBuffer, sizeof(ProbationPacketBuffer)));
 
@@ -102,7 +102,7 @@ namespace RTC
 				// bufferPtr += extenLen;
 			}
 
-			// Set the extensions into the Packet using One-Byte format.
+			// Set the extensions into the packet using One-Byte format.
 			this->probationPacket->SetExtensions(RTP::Packet::ExtensionsType::OneByte, extensions);
 
 			this->probationPacketMinLength = this->probationPacket->GetLength();
@@ -125,7 +125,7 @@ namespace RTC
 			// Pad given length to 4 bytes.
 			len = Utils::Byte::PadTo4Bytes(len);
 
-			// Make the Packet length fit into our available limits.
+			// Make the packet length fit into our available limits.
 			if (len > ProbationGenerator::ProbationPacketMaxLength)
 			{
 				len = ProbationGenerator::ProbationPacketMaxLength;

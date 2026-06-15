@@ -8,8 +8,9 @@
 
 /* Instance methods. */
 
-BackoffTimerHandle::BackoffTimerHandle(const BackoffTimerHandleOptions& options)
+BackoffTimerHandle::BackoffTimerHandle(BackoffTimerHandleOptions options)
   : listener(options.listener),
+    label(std::move(options.label)),
     baseTimeoutMs(options.baseTimeoutMs),
     backoffAlgorithm(options.backoffAlgorithm),
     maxBackoffTimeoutMs(options.maxBackoffTimeoutMs),
@@ -17,8 +18,24 @@ BackoffTimerHandle::BackoffTimerHandle(const BackoffTimerHandleOptions& options)
 {
 	MS_TRACE();
 
-	// NOTE: This may throw.
-	SetBaseTimeoutMs(baseTimeoutMs);
+	if (!this->listener)
+	{
+		MS_THROW_TYPE_ERROR("options.listener must be given");
+	}
+
+	if (this->label.empty())
+	{
+		MS_THROW_TYPE_ERROR("options.label must be given");
+	}
+
+	if (this->baseTimeoutMs > BackoffTimerHandleInterface::MaxTimeoutMs)
+	{
+		MS_THROW_ERROR(
+		  "[%s] base timeout (%" PRIu64 " ms) cannot be greater than %" PRIu64 " ms",
+		  this->label.c_str(),
+		  this->baseTimeoutMs,
+		  BackoffTimerHandleInterface::MaxTimeoutMs);
+	}
 
 	this->timer = new TimerHandle(this);
 }
@@ -58,7 +75,8 @@ void BackoffTimerHandle::SetBaseTimeoutMs(uint64_t baseTimeoutMs)
 	if (baseTimeoutMs > BackoffTimerHandleInterface::MaxTimeoutMs)
 	{
 		MS_THROW_ERROR(
-		  "base timeout (%" PRIu64 " ms) cannot be greater than %" PRIu64 " ms",
+		  "[%s] base timeout (%" PRIu64 " ms) cannot be greater than %" PRIu64 " ms",
+		  this->label.c_str(),
 		  baseTimeoutMs,
 		  BackoffTimerHandleInterface::MaxTimeoutMs);
 	}
@@ -108,7 +126,7 @@ void BackoffTimerHandle::OnTimer(TimerHandleInterface* /*timer*/)
 	this->expirationCount++;
 
 	// Compute whether the BackoffTimer should still be running after this timeout
-	// expiration so the parent can check IsRunning() within the OnTimer()
+	// expiration so the parent can check IsRunning() within the `OnBackoffTimer()`
 	// callback.
 	this->running =
 	  !this->maxRestarts.has_value() || this->expirationCount <= this->maxRestarts.value();
@@ -118,7 +136,7 @@ void BackoffTimerHandle::OnTimer(TimerHandleInterface* /*timer*/)
 
 	// Call the listener by passing base timeout as reference so the parent has
 	// a chance to change it and affect the next timeout.
-	this->listener->OnTimer(this, baseTimeoutMs, stop);
+	this->listener->OnBackoffTimer(this, baseTimeoutMs, stop);
 
 	// If the parent has set `stop` to true it means that it has deleted the
 	// instance, so stop here.

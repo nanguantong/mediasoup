@@ -1,11 +1,12 @@
 #include "common.hpp"
-#include "DepLibUV.hpp"
-#include "mocks/include/MockShared.hpp"
 #include "RTC/Consts.hpp"
 #include "RTC/RTP/HeaderExtensionIds.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/TransportCongestionControlServer.hpp"
+#include "mocks/include/MockShared.hpp"
 #include <catch2/catch_test_macros.hpp>
+#include <deque>
+#include <vector>
 
 SCENARIO("TransportCongestionControlServer", "[rtp]")
 {
@@ -78,7 +79,11 @@ SCENARIO("TransportCongestionControlServer", "[rtp]")
 		TestResults results;
 	};
 
-	mocks::MockShared shared;
+	mocks::MockShared shared(/*getTimeMs*/
+	                         []()
+	                         {
+		                         return 1000;
+	                         });
 
 	// clang-format off
 	alignas(4) uint8_t buffer[] =
@@ -86,8 +91,8 @@ SCENARIO("TransportCongestionControlServer", "[rtp]")
 		0x90, 0x01, 0x00, 0x01,
 		0x00, 0x00, 0x00, 0x04,
 		0x00, 0x00, 0x00, 0x05,
-		0xbe, 0xde, 0x00, 0x01,	// Header Extensions
-		0x51, 0x60, 0xee, 0x00  // TCC Feedback
+		0xbe, 0xde, 0x00, 0x01,	// Header extensions
+		0x51, 0x60, 0xee, 0x00  // TCC feedback
 	};
 	// clang-format on
 

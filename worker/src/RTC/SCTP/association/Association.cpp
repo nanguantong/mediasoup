@@ -1,12 +1,8 @@
 #define MS_CLASS "RTC::SCTP::Association"
-// TODO: SCTP: COMMENT
-#define MS_LOG_DEV_LEVEL 3
+// #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/SCTP/association/Association.hpp"
-#include "DepLibUV.hpp"
 #include "Logger.hpp"
-#include "Utils.hpp"
-#include "RTC/Consts.hpp"
 #include "RTC/SCTP/packet/errorCauses/CookieReceivedWhileShuttingDownErrorCause.hpp"
 #include "RTC/SCTP/packet/errorCauses/NoUserDataErrorCause.hpp"
 #include "RTC/SCTP/packet/errorCauses/OutOfResourceErrorCause.hpp"
@@ -17,7 +13,7 @@
 #include "RTC/SCTP/packet/parameters/StateCookieParameter.hpp"
 #include "RTC/SCTP/packet/parameters/SupportedExtensionsParameter.hpp"
 #include "RTC/SCTP/packet/parameters/ZeroChecksumAcceptableParameter.hpp"
-#include "handles/BackoffTimerHandle.hpp"
+#include "Utils.hpp"
 #include <limits>  // std::numeric_limits()
 #include <sstream> // std::ostringstream
 #include <string>
@@ -29,7 +25,7 @@ namespace RTC
 	{
 		/* Static. */
 
-		alignas(4) thread_local static uint8_t PacketFactoryBuffer[RTC::Consts::MaxSafeMtuSizeForSctp];
+		alignas(4) static thread_local uint8_t PacketFactoryBuffer[65536];
 		// @see https://tools.ietf.org/html/rfc9260#section-5.1
 		constexpr uint32_t MinVerificationTag{ 1 };
 		constexpr uint32_t MaxVerificationTag{ std::numeric_limits<uint32_t>::max() };
@@ -41,16 +37,26 @@ namespace RTC
 		/* Instance methods. */
 
 		Association::Association(
-		  const SctpOptions& sctpOptions, AssociationListener* listener, SharedInterface* shared)
+		  const SctpOptions& sctpOptions,
+		  AssociationListenerInterface* listener,
+		  SharedInterface* shared,
+		  bool isDataChannel,
+		  bool mayConnectOnReceivedSctpData)
 		  : sctpOptions(sctpOptions),
 		    // Our `listener` member is a `AssociationListenerDeferrer` which takes
-		    // `AssociationListener` as constructor argument.
-		    listener(listener),
+		    // `listener` argument as constructor argument.
+		    associationListenerDeferrer(listener),
 		    shared(shared),
-		    packetSender(this, this->listener),
+		    packetSender(this, this->associationListenerDeferrer),
+		    sendQueue(
+		      this->associationListenerDeferrer,
+		      sctpOptions.mtu,
+		      sctpOptions.defaultStreamPriority,
+		      sctpOptions.totalBufferedAmountLowThreshold),
 		    t1InitTimer(this->shared->CreateBackoffTimer(
 		      BackoffTimerHandleInterface::BackoffTimerHandleOptions{
 		        .listener            = this,
+		        .label               = "sctp-t1-init",
 		        .baseTimeoutMs       = sctpOptions.t1InitTimeoutMs,
 		        .backoffAlgorithm    = BackoffTimerHandleInterface::BackoffAlgorithm::EXPONENTIAL,
 		        .maxBackoffTimeoutMs = sctpOptions.timerMaxBackoffTimeoutMs,
@@ -59,6 +65,7 @@ namespace RTC
 		    t1CookieTimer(this->shared->CreateBackoffTimer(
 		      BackoffTimerHandleInterface::BackoffTimerHandleOptions{
 		        .listener            = this,
+		        .label               = "sctp-t1-cookie",
 		        .baseTimeoutMs       = sctpOptions.t1CookieTimeoutMs,
 		        .backoffAlgorithm    = BackoffTimerHandleInterface::BackoffAlgorithm::EXPONENTIAL,
 		        .maxBackoffTimeoutMs = sctpOptions.timerMaxBackoffTimeoutMs,
@@ -66,10 +73,14 @@ namespace RTC
 		    t2ShutdownTimer(this->shared->CreateBackoffTimer(
 		      BackoffTimerHandleInterface::BackoffTimerHandleOptions{
 		        .listener            = this,
+		        .label               = "sctp-t2-shutdown",
 		        .baseTimeoutMs       = sctpOptions.t2ShutdownTimeoutMs,
 		        .backoffAlgorithm    = BackoffTimerHandleInterface::BackoffAlgorithm::EXPONENTIAL,
 		        .maxBackoffTimeoutMs = sctpOptions.timerMaxBackoffTimeoutMs,
-		        .maxRestarts         = sctpOptions.maxRetransmissions }))
+		        .maxRestarts         = sctpOptions.maxRetransmissions })),
+		    maxPacketLength(Utils::Byte::PadDownTo4Bytes(this->sctpOptions.mtu)),
+		    isDataChannel(isDataChannel),
+		    mayConnectOnReceivedSctpData(mayConnectOnReceivedSctpData)
 		{
 			MS_TRACE();
 		}
@@ -96,12 +107,14 @@ namespace RTC
 			  static_cast<int>(stateStringView.size()),
 			  stateStringView.data());
 
+			this->sctpOptions.Dump();
+
 			if (this->tcb)
 			{
 				this->tcb->Dump(indentation + 1);
 			}
 
-			const auto metrics = GetMetrics();
+			const auto metrics = MakeMetrics();
 
 			if (metrics.has_value())
 			{
@@ -118,26 +131,13 @@ namespace RTC
 
 			return FBS::SctpParameters::CreateSctpParameters(
 			  builder,
-			  // Add port.
-			  this->sctpOptions.sourcePort,
-			  // Add OS.
-			  // TODO: SCTP: We should put here current value which may be different after
-			  // negotiation with peer and reconfig.
-			  this->sctpOptions.announcedMaxOutboundStreams,
-			  // Add MIS.
-			  // TODO: SCTP: We should put here current value which may be different after
-			  // negotiation with peer and reconfig.
-			  this->sctpOptions.announcedMaxInboundStreams,
-			  // Add maxMessageSize.
-			  this->sctpOptions.maxSendMessageSize,
-			  // Add sendBufferSize.
-			  this->sctpOptions.maxSendBufferSize,
-			  // Add sctpBufferedAmountLowThreshold.
-			  this->sctpOptions.totalBufferedAmountLowThreshold,
-			  // Add isDataChannel.
-			  // TODO: SCTP: Have a member for this.
-			  // TODO: SCTP: So remove this hardcoded `true`.
-			  /*isDataChannel*/ true);
+			  /*port*/ this->sctpOptions.sourcePort,
+			  /*maxSendMessageSize*/ this->sctpOptions.maxSendMessageSize,
+			  /*maxReceiveMessageSize*/ this->sctpOptions.maxReceiveMessageSize,
+			  /*sctpSendBufferSize*/ this->sctpOptions.maxSendBufferSize,
+			  /*sctpPerStreamSendQueueLimit*/ this->sctpOptions.perStreamSendQueueLimit,
+			  /*sctpMaxReceiverWindowBufferSize*/ this->sctpOptions.maxReceiverWindowBufferSize,
+			  /*isDataChannel*/ this->isDataChannel);
 		}
 
 		Types::AssociationState Association::GetAssociationState() const
@@ -188,14 +188,14 @@ namespace RTC
 			// SCTP state will no longer be "NEW".
 			if (this->state != State::NEW)
 			{
-				MS_DEBUG_DEV("internal Association state is not NEW, ignoring");
+				MS_DEBUG_DEV("internal association state is not NEW, ignoring");
 
 				return;
 			}
 
 			// If we haven't received any SCTP packet yet and the transport is not
 			// ready for SCTP traffic, don't do anything.
-			if (this->privateMetrics.rxPacketsCount == 0 && !this->listener.OnAssociationIsTransportReadyForSctp())
+			if (this->privateMetrics.rxPacketsCount == 0 && !this->associationListenerDeferrer.OnAssociationIsTransportReadyForSctp())
 			{
 				MS_DEBUG_DEV(
 				  "no SCTP data has been received yet and transport is not ready for SCTP traffic, ignoring");
@@ -212,7 +212,7 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			// NOTE: We only accept NEW state here so once the Association is closed
+			// NOTE: We only accept NEW state here so once the association is closed
 			// it cannot be reused. However there is no real technical reason for it.
 			if (this->state != State::NEW)
 			{
@@ -220,14 +220,14 @@ namespace RTC
 
 				MS_WARN_TAG(
 				  sctp,
-				  "cannot initiate the Association since internal state is not NEW but %.*s",
+				  "cannot initiate the association since internal state is not NEW but %.*s",
 				  static_cast<int>(stateStringView.size()),
 				  stateStringView.data());
 
 				return;
 			}
 
-			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->associationListenerDeferrer);
 
 			this->preTcb.localVerificationTag =
 			  Utils::Crypto::GetRandomUInt<uint32_t>(MinVerificationTag, MaxVerificationTag);
@@ -240,9 +240,9 @@ namespace RTC
 
 			SetState(State::COOKIE_WAIT, "Connect() called");
 
-			AssertStateIsConsistent();
+			AssertIsConsistent();
 
-			this->listener.OnAssociationConnecting();
+			this->associationListenerDeferrer.OnAssociationConnecting();
 		}
 
 		void Association::Shutdown()
@@ -251,12 +251,12 @@ namespace RTC
 
 			if (this->state == State::NEW || this->state == State::CLOSED)
 			{
-				AssertStateIsConsistent();
+				AssertIsConsistent();
 
 				return;
 			}
 
-			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->associationListenerDeferrer);
 
 			// https://datatracker.ietf.org/doc/html/rfc9260#section-9.2
 			//
@@ -266,7 +266,7 @@ namespace RTC
 			if (this->tcb)
 			{
 				// TODO: dcsctp: Remove this check, as it just hides the problem that the
-				// Association can transition from ShutdownSent to ShutdownPending, or
+				// association can transition from ShutdownSent to ShutdownPending, or
 				// from ShutdownAckSent to ShutdownPending, which is illegal.
 				//
 				// @see https://issues.webrtc.org/issues/42222897
@@ -284,14 +284,14 @@ namespace RTC
 			}
 			// Association closed before even starting to connect, or during the
 			// initial connection phase. There is no outstanding data, so the
-			// Association can just be closed (stopping any timers, if any), as this
+			// association can just be closed (stopping any timers, if any), as this
 			// is the application's intention when calling Shutdown().
 			else
 			{
 				InternalClose(Types::ErrorKind::SUCCESS, "");
 			}
 
-			AssertStateIsConsistent();
+			AssertIsConsistent();
 		}
 
 		void Association::Close()
@@ -300,12 +300,12 @@ namespace RTC
 
 			if (this->state == State::NEW || this->state == State::CLOSED)
 			{
-				AssertStateIsConsistent();
+				AssertIsConsistent();
 
 				return;
 			}
 
-			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->associationListenerDeferrer);
 
 			if (this->tcb)
 			{
@@ -313,7 +313,7 @@ namespace RTC
 				auto* abortAssociationChunk = packet->BuildChunkInPlace<AbortAssociationChunk>();
 
 				// NOTE: Don't set bit T in the ABORT chunk since TCB knows the
-				// Verification Tag expected by the remote.
+				// verification tag expected by the remote.
 
 				auto* userInitiatedAbortErrorCause =
 				  abortAssociationChunk->BuildErrorCauseInPlace<UserInitiatedAbortErrorCause>();
@@ -327,20 +327,20 @@ namespace RTC
 			}
 
 			InternalClose(Types::ErrorKind::SUCCESS, "");
-			AssertStateIsConsistent();
+
+			AssertIsConsistent();
 		}
 
-		std::optional<AssociationMetrics> Association::GetMetrics() const
+		std::optional<AssociationMetrics> Association::MakeMetrics() const
 		{
 			if (!this->tcb)
 			{
 				return std::nullopt;
 			}
 
-			// const size_t packetPayloadLength =
-			//   this->sctpOptions.mtu - Packet::CommonHeaderLength - DataChunk::DataChunkHeaderLength;
+			const size_t packetPayloadLength =
+			  this->sctpOptions.mtu - Packet::CommonHeaderLength - DataChunk::DataChunkHeaderLength;
 
-			// TODO: SCTP: Implement missing fields.
 			AssociationMetrics metrics{
 				.txPacketsCount  = this->privateMetrics.txPacketsCount,
 				.txMessagesCount = this->privateMetrics.txMessagesCount,
@@ -350,11 +350,11 @@ namespace RTC
 				.rtxBytesCount   = this->tcb->GetRetransmissionQueue().GetRtxBytesCount(),
 				.cwndBytes       = this->tcb->GetCwnd(),
 				.srttMs          = this->tcb->GetCurrentSrttMs(),
-				// .unackDataCount =
-				//   this->tcb->GetRetransmissionQueue().GetUnackedItems() +
-				//   (this->sendQueue.GetTotalBufferedAmount() + packetPayloadLength - 1) / packetPayloadLength,
-				.peerRwndBytes      = static_cast<uint32_t>(this->tcb->GetRetransmissionQueue().GetRwnd()),
-				.peerImplementation = this->privateMetrics.peerImplementation,
+				.unackDataCount  = this->tcb->GetRetransmissionQueue().GetUnackedItems() +
+				                   ((this->sendQueue.GetTotalBufferedAmount() + packetPayloadLength - 1) /
+				                    packetPayloadLength),
+				.peerRwndBytes   = static_cast<uint32_t>(this->tcb->GetRetransmissionQueue().GetRwnd()),
+				.peerImplementation           = this->privateMetrics.peerImplementation,
 				.negotiatedMaxOutboundStreams = this->privateMetrics.negotiatedMaxOutboundStreams,
 				.negotiatedMaxInboundStreams  = this->privateMetrics.negotiatedMaxInboundStreams,
 				.usesPartialReliability       = this->privateMetrics.usesPartialReliability,
@@ -367,23 +367,18 @@ namespace RTC
 			return metrics;
 		}
 
-		uint16_t Association::GetStreamPriority(uint16_t /*streamId*/) const
+		uint16_t Association::GetStreamPriority(uint16_t streamId) const
 		{
 			MS_TRACE();
 
-			// TODO: SCTP: Implement it.
-			// return this->sendQueue.GetStreamPriority(streamId);
-
-			// TODO: SCTP: Remove.
-			return 0;
+			return this->sendQueue.GetStreamPriority(streamId);
 		}
 
-		void Association::SetStreamPriority(uint16_t /*streamId*/, uint16_t /*priority*/)
+		void Association::SetStreamPriority(uint16_t streamId, uint16_t priority)
 		{
 			MS_TRACE();
 
-			// TODO: SCTP: Implement it.
-			// this->sendQueue.SetStreamPriority(streamId, priority);
+			this->sendQueue.SetStreamPriority(streamId, priority);
 		}
 
 		void Association::SetMaxSendMessageSize(size_t maxMessageSize)
@@ -393,45 +388,43 @@ namespace RTC
 			this->sctpOptions.maxSendMessageSize = maxMessageSize;
 		}
 
-		size_t Association::GetStreamBufferedAmount(uint16_t /*streamId*/) const
+		size_t Association::GetTotalBufferedAmount() const
 		{
 			MS_TRACE();
 
-			// TODO: SCTP: Implement it.
-			// return this->sendQueue.GetStreamBufferedAmount(streamId);
-
-			// TODO: SCTP: Remove.
-			return 0;
+			return this->sendQueue.GetTotalBufferedAmount();
 		}
 
-		size_t Association::GetStreamBufferedAmountLowThreshold(uint16_t /*streamId*/) const
+		size_t Association::GetStreamBufferedAmount(uint16_t streamId) const
 		{
 			MS_TRACE();
 
-			// TODO: SCTP: Implement it.
-			// return this->sendQueue.GetStreamBufferedAmountLowThreshold(streamId);
-
-			// TODO: SCTP: Remove.
-			return 0;
+			return this->sendQueue.GetStreamBufferedAmount(streamId);
 		}
 
-		void Association::SetBufferedAmountLowThreshold(uint16_t /*streamId*/, size_t /*bytes*/)
+		size_t Association::GetStreamBufferedAmountLowThreshold(uint16_t streamId) const
 		{
 			MS_TRACE();
 
-			// TODO: SCTP: Implement it.
-			// this->sendQueue.SetBufferedAmountLowThreshold(streamId, bytes);
+			return this->sendQueue.GetStreamBufferedAmountLowThreshold(streamId);
+		}
+
+		void Association::SetStreamBufferedAmountLowThreshold(uint16_t streamId, size_t bytes)
+		{
+			MS_TRACE();
+
+			this->sendQueue.SetStreamBufferedAmountLowThreshold(streamId, bytes);
 		}
 
 		Types::ResetStreamsStatus Association::ResetStreams(std::span<const uint16_t> outboundStreamIds)
 		{
 			MS_TRACE();
 
-			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->associationListenerDeferrer);
 
 			if (!this->tcb)
 			{
-				this->listener.OnAssociationError(
+				this->associationListenerDeferrer.OnAssociationError(
 				  Types::ErrorKind::WRONG_SEQUENCE,
 				  "cannot reset outbound streams as the association is not connected");
 
@@ -440,7 +433,7 @@ namespace RTC
 
 			if (!this->tcb->GetNegotiatedCapabilities().reConfig)
 			{
-				this->listener.OnAssociationError(
+				this->associationListenerDeferrer.OnAssociationError(
 				  Types::ErrorKind::UNSUPPORTED_OPERATION,
 				  "cannot reset outbound streams as the remote doesn't support it");
 
@@ -450,7 +443,8 @@ namespace RTC
 			this->tcb->GetStreamResetHandler().ResetStreams(outboundStreamIds);
 
 			MaySendResetStreamsRequest();
-			AssertStateIsConsistent();
+
+			AssertIsConsistent();
 
 			return Types::ResetStreamsStatus::PERFORMED;
 		}
@@ -460,30 +454,27 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->associationListenerDeferrer);
 
-			const auto status = InternalSendMessage(message, sendMessageOptions);
+			const auto status = InternalSendMessageCheck(message, sendMessageOptions);
 
 			if (status != Types::SendMessageStatus::SUCCESS)
 			{
 				return status;
 			}
 
-			// TODO: SCTP: Uncomment.
-			// const uint64_t nowMs = DepLibUV::GetTimeMs();
+			const uint64_t nowMs = this->shared->GetTimeMs();
 
 			this->privateMetrics.txMessagesCount++;
 
-			// TODO: SCTP: Implement it.
-			// this->sendQueue.AddMessage(nowMs, std::move(message), sendMessageOptions);
+			this->sendQueue.AddMessage(nowMs, std::move(message), sendMessageOptions);
 
 			if (this->tcb)
 			{
-				// TODO: SCTP: Implement it.
-				// this->tcb->SendBufferedPackets(nowMs);
+				this->tcb->SendBufferedPackets(nowMs);
 			}
 
-			AssertStateIsConsistent();
+			AssertIsConsistent();
 
 			return Types::SendMessageStatus::SUCCESS;
 		}
@@ -493,17 +484,17 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->associationListenerDeferrer);
 
-			// TODO: SCTP: Uncomment.
-			// const uint64_t nowMs = DepLibUV::GetTimeMs();
+			const uint64_t nowMs = this->shared->GetTimeMs();
+
 			std::vector<Types::SendMessageStatus> statuses;
 
 			statuses.reserve(messages.size());
 
-			for (const auto& message : messages)
+			for (auto& message : messages)
 			{
-				const auto status = InternalSendMessage(message, sendMessageOptions);
+				const auto status = InternalSendMessageCheck(message, sendMessageOptions);
 
 				statuses.push_back(status);
 
@@ -514,17 +505,15 @@ namespace RTC
 
 				this->privateMetrics.txMessagesCount++;
 
-				// TODO: SCTP: Implement it.
-				// this->sendQueue.AddMessage(nowMs, std::move(message), sendMessageOptions);
+				this->sendQueue.AddMessage(nowMs, std::move(message), sendMessageOptions);
 			}
 
 			if (this->tcb)
 			{
-				// TODO: SCTP: Implement it.
-				// this->tcb->SendBufferedPackets(nowMs);
+				this->tcb->SendBufferedPackets(nowMs);
 			}
 
-			AssertStateIsConsistent();
+			AssertIsConsistent();
 
 			return statuses;
 		}
@@ -533,34 +522,40 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			// TODO: SCTP: For testing purposes. Must be removed.
+// For debugging purposes.
+#if MS_LOG_DEV_LEVEL == 3
+			const auto* packet = RTC::SCTP::Packet::Parse(data, len);
+
+			if (packet)
 			{
 				MS_DUMP("<<< received SCTP packet:");
 
-				const auto* packet = RTC::SCTP::Packet::Parse(data, len);
+				packet->Dump();
 
-				if (packet)
-				{
-					packet->Dump();
-
-					delete packet;
-				}
-				else
-				{
-					MS_ABORT("RTC::SCTP::Packet::Parse() failed to parse received SCTP data");
-				}
+				delete packet;
 			}
+			else
+			{
+				MS_ERROR("RTC::SCTP::Packet::Parse() failed to parse received SCTP data");
+			}
+#endif
 
 			this->privateMetrics.rxPacketsCount++;
 
 			// If we are received SCTP data from the remote peer it means that we may
 			// initiate the SCTP association (if not already connected).
-			MayConnect();
+			//
+			// NOTE: This is disabled in tests that need a purely passive peer to
+			// mimic dcsctp's asymmetric handshake.
+			if (this->mayConnectOnReceivedSctpData)
+			{
+				MayConnect();
+			}
 
 			// NOTE: It's important to create the deferrer here, otherwise it may
 			// happen that MayConnect() ends calling to Connect() so we end with two
 			// nested deferreds (and hence an assertion).
-			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->associationListenerDeferrer);
 
 			std::unique_ptr<Packet> receivedPacket{ Packet::Parse(data, len) };
 
@@ -568,17 +563,17 @@ namespace RTC
 			{
 				MS_WARN_TAG(sctp, "failed to parse received SCTP packet");
 
-				this->listener.OnAssociationError(
+				this->associationListenerDeferrer.OnAssociationError(
 				  Types::ErrorKind::PARSE_FAILED, "failed to parse received SCTP packet");
 
-				AssertStateIsConsistent();
+				AssertIsConsistent();
 
 				return;
 			}
 
 			if (!ValidateReceivedPacket(receivedPacket.get()))
 			{
-				MS_WARN_TAG(sctp, "Packet verification failed, discarded");
+				MS_WARN_TAG(sctp, "packet verification failed, discarded");
 
 				return;
 			}
@@ -597,12 +592,47 @@ namespace RTC
 
 			if (this->tcb)
 			{
-				// TODO: SCTP: Implement it.
-				// this->tcb->GetDadaTracker().ObservePacketEnd();
+				this->tcb->GetDataTracker().ObservePacketEnd();
 				this->tcb->MaySendSackChunk();
 			}
 
-			AssertStateIsConsistent();
+			AssertIsConsistent();
+		}
+
+		uint16_t Association::GetNegotiatedMaxOutboundStreams() const
+		{
+			MS_TRACE();
+
+			if (this->tcb)
+			{
+				return this->tcb->GetNegotiatedCapabilities().negotiatedMaxOutboundStreams;
+			}
+			else
+			{
+				MS_WARN_TAG(
+				  sctp,
+				  "calling Association::GetNegotiatedMaxOutboundStreams() before TCB is created returns 0");
+
+				return 0;
+			}
+		}
+
+		uint16_t Association::GetNegotiatedMaxInboundStreams() const
+		{
+			MS_TRACE();
+
+			if (this->tcb)
+			{
+				return this->tcb->GetNegotiatedCapabilities().negotiatedMaxInboundStreams;
+			}
+			else
+			{
+				MS_WARN_TAG(
+				  sctp,
+				  "calling Association::GetNegotiatedMaxInboundStreams() before TCB is created returns 0");
+
+				return 0;
+			}
 		}
 
 		void Association::InternalClose(Types::ErrorKind errorKind, const std::string_view& message)
@@ -626,16 +656,16 @@ namespace RTC
 			{
 				if (errorKind == Types::ErrorKind::SUCCESS)
 				{
-					this->listener.OnAssociationClosed(errorKind, message);
+					this->associationListenerDeferrer.OnAssociationClosed(errorKind, message);
 				}
 				else
 				{
-					this->listener.OnAssociationFailed(errorKind, message);
+					this->associationListenerDeferrer.OnAssociationFailed(errorKind, message);
 				}
 			}
 			else
 			{
-				this->listener.OnAssociationClosed(errorKind, message);
+				this->associationListenerDeferrer.OnAssociationClosed(errorKind, message);
 			}
 		}
 
@@ -648,7 +678,7 @@ namespace RTC
 			if (state == this->state)
 			{
 				MS_WARN_DEV(
-				  "SCTP Association internal state is already %.*s (message:\"%.*s\")",
+				  "SCTP association internal state is already %.*s (message:\"%.*s\")",
 				  static_cast<int>(stateStringView.size()),
 				  stateStringView.data(),
 				  static_cast<int>(message.size()),
@@ -661,7 +691,7 @@ namespace RTC
 
 			MS_DEBUG_TAG(
 			  sctp,
-			  "SCTP Association internal state changed from %.*s to %.*s (message:\"%.*s\")",
+			  "SCTP association internal state changed from %.*s to %.*s (message:\"%.*s\")",
 			  static_cast<int>(previousStateStringView.size()),
 			  previousStateStringView.data(),
 			  static_cast<int>(stateStringView.size()),
@@ -727,9 +757,11 @@ namespace RTC
 			MS_TRACE();
 
 			this->tcb = std::make_unique<TransmissionControlBlock>(
-			  this->listener,
+			  this,
+			  this->associationListenerDeferrer,
 			  this->sctpOptions,
 			  this->shared,
+			  this->sendQueue,
 			  this->packetSender,
 			  localVerificationTag,
 			  remoteVerificationTag,
@@ -738,6 +770,7 @@ namespace RTC
 			  remoteAdvertisedReceiverWindowCredit,
 			  tieTag,
 			  negotiatedCapabilities,
+			  this->maxPacketLength,
 			  [this]()
 			  {
 				  return this->state == State::ESTABLISHED;
@@ -765,7 +798,7 @@ namespace RTC
 			MS_TRACE();
 
 			auto packet =
-			  std::unique_ptr<Packet>(Packet::Factory(PacketFactoryBuffer, sizeof(PacketFactoryBuffer)));
+			  std::unique_ptr<Packet>{ Packet::Factory(PacketFactoryBuffer, this->maxPacketLength) };
 
 			packet->SetSourcePort(this->sctpOptions.sourcePort);
 			packet->SetDestinationPort(this->sctpOptions.destinationPort);
@@ -780,7 +813,7 @@ namespace RTC
 
 			auto packet = CreatePacket();
 
-			// Insert an INIT Chunk in the Packet.
+			// Insert an INIT chunk in the packet.
 			auto* initChunk = packet->BuildChunkInPlace<InitChunk>();
 
 			initChunk->SetInitiateTag(this->preTcb.localVerificationTag);
@@ -789,7 +822,7 @@ namespace RTC
 			initChunk->SetNumberOfInboundStreams(this->sctpOptions.announcedMaxInboundStreams);
 			initChunk->SetInitialTsn(this->preTcb.localInitialTsn);
 
-			// Insert capabilities related Parameters in the INIT Chunk.
+			// Insert capabilities related parameters in the INIT chunk.
 			AddCapabilitiesParametersToInitOrInitAckChunk(initChunk);
 
 			initChunk->Consolidate();
@@ -807,11 +840,10 @@ namespace RTC
 
 			AssertHasTcb();
 
-			auto packet               = this->tcb->CreatePacket();
-			const auto* shutdownChunk = packet->BuildChunkInPlace<ShutdownChunk>();
+			auto packet         = this->tcb->CreatePacket();
+			auto* shutdownChunk = packet->BuildChunkInPlace<ShutdownChunk>();
 
-			// TODO: SCTP: Implement it.
-			// shutdownChunk->SetCumulativeTsnAck(this->tcb->GetDataTracker().GetLastCumulativeAckedTsn());
+			shutdownChunk->SetCumulativeTsnAck(this->tcb->GetDataTracker().GetLastCumulativeAckedTsn());
 			shutdownChunk->Consolidate();
 
 			this->packetSender.SendPacket(packet.get());
@@ -917,11 +949,11 @@ namespace RTC
 
 			AssertHasTcb();
 
-			if (this->tcb->GetStreamResetHandler().ShouldCreateStreamResetRequest())
+			if (this->tcb->GetStreamResetHandler().ShouldSendStreamResetRequest())
 			{
 				auto packet = this->tcb->CreatePacket();
 
-				this->tcb->GetStreamResetHandler().CreateStreamResetRequest(packet.get());
+				this->tcb->GetStreamResetHandler().AddStreamResetRequest(packet.get());
 				this->packetSender.SendPacket(packet.get());
 			}
 		}
@@ -932,15 +964,26 @@ namespace RTC
 
 			AssertHasTcb();
 
-			// TODO: SCTP: Implement it.
-			// while (std::optional<Message> message = this->tcb->GetReassemblyQueue().GetNextMessage())
-			// {
-			// 	this->privateMetrics.rxMessagesCount++;
-			// 	this->listener.OnAssociationMessageReceived(*std::move(message));
-			// }
+			while (std::optional<Message> message = this->tcb->GetReassemblyQueue().GetNextMessage())
+			{
+				this->privateMetrics.rxMessagesCount++;
+
+				if (message->GetPayloadLength() > this->sctpOptions.maxReceiveMessageSize)
+				{
+					MS_WARN_TAG(
+					  sctp,
+					  "dropping too large received message [messageByteLength:%zu, maxReceiveMessageSize:%zu]",
+					  message->GetPayloadLength(),
+					  this->sctpOptions.maxReceiveMessageSize);
+
+					break;
+				}
+
+				this->associationListenerDeferrer.OnAssociationMessageReceived(*std::move(message));
+			}
 		}
 
-		Types::SendMessageStatus Association::InternalSendMessage(
+		Types::SendMessageStatus Association::InternalSendMessageCheck(
 		  const Message& message, const SendMessageOptions& sendMessageOptions)
 		{
 			MS_TRACE();
@@ -951,10 +994,10 @@ namespace RTC
 			{
 				if (lifecycleId.has_value())
 				{
-					this->listener.OnAssociationLifecycleMessageEnd(lifecycleId.value());
+					this->associationListenerDeferrer.OnAssociationLifecycleMessageEnd(lifecycleId.value());
 				}
 
-				this->listener.OnAssociationError(
+				this->associationListenerDeferrer.OnAssociationError(
 				  Types::ErrorKind::PROTOCOL_VIOLATION, "cannot send empty message");
 
 				return Types::SendMessageStatus::ERROR_MESSAGE_EMPTY;
@@ -963,10 +1006,10 @@ namespace RTC
 			{
 				if (lifecycleId.has_value())
 				{
-					this->listener.OnAssociationLifecycleMessageEnd(lifecycleId.value());
+					this->associationListenerDeferrer.OnAssociationLifecycleMessageEnd(lifecycleId.value());
 				}
 
-				this->listener.OnAssociationError(
+				this->associationListenerDeferrer.OnAssociationError(
 				  Types::ErrorKind::PROTOCOL_VIOLATION, "cannot send too large message");
 
 				return Types::SendMessageStatus::ERROR_MESSAGE_TOO_LARGE;
@@ -982,31 +1025,30 @@ namespace RTC
 			{
 				if (lifecycleId.has_value())
 				{
-					this->listener.OnAssociationLifecycleMessageEnd(lifecycleId.value());
+					this->associationListenerDeferrer.OnAssociationLifecycleMessageEnd(lifecycleId.value());
 				}
 
-				this->listener.OnAssociationError(
+				this->associationListenerDeferrer.OnAssociationError(
 				  Types::ErrorKind::WRONG_SEQUENCE,
 				  "cannot send message as the association is shutting down");
 
 				return Types::SendMessageStatus::ERROR_SHUTTING_DOWN;
 			}
-			// TODO: SCTP: Implement it.
-			// else if (
-			//   this->sendQueue.GetTotalBufferedAmount() >= this->sctpOptions.maxSendBufferSize ||
-			//   this->sendQueue.GetStreamBufferedAmount(message.GetStreamId()) >=
-			//     this->sctpOptions.perStreamSendQueueLimit)
-			// {
-			// 	if (lifecycleId.has_value())
-			// 	{
-			// 		this->listener.OnAssociationLifecycleMessageEnd(lifecycleId.value());
-			// 	}
+			else if (
+			  this->sendQueue.GetTotalBufferedAmount() >= this->sctpOptions.maxSendBufferSize ||
+			  this->sendQueue.GetStreamBufferedAmount(message.GetStreamId()) >=
+			    this->sctpOptions.perStreamSendQueueLimit)
+			{
+				if (lifecycleId.has_value())
+				{
+					this->associationListenerDeferrer.OnAssociationLifecycleMessageEnd(lifecycleId.value());
+				}
 
-			// 	this->listener.OnAssociationError(
-			// 	  Types::ErrorKind::RESOURCE_EXHAUSTION, "cannot send message as the send queue is full");
+				this->associationListenerDeferrer.OnAssociationError(
+				  Types::ErrorKind::RESOURCE_EXHAUSTION, "cannot send message as the send queue is full");
 
-			// 	return Types::SendMessageStatus::ERROR_RESOURCE_EXHAUSTION;
-			// }
+				return Types::SendMessageStatus::ERROR_RESOURCE_EXHAUSTION;
+			}
 
 			return Types::SendMessageStatus::SUCCESS;
 		}
@@ -1032,11 +1074,11 @@ namespace RTC
 				{
 					MS_WARN_TAG(
 					  sctp,
-					  "Packet with Verification Tag 0 must have a single Chunk and it must be an INIT Chunk, packet discarded");
+					  "packet with verification tag 0 must have a single chunk and it must be an INIT chunk, packet discarded");
 
-					this->listener.OnAssociationError(
+					this->associationListenerDeferrer.OnAssociationError(
 					  Types::ErrorKind::PARSE_FAILED,
-					  "packet with Verification Tag 0 must have a single chunk and it must be an INIT chunk");
+					  "packet with verification tag 0 must have a single chunk and it must be an INIT chunk");
 
 					return false;
 				}
@@ -1054,7 +1096,7 @@ namespace RTC
 				const auto* abortAssociationChunk =
 				  static_cast<const AbortAssociationChunk*>(receivedPacket->GetChunkAt(0));
 
-				// We cannot verify the Verification Tag so assume it's okey.
+				// We cannot verify the verification tag so assume it's okey.
 				if (abortAssociationChunk->GetT() && !this->tcb)
 				{
 					return true;
@@ -1071,11 +1113,12 @@ namespace RTC
 				{
 					MS_WARN_TAG(
 					  sctp,
-					  "ABORT Chunk Verification Tag %" PRIu32 " is wrong, packet discarded",
+					  "receievd ABORT chunk has invalid verification tag %" PRIu32 ", packet discarded",
 					  receivedPacket->GetVerificationTag());
 
-					this->listener.OnAssociationError(
-					  Types::ErrorKind::PARSE_FAILED, "packet with ABORT chunk has invalid Verification Tag");
+					this->associationListenerDeferrer.OnAssociationError(
+					  Types::ErrorKind::PARSE_FAILED,
+					  "received packet with ABORT chunk has invalid verification tag");
 
 					return false;
 				}
@@ -1091,13 +1134,14 @@ namespace RTC
 				{
 					MS_WARN_TAG(
 					  sctp,
-					  "INIT_ACK Chunk Verification Tag %" PRIu32 " (should be %" PRIu32 ")",
+					  "received INIT-ACK chunk has invalid verification tag %" PRIu32 " (should be %" PRIu32
+					  "), packet discarded",
 					  receivedPacket->GetVerificationTag(),
 					  this->preTcb.localVerificationTag);
 
-					this->listener.OnAssociationError(
+					this->associationListenerDeferrer.OnAssociationError(
 					  Types::ErrorKind::PARSE_FAILED,
-					  "packet with INIT_ACK chunk has invalid Verification Tag");
+					  "received packet with INIT-ACK chunk has invalid verification tag");
 
 					return false;
 				}
@@ -1123,7 +1167,7 @@ namespace RTC
 				const auto* shutdownCompleteChunk =
 				  static_cast<const ShutdownCompleteChunk*>(receivedPacket->GetChunkAt(0));
 
-				// We cannot verify the Verification Tag so assume it's okey.
+				// We cannot verify the verification tag so assume it's okey.
 				if (shutdownCompleteChunk->GetT() && !this->tcb)
 				{
 					return true;
@@ -1140,12 +1184,13 @@ namespace RTC
 				{
 					MS_WARN_TAG(
 					  sctp,
-					  "SHUTDOWN_COMPLETE Chunk Verification Tag %" PRIu32 " is wrong, packet discarded",
+					  "received SHUTDOWN-COMPLETE chunk has invalid verification tag %" PRIu32
+					  ", packet discarded",
 					  receivedPacket->GetVerificationTag());
 
-					this->listener.OnAssociationError(
+					this->associationListenerDeferrer.OnAssociationError(
 					  Types::ErrorKind::PARSE_FAILED,
-					  "packet with SHUTDOWN_COMPLETE chunk has invalid Verification Tag");
+					  "received packet with SHUTDOWN-COMPLETE chunk has invalid verification tag");
 
 					return false;
 				}
@@ -1167,12 +1212,13 @@ namespace RTC
 			{
 				MS_WARN_TAG(
 				  sctp,
-				  "invalid Verification Tag %" PRIu32 " (should be %" PRIu32 ")",
+				  "received packet has invalid verification tag %" PRIu32 " (should be %" PRIu32
+				  "), packet discarded",
 				  receivedPacket->GetVerificationTag(),
 				  localVerificationTag);
 
-				this->listener.OnAssociationError(
-				  Types::ErrorKind::PARSE_FAILED, "packet has invalid Verification Tag");
+				this->associationListenerDeferrer.OnAssociationError(
+				  Types::ErrorKind::PARSE_FAILED, "packet has invalid verification tag");
 
 				return false;
 			}
@@ -1336,7 +1382,7 @@ namespace RTC
 			// be 0, the receiver MUST silently discard the packet."
 			if (receivedInitChunk->GetInitiateTag() == 0)
 			{
-				MS_WARN_TAG(sctp, "invalid value 0 in Initiate Tagin received INIT Chunk, discarded");
+				MS_WARN_TAG(sctp, "invalid value 0 in Initiate Tag in received INIT chunk, packet discarded");
 
 				return;
 			}
@@ -1355,12 +1401,12 @@ namespace RTC
 			{
 				MS_WARN_TAG(
 				  sctp,
-				  "invalidNumber of Outbound Streams or Number of Inbound Streams in received INIT Chunk, aborting Association");
+				  "invalid number of outbound streams or number of inbound streams in received INIT chunk, aborting association");
 
 				auto packet                 = CreatePacketWithVerificationTag(0);
 				auto* abortAssociationChunk = packet->BuildChunkInPlace<AbortAssociationChunk>();
 
-				// NOTE: We are not setting the Verification Tag expected by the peer
+				// NOTE: We are not setting the verification tag expected by the peer
 				// so must set be T to 1.
 				abortAssociationChunk->SetT(true);
 
@@ -1368,7 +1414,7 @@ namespace RTC
 				  abortAssociationChunk->BuildErrorCauseInPlace<ProtocolViolationErrorCause>();
 
 				protocolViolationErrorCause->SetAdditionalInformation(
-				  "invalid value 0 in Number of Outbound Streams or Number of Inbound Streams in received INIT chunk");
+				  "invalid value 0 in number of outbound streams or number of inbound streams in received INIT chunk");
 
 				protocolViolationErrorCause->Consolidate();
 				abortAssociationChunk->Consolidate();
@@ -1390,7 +1436,7 @@ namespace RTC
 			if (this->state == State::SHUTDOWN_ACK_SENT)
 			{
 				MS_DEBUG_TAG(
-				  sctp, "INIT Chunk received in SHUTDOWN_ACK_SENT state, retransmitting SHUTDOWN_ACK Chunk");
+				  sctp, "INIT chunk received in SHUTDOWN_ACK_SENT state, retransmitting SHUTDOWN-ACK chunk");
 
 				SendShutdownAckChunk();
 
@@ -1405,7 +1451,7 @@ namespace RTC
 			{
 				case State::NEW:
 				{
-					MS_DEBUG_TAG(sctp, "INIT Chunk received in NEW state (normal scenario)");
+					MS_DEBUG_TAG(sctp, "INIT chunk received in NEW state (normal scenario)");
 
 					localVerificationTag =
 					  Utils::Crypto::GetRandomUInt<uint32_t>(MinVerificationTag, MaxVerificationTag);
@@ -1416,7 +1462,9 @@ namespace RTC
 
 				case State::CLOSED:
 				{
-					MS_WARN_TAG(sctp, "ignoring INIT Chunk received in CLOSED state)");
+					MS_WARN_TAG(sctp, "ignoring INIT chunk received in CLOSED state");
+
+					return;
 				}
 
 				// https://datatracker.ietf.org/doc/html/rfc9260#section-5.2.1
@@ -1430,7 +1478,7 @@ namespace RTC
 				case State::COOKIE_WAIT:
 				case State::COOKIE_ECHOED:
 				{
-					MS_DEBUG_TAG(sctp, "INIT Chunk received after sending INIT Chunk (collision, no problem)");
+					MS_DEBUG_TAG(sctp, "INIT chunk received after sending INIT chunk (collision, no problem)");
 
 					localVerificationTag = this->preTcb.localVerificationTag;
 					localInitialTsn      = this->preTcb.localInitialTsn;
@@ -1451,7 +1499,7 @@ namespace RTC
 				{
 					AssertHasTcb();
 
-					MS_DEBUG_TAG(sctp, "INIT Chunk received (probably peer restarted)");
+					MS_DEBUG_TAG(sctp, "INIT chunk received (probably peer restarted)");
 
 					localVerificationTag =
 					  Utils::Crypto::GetRandomUInt<uint32_t>(MinVerificationTag, MaxVerificationTag);
@@ -1463,18 +1511,18 @@ namespace RTC
 
 			MS_DEBUG_TAG(
 			  sctp,
-			  "initiating Association [localVerificationTag:%" PRIu32 ", localInitialTsn:%" PRIu32
+			  "initiating association [localVerificationTag:%" PRIu32 ", localInitialTsn:%" PRIu32
 			  ", remoteVerificationTag:%" PRIu32 ", remoteInitialTsn:%" PRIu32 "]",
 			  localVerificationTag,
 			  localInitialTsn,
 			  receivedInitChunk->GetInitiateTag(),
 			  receivedInitChunk->GetInitialTsn());
 
-			/* Send a Packet with an INIT_ACK Chunk. */
+			/* Send a packet with an INIT-ACK chunk. */
 
 			auto packet = CreatePacketWithVerificationTag(receivedInitChunk->GetInitiateTag());
 
-			// Insert an INIT_ACK Chunk in the Packet.
+			// Insert an INIT-ACK chunk in the packet.
 			auto* initAckChunk = packet->BuildChunkInPlace<InitAckChunk>();
 
 			initAckChunk->SetInitiateTag(localVerificationTag);
@@ -1483,13 +1531,13 @@ namespace RTC
 			initAckChunk->SetNumberOfInboundStreams(this->sctpOptions.announcedMaxInboundStreams);
 			initAckChunk->SetInitialTsn(localInitialTsn);
 
-			// Insert a StateCookieParameter in the INIT_ACK Chunk.
+			// Insert a StateCookieParameter in the INIT-ACK chunk.
 			auto* stateCookieParameter = initAckChunk->BuildParameterInPlace<StateCookieParameter>();
 
 			const auto negotiatedCapabilities =
 			  NegotiatedCapabilities::Factory(this->sctpOptions, receivedInitChunk);
 
-			// Write the StateCookie in place in the Parameter.
+			// Write the StateCookie in place in the parameter.
 			stateCookieParameter->WriteStateCookieInPlace(
 			  localVerificationTag,
 			  receivedInitChunk->GetInitiateTag(),
@@ -1501,7 +1549,7 @@ namespace RTC
 
 			stateCookieParameter->Consolidate();
 
-			// Insert capabilities related Parameters in the INIT_ACK Chunk.
+			// Insert capabilities related parameters in the INIT-ACK chunk.
 			AddCapabilitiesParametersToInitOrInitAckChunk(initAckChunk);
 
 			initAckChunk->Consolidate();
@@ -1524,7 +1572,7 @@ namespace RTC
 			// INIT ACK chunk."
 			if (this->state != State::COOKIE_WAIT)
 			{
-				MS_DEBUG_TAG(sctp, "ignoring received INIT_ACK Chunk when not in COOKIE_WAIT state");
+				MS_DEBUG_TAG(sctp, "ignoring INIT-ACK chunk when not in COOKIE_WAIT state");
 
 				return;
 			}
@@ -1534,13 +1582,12 @@ namespace RTC
 
 			if (!stateCookieParameter || !stateCookieParameter->GetCookie())
 			{
-				MS_WARN_TAG(
-				  sctp, "ignoring received INIT_ACK Chunk without StateCookieParameter or without Cookie");
+				MS_WARN_TAG(sctp, "ignoring INIT-ACK chunk without StateCookieParameter or without cookie");
 
 				auto packet = CreatePacketWithVerificationTag(this->preTcb.localVerificationTag);
 				auto* abortAssociationChunk = packet->BuildChunkInPlace<AbortAssociationChunk>();
 
-				// NOTE: We are not setting the Verification Tag expected by the peer
+				// NOTE: We are not setting the verification tag expected by the peer
 				// so must set be T to 1.
 				abortAssociationChunk->SetT(true);
 
@@ -1548,7 +1595,7 @@ namespace RTC
 				  abortAssociationChunk->BuildErrorCauseInPlace<ProtocolViolationErrorCause>();
 
 				protocolViolationErrorCause->SetAdditionalInformation(
-				  "INIT_ACK without State Cookie Parameter or without Cookie");
+				  "INIT-ACK without State Cookie parameter or without cookie");
 
 				protocolViolationErrorCause->Consolidate();
 				abortAssociationChunk->Consolidate();
@@ -1556,7 +1603,7 @@ namespace RTC
 				this->packetSender.SendPacket(packet.get());
 
 				InternalClose(
-				  Types::ErrorKind::PROTOCOL_VIOLATION, "received INIT_ACK chunk doesn't contain a Cookie");
+				  Types::ErrorKind::PROTOCOL_VIOLATION, "received INIT-ACK chunk doesn't contain a cookie");
 
 				return;
 			}
@@ -1569,13 +1616,12 @@ namespace RTC
 			const auto negotiatedCapabilities =
 			  NegotiatedCapabilities::Factory(this->sctpOptions, receivedInitAckChunk);
 
-			// If the Association is re-established (peer restarted, but re-used old
-			// Association), make sure that all message identifiers are reset and any
+			// If the association is re-established (peer restarted, but re-used old
+			// association), make sure that all message identifiers are reset and any
 			// partly sent message is re-sent in full. The same is true when the
-			// Association is closed and later re-opened, which never happens in
+			// association is closed and later re-opened, which never happens in
 			// WebRTC, but is a valid operation on the SCTP level.
-			// TODO: SCTP: Implement it.
-			// this->sendQueue.Reset();
+			this->sendQueue.Reset();
 
 			CreateTransmissionControlBlock(
 			  this->preTcb.localVerificationTag,
@@ -1586,9 +1632,9 @@ namespace RTC
 			  /*tieTag*/ Utils::Crypto::GetRandomUInt<uint64_t>(0, MaxTieTag),
 			  negotiatedCapabilities);
 
-			SetState(State::COOKIE_ECHOED, "INIT_ACK received");
+			SetState(State::COOKIE_ECHOED, "INIT-ACK received");
 
-			// The Association isn't fully established just yet. Store the stat
+			// The association isn't fully established just yet. Store the stat
 			// cookie in the TCB.
 			std::vector<uint8_t> remoteStateCookie(
 			  stateCookieParameter->GetCookie(),
@@ -1596,14 +1642,12 @@ namespace RTC
 
 			this->tcb->SetRemoteStateCookie(std::move(remoteStateCookie));
 
-			// TODO: SCTP: Implement it.
-			// TODO: SCTP: tcb->SendBufferedPackets() must check that the remote state cookie
-			// is set in TCB and must send a COOKIE_ECHO Chunk before potentially
-			// buffered messages.
-			// this->tcb->SendBufferedPackets(nowMs);
+			const uint64_t nowMs = this->shared->GetTimeMs();
 
+			this->tcb->SendBufferedPackets(nowMs);
 			this->t1CookieTimer->Start();
-			this->listener.OnAssociationConnecting();
+
+			this->associationListenerDeferrer.OnAssociationConnecting();
 		}
 
 		void Association::HandleReceivedCookieEchoChunk(
@@ -1613,10 +1657,10 @@ namespace RTC
 
 			if (!receivedCookieEchoChunk->HasCookie())
 			{
-				MS_WARN_TAG(sctp, "ignoring received COOKIE_ECHO Chunk without Cookie");
+				MS_WARN_TAG(sctp, "ignoring invalid COOKIE-ECHO chunk without cookie");
 
-				this->listener.OnAssociationError(
-				  Types::ErrorKind::PARSE_FAILED, "received COOKIE_ECHO Chunk without Cookie");
+				this->associationListenerDeferrer.OnAssociationError(
+				  Types::ErrorKind::PARSE_FAILED, "received COOKIE-ECHO chunk has no cookie");
 
 				return;
 			}
@@ -1626,10 +1670,10 @@ namespace RTC
 
 			if (!cookie)
 			{
-				MS_WARN_TAG(sctp, "failed to parse Cookie in received COOKIE_ECHO Chunk");
+				MS_WARN_TAG(sctp, "failed to parse cookie in received COOKIE-ECHO chunk");
 
-				this->listener.OnAssociationError(
-				  Types::ErrorKind::PARSE_FAILED, "received COOKIE_ECHO Chunk with invalid Cookie");
+				this->associationListenerDeferrer.OnAssociationError(
+				  Types::ErrorKind::PARSE_FAILED, "received COOKIE-ECHO chunk with invalid cookie");
 
 				return;
 			}
@@ -1645,11 +1689,11 @@ namespace RTC
 			{
 				if (receivedPacket->GetVerificationTag() != cookie->GetLocalVerificationTag())
 				{
-					MS_WARN_TAG(sctp, "received COOKIE_ECHO Chunk with invalid Verification Tag");
+					MS_WARN_TAG(sctp, "received COOKIE-ECHO chunk with invalid verification tag");
 
-					this->listener.OnAssociationError(
+					this->associationListenerDeferrer.OnAssociationError(
 					  Types::ErrorKind::PARSE_FAILED,
-					  "received COOKIE_ECHO Chunk with invalid Verification Tag");
+					  "received COOKIE-ECHO chunk with invalid verification tag");
 
 					return;
 				}
@@ -1665,20 +1709,19 @@ namespace RTC
 					this->tcb->ClearRemoteStateCookie();
 				}
 
-				SetState(State::ESTABLISHED, "COOKIE_ECHO received");
+				SetState(State::ESTABLISHED, "COOKIE-ECHO received");
 
-				this->listener.OnAssociationConnected();
+				this->associationListenerDeferrer.OnAssociationConnected();
 			}
 
 			if (!this->tcb)
 			{
-				// If the Association is re-established (peer restarted, but re-used old
-				// Association), make sure that all message identifiers are reset and any
+				// If the association is re-established (peer restarted, but re-used old
+				// association), make sure that all message identifiers are reset and any
 				// partly sent message is re-sent in full. The same is true when the
-				// Association is closed and later re-opened, which never happens in
+				// association is closed and later re-opened, which never happens in
 				// WebRTC, but is a valid operation on the SCTP level.
-				// TODO: SCTP: Implement it.
-				// this->sendQueue.Reset();
+				this->sendQueue.Reset();
 
 				CreateTransmissionControlBlock(
 				  cookie->GetLocalVerificationTag(),
@@ -1690,23 +1733,14 @@ namespace RTC
 				  cookie->GetNegotiatedCapabilities());
 			}
 
-			auto packet                = this->tcb->CreatePacket();
-			const auto* cookieAckChunk = packet->BuildChunkInPlace<CookieAckChunk>();
-
-			cookieAckChunk->Consolidate();
-
 			// https://datatracker.ietf.org/doc/html/rfc9260#section-5.1
 			//
 			// "A COOKIE ACK chunk MAY be bundled with any pending DATA chunks (and/or
 			// SACK chunks), but the COOKIE ACK chunk MUST be the first chunk in the
 			// packet."
-			// TODO: SCTP: Implement it. Note that we pass Packet as argument!
-			// this->tcb->SendBufferedPackets(packet.get(), nowMs);
+			const uint64_t nowMs = this->shared->GetTimeMs();
 
-			// TODO: SCTP: Remove this since COOKIE_ACK must be sent by
-			// tcb->SendBufferedPackets() call above.
-			MS_DUMP("TODO: REMOVE");
-			this->packetSender.SendPacket(packet.get());
+			this->tcb->SendBufferedPackets(nowMs, /*addCookieAckChunk*/ true);
 		}
 
 		bool Association::HandleReceivedCookieEchoChunkWithTcb(
@@ -1714,7 +1748,7 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			MS_DEBUG_DEV("handling COOKIE_ECHO with TCB");
+			MS_DEBUG_DEV("handling COOKIE-ECHO with TCB");
 
 			AssertHasTcb();
 
@@ -1748,17 +1782,16 @@ namespace RTC
 					operationErrorChunk->Consolidate();
 
 					this->packetSender.SendPacket(packet.get());
-
-					this->listener.OnAssociationError(
-					  Types::ErrorKind::WRONG_SEQUENCE, "received COOKIE_ECHO while shutting down");
+					this->associationListenerDeferrer.OnAssociationError(
+					  Types::ErrorKind::WRONG_SEQUENCE, "received COOKIE-ECHO while shutting down");
 
 					return false;
 				}
 
-				MS_DEBUG_DEV("received COOKIE_ECHO indicating a restarted peer");
+				MS_DEBUG_DEV("received COOKIE-ECHO indicating a restarted peer");
 
 				this->tcb = nullptr;
-				this->listener.OnAssociationRestarted();
+				this->associationListenerDeferrer.OnAssociationRestarted();
 			}
 			// "B) In this case, both sides might be attempting to start an association
 			// at about the same time, but the peer endpoint sent its INIT chunk after
@@ -1767,9 +1800,9 @@ namespace RTC
 			  receivedPacket->GetVerificationTag() == this->tcb->GetLocalVerificationTag() &&
 			  cookie->GetRemoteVerificationTag() != this->tcb->GetRemoteVerificationTag())
 			{
-				// TODO: dcsctp: Handle the case in which remote Verification Tag is 0?
+				// TODO: dcsctp: Handle the case in which remote verification tag is 0?
 
-				MS_DEBUG_DEV("received COOKIE_ECHO indicating simultaneous associations");
+				MS_DEBUG_DEV("received COOKIE-ECHO indicating simultaneous associations");
 
 				this->tcb = nullptr;
 			}
@@ -1781,9 +1814,9 @@ namespace RTC
 			else if (
 			  receivedPacket->GetVerificationTag() != this->tcb->GetLocalVerificationTag() &&
 			  cookie->GetRemoteVerificationTag() == this->tcb->GetRemoteVerificationTag() &&
-			  cookie->GetTieTag() == this->tcb->GetTieTag())
+			  cookie->GetTieTag() == 0)
 			{
-				MS_DEBUG_DEV("received COOKIE_ECHO indicating a late COOKIE_ECHO, discarding");
+				MS_DEBUG_DEV("received COOKIE-ECHO indicating a late COOKIE-ECHO, discarding");
 
 				return false;
 			}
@@ -1795,7 +1828,7 @@ namespace RTC
 			  cookie->GetRemoteVerificationTag() == this->tcb->GetRemoteVerificationTag())
 			{
 				MS_DEBUG_DEV(
-				  "received duplicate COOKIE_ECHO, probably because of peer not receiving COOKIE_ACK and retransmitting COOKIE_ECHO");
+				  "received duplicate COOKIE-ECHO, probably because of peer not receiving COOKIE-ACK and retransmitting COOKIE-ECHO");
 			}
 
 			return true;
@@ -1812,7 +1845,7 @@ namespace RTC
 			// discard a received COOKIE ACK chunk."
 			if (this->state != State::COOKIE_ECHOED)
 			{
-				MS_DEBUG_DEV("received COOKIE_ACK not in COOKIE_ECHOED state, discarding");
+				MS_DEBUG_DEV("received COOKIE-ACK not in COOKIE_ECHOED state, discarding");
 
 				return;
 			}
@@ -1822,12 +1855,13 @@ namespace RTC
 			this->t1CookieTimer->Stop();
 			this->tcb->ClearRemoteStateCookie();
 
-			SetState(State::ESTABLISHED, "COOKIE_ACK received");
+			SetState(State::ESTABLISHED, "COOKIE-ACK received");
 
-			// TODO: SCTP: Implement this.
-			// this->tcb->SendBufferedPackets(nowMs);
+			const uint64_t nowMs = this->shared->GetTimeMs();
 
-			this->listener.OnAssociationConnected();
+			this->tcb->SendBufferedPackets(nowMs);
+
+			this->associationListenerDeferrer.OnAssociationConnected();
 		}
 
 		void Association::HandleReceivedShutdownChunk(
@@ -1890,7 +1924,7 @@ namespace RTC
 				//   SHUTDOWN chunk sender."
 				default:
 				{
-					MS_DEBUG_DEV("received SHUTDOWN, shutting down the Association");
+					MS_DEBUG_DEV("received SHUTDOWN, shutting down the association");
 
 					SetState(State::SHUTDOWN_RECEIVED, "SHUTDOWN received");
 					MaySendShutdownOrShutdownAckChunk();
@@ -1917,8 +1951,8 @@ namespace RTC
 					auto packet                       = this->tcb->CreatePacket();
 					const auto* shutdownCompleteChunk = packet->BuildChunkInPlace<ShutdownCompleteChunk>();
 
-					// NOTE: Don't set bit T in the SHUTDOWN_COMPLETE chunk since TCB
-					// knows the Verification Tag expected by the remote.
+					// NOTE: Don't set bit T in the SHUTDOWN-COMPLETE chunk since TCB
+					// knows the verification tag expected by the remote.
 
 					shutdownCompleteChunk->Consolidate();
 
@@ -2004,15 +2038,16 @@ namespace RTC
 			{
 				MS_DEBUG_TAG(
 				  sctp,
-				  "received OPERATION_ERROR Chunk on a Association with no TCB, ignoring: %s",
+				  "received OPERATION-ERROR chunk on a association with no TCB, ignoring: %s",
 				  errorCausesStr.c_str());
 
 				return;
 			}
 
-			MS_WARN_TAG(sctp, "received OPERATION_ERROR Chunk: %s", errorCausesStr.c_str());
+			MS_WARN_TAG(sctp, "received OPERATION-ERROR chunk: %s", errorCausesStr.c_str());
 
-			this->listener.OnAssociationError(Types::ErrorKind::PEER_REPORTED, errorCausesStr);
+			this->associationListenerDeferrer.OnAssociationError(
+			  Types::ErrorKind::PEER_REPORTED, errorCausesStr);
 		}
 
 		void Association::HandleReceivedAbortAssociationChunk(
@@ -2042,13 +2077,13 @@ namespace RTC
 			{
 				MS_DEBUG_TAG(
 				  sctp,
-				  "received ABORT Chunk on a Association with no TCB, ignoring: %s",
+				  "received ABORT chunk on a association with no TCB, ignoring: %s",
 				  errorCausesStr.c_str());
 
 				return;
 			}
 
-			MS_WARN_TAG(sctp, "received ABORT Chunk, closing Association: %s", errorCausesStr.c_str());
+			MS_WARN_TAG(sctp, "received ABORT chunk, closing association: %s", errorCausesStr.c_str());
 
 			InternalClose(Types::ErrorKind::PEER_REPORTED, errorCausesStr);
 		}
@@ -2099,9 +2134,10 @@ namespace RTC
 			MaySendResetStreamsRequest();
 
 			// If a response was processed, pending to-be-reset streams may now have
-			// become unpaused. Try to send more DATA/I_DATA chunks.
-			// TODO: SCTP: Implement it.
-			// this->tcb->SendBufferedPackets(nowMs);
+			// become unpaused. Try to send more DATA/I-DATA chunks.
+			const uint64_t nowMs = this->shared->GetTimeMs();
+
+			this->tcb->SendBufferedPackets(nowMs);
 
 			// If it leaves "deferred reset processing", there may be chunks to
 			// deliver that were queued while waiting for the stream to reset.
@@ -2125,7 +2161,7 @@ namespace RTC
 		}
 
 		void Association::HandleReceivedAnyForwardTsnChunk(
-		  const Packet* /*receivedPacket*/, const AnyForwardTsnChunk* /*receivedAnyForwardTsnChunk*/)
+		  const Packet* /*receivedPacket*/, const AnyForwardTsnChunk* receivedAnyForwardTsnChunk)
 		{
 			MS_TRACE();
 
@@ -2140,34 +2176,32 @@ namespace RTC
 				auto* abortAssociationChunk = packet->BuildChunkInPlace<AbortAssociationChunk>();
 
 				// NOTE: Don't set bit T in the ABORT chunk since TCB knows the
-				// Verification Tag expected by the remote.
+				// verification tag expected by the remote.
 
 				auto* protocolViolationErrorCause =
 				  abortAssociationChunk->BuildErrorCauseInPlace<ProtocolViolationErrorCause>();
 
 				protocolViolationErrorCause->SetAdditionalInformation(
-				  "FORWARD_TSN or I_FORWARD_TSN-TSN chunk received but partial reliability is not negotiated");
+				  "FORWARD-TSN or I_FORWARD-TSN chunk received but partial reliability is not negotiated");
 
 				protocolViolationErrorCause->Consolidate();
 				abortAssociationChunk->Consolidate();
 
 				this->packetSender.SendPacket(packet.get());
 
-				this->listener.OnAssociationError(
+				this->associationListenerDeferrer.OnAssociationError(
 				  Types::ErrorKind::PROTOCOL_VIOLATION,
-				  "received FORWARD_TSN or I_FORWARD_TSN-TSN chunk but partial reliability is not negotiated");
+				  "received FORWARD-TSN or I-FORWARD-TSN chunk but partial reliability is not negotiated");
 
 				return;
 			}
 
-			// TODO: SCTP: Implement it.
-			// if
-			// (this->tcb->GetDataTracker().HandleForwardTsn(receivedAnyForwardTsnChunk->GetNewCumulativeTsn()))
-			// {
-			// 	this->tcb->GetReassemblyQueue().HandleForwardTsn(
-			// 		receivedAnyForwardTsnChunk->GetNewCumulativeTsn(),
-			// 		receivedAnyForwardTsnChunk->GetSkippedStreams());
-			// }
+			if (this->tcb->GetDataTracker().HandleForwardTsn(receivedAnyForwardTsnChunk->GetNewCumulativeTsn()))
+			{
+				this->tcb->GetReassemblyQueue().HandleForwardTsn(
+				  receivedAnyForwardTsnChunk->GetNewCumulativeTsn(),
+				  receivedAnyForwardTsnChunk->GetSkippedStreams());
+			}
 
 			// A forward TSN (for ordered streams) may allow messages to be delivered.
 			MayDeliverMessages();
@@ -2199,9 +2233,8 @@ namespace RTC
 				return;
 			}
 
-			const uint32_t tsn = receivedAnyDataChunk->GetTsn();
-			// TODO: SCTP: Uncomment.
-			// const bool immediateAck = receivedAnyDataChunk->GetI();
+			const uint32_t tsn      = receivedAnyDataChunk->GetTsn();
+			const bool immediateAck = receivedAnyDataChunk->GetI();
 
 			if (receivedAnyDataChunk->GetUserDataPayloadLength() == 0)
 			{
@@ -2216,95 +2249,91 @@ namespace RTC
 
 				this->packetSender.SendPacket(packet.get());
 
-				this->listener.OnAssociationError(
-				  Types::ErrorKind::PROTOCOL_VIOLATION, "received DATA or I_DATA chunk with no user data");
+				this->associationListenerDeferrer.OnAssociationError(
+				  Types::ErrorKind::PROTOCOL_VIOLATION, "received DATA or I-DATA chunk with no user data");
 
 				return;
 			}
 
-			// TODO: SCTP: Implement it.
-			// MS_DEBUG_DEV("data received [data length:%" PRIu16 ", queue size:%zu, watermark:%zu,
-			// full:%s, above:%s]", 	receivedAnyDataChunk->GetUserDataLength(),
-			// 	this->tcb->GetReassemblyQueue()->GetQueuedBytes(),
-			// 	this->tcb->GetReassemblyQueue()->GetWaterMarkBytes(),
-			// 	this->tcb->GetReassemblyQueue()->IsFull(),
-			// 	this->tcb->GetReassemblyQueue()->IsAboveWatermark(),
-			// );
+			MS_DEBUG_DEV(
+			  "data received [data length:%" PRIu16 ", queue size:%zu, watermark:%zu, full:%s, above:%s]",
+			  receivedAnyDataChunk->GetUserDataPayloadLength(),
+			  this->tcb->GetReassemblyQueue().GetQueuedBytes(),
+			  this->tcb->GetReassemblyQueue().GetWatermarkBytes(),
+			  this->tcb->GetReassemblyQueue().IsFull() ? "yes" : "no",
+			  this->tcb->GetReassemblyQueue().IsAboveWatermark() ? "yes" : "no");
 
-			// TODO: SCTP: Implement it.
-			// if (this->tcb->GetReassemblyQueue()->IsFull())
-			// {
-			// 	// If the reassembly queue is full but there are assembled messages
-			// 	// waiting to be pulled, we can't do anything with this data except drop
-			// 	// it, and hope the upper layer drains the accumulated messages soon.
-			// 	if (this->tcb->GetReassemblyQueue()->HasMessages())
-			// 	{
-			// 		MS_WARN_TAG(sctp, "received data rejected because reassembly queue is full");
+			if (this->tcb->GetReassemblyQueue().IsFull())
+			{
+				// If the reassembly queue is full but there are assembled messages
+				// waiting to be pulled, we can't do anything with this data except drop
+				// it, and hope the upper layer drains the accumulated messages soon.
+				if (this->tcb->GetReassemblyQueue().HasMessages())
+				{
+					MS_WARN_TAG(sctp, "received data rejected because reassembly queue is full");
 
-			// 		return;
-			// 	}
-			// 	// If the reassembly queue is full and there's no messages waiting,
-			// 	// there is nothing that can be done. The specification only allows
-			// 	// dropping gap-ack-blocks, and that's not likely to help as the
-			// 	// Association has been trying to fill gaps since the watermark was
-			// 	// reached.
-			// 	else
-			// 	{
-			// 		auto packet      = this->tcb->CreatePacket();
-			// 		auto* abortAssociationChunk = packet->BuildChunkInPlace<AbortAssociationChunk>();
+					return;
+				}
+				// If the reassembly queue is full and there's no messages waiting,
+				// there is nothing that can be done. The specification only allows
+				// dropping gap-ack-blocks, and that's not likely to help as the
+				// association has been trying to fill gaps since the watermark was
+				// reached.
+				else
+				{
+					auto packet                 = this->tcb->CreatePacket();
+					auto* abortAssociationChunk = packet->BuildChunkInPlace<AbortAssociationChunk>();
 
-			// 		// NOTE: Don't set bit T in the ABORT chunk since TCB knows the
-			// 		// Verification Tag expected by the remote.
+					// NOTE: Don't set bit T in the ABORT chunk since TCB knows the
+					// verification tag expected by the remote.
 
-			// 		auto* outOfResourceErrorCause =
-			// 		  abortAssociationChunk->BuildErrorCauseInPlace<OutOfResourceErrorCause>();
+					auto* outOfResourceErrorCause =
+					  abortAssociationChunk->BuildErrorCauseInPlace<OutOfResourceErrorCause>();
 
-			// 		outOfResourceErrorCause->Consolidate();
-			// 		abortAssociationChunk->Consolidate();
+					outOfResourceErrorCause->Consolidate();
+					abortAssociationChunk->Consolidate();
 
-			// 		this->packetSender.SendPacket(packet.get());
+					this->packetSender.SendPacket(packet.get());
 
-			// 		InternalClose(Types::ErrorKind::RESOURCE_EXHAUSTION, "reassembly queue is exhausted");
+					InternalClose(Types::ErrorKind::RESOURCE_EXHAUSTION, "reassembly queue is exhausted");
 
-			// 		return;
-			// 	}
-			// }
+					return;
+				}
+			}
 
 			// If the reassembly queue is above its high watermark, only accept data
 			// chunks that increase its cumulative ack tsn in an attempt to fill gaps
 			// to deliver messages.
-			// TODO: SCTP: Implement it.
-			// if (this->tcb->GetReassemblyQueue()->IsAboveWatermark())
-			// {
-			// 	MS_WARN_TAG(sctp, "reassembly queue is above watermark");
+			if (this->tcb->GetReassemblyQueue().IsAboveWatermark())
+			{
+				MS_WARN_TAG(sctp, "reassembly queue is above watermark");
 
-			// 	if (this->tcb->GetDataTracker()->WillIncreaseCumAckTsn(tsn))
-			// 	{
-			// 		MS_WARN_TAG(sctp, "reassembly queue is above watermark");
+				if (!this->tcb->GetDataTracker().WillIncreaseCumAckTsn(tsn))
+				{
+					MS_WARN_TAG(sctp, "reassembly queue is above watermark");
 
-			// 		this->tcb->GetDataTracker()->ForceImmediateSack();
+					this->tcb->GetDataTracker().ForceImmediateSack();
 
-			// 		return;
-			// 	}
-			// }
+					return;
+				}
+			}
 
-			// TODO: SCTP: Implement it.
-			// if (this->tcb->GetDataTracker()->IsTsnValid(tsn))
-			// {
-			// 	MS_WARN_TAG(sctp, "data rejected because of failing TSN validity");
+			if (!this->tcb->GetDataTracker().IsTsnValid(tsn))
+			{
+				MS_WARN_TAG(sctp, "data rejected because of failing TSN validity");
 
-			// 	return;
-			// }
+				return;
+			}
 
-			// TODO: SCTP: Implement it.
-			// if (this->tcb->GetDataTracker()->Observe(tsn, immediateAck))
-			// {
-			// 	// TODO: SCTP: Here we should have a std::vector<uint8_t> holding the data so
-			// 	// we can move it.
-			// 	this->tcb->GetReassemblyQueue()->Add(tsn, std::move(data));
+			if (this->tcb->GetDataTracker().Observe(tsn, immediateAck))
+			{
+				// NOTE: Here we are passing an UserData r-value created and returned by
+				// receivedAnyDataChunk->MakeUserData() so there is only one copy here.
+				// And ReassemblyQueue::AddData() will std::move() it internally.
+				this->tcb->GetReassemblyQueue().AddData(tsn, receivedAnyDataChunk->MakeUserData());
 
-			// 	MayDeliverMessages();
-			// }
+				MayDeliverMessages();
+			}
 		}
 
 		void Association::HandleReceivedSackChunk(
@@ -2317,13 +2346,13 @@ namespace RTC
 				return;
 			}
 
-			const uint64_t nowMs = DepLibUV::GetTimeMs();
+			const uint64_t nowMs = this->shared->GetTimeMs();
 
 			if (this->tcb->GetRetransmissionQueue().HandleReceivedSackChunk(nowMs, receivedSackChunk))
 			{
 				MaySendShutdownOrShutdownAckChunk();
 
-				// Receiving an ACK may make the Association go into fast recovery mode.
+				// Receiving an ACK may make the association go into fast recovery mode.
 				//
 				// https://datatracker.ietf.org/doc/html/rfc9260#section-7.2.4
 				//
@@ -2338,8 +2367,7 @@ namespace RTC
 
 				// Receiving an ACK will decrease outstanding bytes (maybe now below
 				// cwnd?) or indicate packet loss that may result in sending FORWARD-TSN.
-				// TODO: SCTP: Implement it.
-				// this->tcb->SendBufferedPackets(nowMs);
+				this->tcb->SendBufferedPackets(nowMs);
 			}
 			else
 			{
@@ -2365,25 +2393,25 @@ namespace RTC
 			{
 				MS_WARN_TAG(
 				  sctp,
-				  "Chunk with unknown type %" PRIu8
-				  " received, skipping further processing of Chunks in the Packet",
+				  "chunk with unknown type %" PRIu8
+				  " received, skipping further processing of chunks in the packet",
 				  static_cast<uint8_t>(receivedUnknownChunk->GetType()));
 			}
 			else
 			{
 				MS_DEBUG_TAG(
 				  sctp,
-				  "ignoring received Chunk with unknown type %" PRIu8,
+				  "ignoring received chunk with unknown type %" PRIu8,
 				  static_cast<uint8_t>(receivedUnknownChunk->GetType()));
 			}
 
 			if (reportError)
 			{
-				this->listener.OnAssociationError(
+				this->associationListenerDeferrer.OnAssociationError(
 				  Types::ErrorKind::PARSE_FAILED, "unknown chunk with type indicating it should be reported");
 
 				// If there is TCB (we need correct remote verification tag) send an
-				// OPERATION_ERROR Chunk with a Unrecognized Chunk Type Error Cause.
+				// OPERATION-ERROR chunk with a Unrecognized Chunk type error cause.
 				if (this->tcb)
 				{
 					auto packet               = this->tcb->CreatePacket();
@@ -2408,15 +2436,16 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
-
 			const auto maxRestarts = this->t1InitTimer->GetMaxRestarts();
 
 			MS_DEBUG_TAG(
 			  sctp,
-			  "T1-init timer has expired [%zu/%s]",
+			  "%s timer has expired [expirations:%zu, maxRestarts:%s]",
+			  this->t1InitTimer->GetLabel().c_str(),
 			  this->t1InitTimer->GetExpirationCount(),
 			  maxRestarts ? std::to_string(maxRestarts.value()).c_str() : "Infinite");
+
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->associationListenerDeferrer);
 
 			AssertState(State::COOKIE_WAIT);
 
@@ -2426,57 +2455,60 @@ namespace RTC
 			}
 			else
 			{
-				InternalClose(Types::ErrorKind::TOO_MANY_RETRIES, "no INIT_ACK chunk received");
+				InternalClose(Types::ErrorKind::TOO_MANY_RETRIES, "no INIT-ACK chunk received");
 			}
 
-			AssertStateIsConsistent();
+			AssertIsConsistent();
 		}
 
 		void Association::OnT1CookieTimer(uint64_t& /*baseTimeoutMs*/, bool& /*stop*/)
 		{
 			MS_TRACE();
 
-			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
-
 			const auto maxRestarts = this->t1CookieTimer->GetMaxRestarts();
 
 			MS_DEBUG_TAG(
 			  sctp,
-			  "T1-cookie timer has expired [%zu/%s]",
+			  "%s timer has expired [expirations:%zu, maxRestarts:%s]",
+			  this->t1CookieTimer->GetLabel().c_str(),
 			  this->t1CookieTimer->GetExpirationCount(),
 			  maxRestarts ? std::to_string(maxRestarts.value()).c_str() : "Infinite");
+
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->associationListenerDeferrer);
 
 			AssertState(State::COOKIE_ECHOED);
 
 			if (this->t1CookieTimer->IsRunning())
 			{
-				// TODO: SCTP: Implement it.
-				// this->tcb->SendBufferedPackets(nowMs);
+				const uint64_t nowMs = this->shared->GetTimeMs();
+
+				this->tcb->SendBufferedPackets(nowMs);
 			}
 			else
 			{
-				InternalClose(Types::ErrorKind::TOO_MANY_RETRIES, "no COOKIE_ACK chunk received");
+				InternalClose(Types::ErrorKind::TOO_MANY_RETRIES, "no COOKIE-ACK chunk received");
 			}
 
-			AssertStateIsConsistent();
+			AssertIsConsistent();
 		}
 
 		void Association::OnT2ShutdownTimer(uint64_t& baseTimeoutMs, bool& /*stop*/)
 		{
 			MS_TRACE();
 
-			AssertState(State::SHUTDOWN_SENT, State::SHUTDOWN_ACK_SENT);
-			AssertHasTcb();
-
-			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->listener);
-
 			const auto maxRestarts = this->t2ShutdownTimer->GetMaxRestarts();
 
 			MS_DEBUG_TAG(
 			  sctp,
-			  "T2-shutdown timer has expired %zu/%s]",
+			  "%s timer has expired [expirations:%zu, maxRestarts:%s]",
+			  this->t2ShutdownTimer->GetLabel().c_str(),
 			  this->t2ShutdownTimer->GetExpirationCount(),
 			  maxRestarts ? std::to_string(maxRestarts.value()).c_str() : "Infinite");
+
+			AssertState(State::SHUTDOWN_SENT, State::SHUTDOWN_ACK_SENT);
+			AssertHasTcb();
+
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->associationListenerDeferrer);
 
 			// https://datatracker.ietf.org/doc/html/rfc9260#section-9.2
 			//
@@ -2491,7 +2523,7 @@ namespace RTC
 				auto* abortAssociationChunk = packet->BuildChunkInPlace<AbortAssociationChunk>();
 
 				// NOTE: Don't set bit T in the ABORT chunk since TCB knows the
-				// Verification Tag expected by the remote.
+				// verification tag expected by the remote.
 
 				auto* userInitiatedAbortErrorCause =
 				  abortAssociationChunk->BuildErrorCauseInPlace<UserInitiatedAbortErrorCause>();
@@ -2504,8 +2536,9 @@ namespace RTC
 
 				this->packetSender.SendPacket(packet.get());
 
-				InternalClose(Types::ErrorKind::TOO_MANY_RETRIES, "no SHUTDOWN_ACK chunk received");
-				AssertStateIsConsistent();
+				InternalClose(Types::ErrorKind::TOO_MANY_RETRIES, "no SHUTDOWN-ACK chunk received");
+
+				AssertIsConsistent();
 
 				return;
 			}
@@ -2529,7 +2562,7 @@ namespace RTC
 				SendShutdownChunk();
 			}
 
-			AssertStateIsConsistent();
+			AssertIsConsistent();
 
 			baseTimeoutMs = this->tcb->GetCurrentRtoMs();
 		}
@@ -2605,7 +2638,7 @@ namespace RTC
 				return true;
 			}
 
-			this->listener.OnAssociationError(
+			this->associationListenerDeferrer.OnAssociationError(
 			  Types::ErrorKind::NOT_CONNECTED,
 			  "received unexpected commands on association that is not connected");
 
@@ -2622,9 +2655,22 @@ namespace RTC
 			}
 		}
 
-		void Association::AssertStateIsConsistent() const
+		void Association::AssertIsConsistent() const
 		{
 			MS_TRACE();
+
+			// NOTE: This assertion is present in dcsctp but we are removing it because
+			// it's dangerous. Depending on where `AssertIsConsistent()` is called from,
+			// it may legitimately happen that tere are SCTP full messages stored in
+			// the reassembly queue. `ReassemblyQueue::HasMessages()` can legitimately
+			// return `true` during stream deferred reset processing, which is a valid
+			// state where the reassembly queue intentionally retains messages while
+			// waiting for the TSN marked by the peer as the "Sender's Last Assigned
+			// TSN". There is no point in the code where we can guarantee that this
+			// state is not active.
+			// MS_ASSERT(
+			//   !(this->tcb && this->tcb->GetReassemblyQueue().HasMessages()),
+			//   "this->tcb && this->tcb->GetReassemblyQueue().HasMessages()");
 
 			switch (this->state)
 			{
@@ -2635,7 +2681,7 @@ namespace RTC
 					  !this->t1InitTimer->IsRunning(), "internal state is NEW but T1 Init timer is running");
 					MS_ASSERT(
 					  !this->t1CookieTimer->IsRunning(),
-					  "internal state is NEW but T1 Cookie timer is running");
+					  "internal state is NEW but T1 cookie timer is running");
 					MS_ASSERT(
 					  !this->t2ShutdownTimer->IsRunning(),
 					  "internal state is NEW but T2 Shutdown timer is running");
@@ -2650,7 +2696,7 @@ namespace RTC
 					  !this->t1InitTimer->IsRunning(), "internal state is CLOSED but T1 Init timer is running");
 					MS_ASSERT(
 					  !this->t1CookieTimer->IsRunning(),
-					  "internal state is CLOSED but T1 Cookie timer is running");
+					  "internal state is CLOSED but T1 cookie timer is running");
 					MS_ASSERT(
 					  !this->t2ShutdownTimer->IsRunning(),
 					  "internal state is CLOSED but T2 Shutdown timer is running");
@@ -2666,7 +2712,7 @@ namespace RTC
 					  "internal state is COOKIE_WAIT but T1 Init timer is not running");
 					MS_ASSERT(
 					  !this->t1CookieTimer->IsRunning(),
-					  "internal state is COOKIE_WAIT but T1 Cookie timer is running");
+					  "internal state is COOKIE_WAIT but T1 cookie timer is running");
 					MS_ASSERT(
 					  !this->t2ShutdownTimer->IsRunning(),
 					  "internal state is COOKIE_WAIT but T2 Shutdown timer is running");
@@ -2682,7 +2728,7 @@ namespace RTC
 					  "internal state is COOKIE_ECHOED but T1 Init timer is not running");
 					MS_ASSERT(
 					  this->t1CookieTimer->IsRunning(),
-					  "internal state is COOKIE_ECHOED but T1 Cookie timer is not running");
+					  "internal state is COOKIE_ECHOED but T1 cookie timer is not running");
 					MS_ASSERT(
 					  !this->t2ShutdownTimer->IsRunning(),
 					  "internal state is COOKIE_ECHOED but T2 Shutdown timer is running");
@@ -2701,7 +2747,7 @@ namespace RTC
 					  "internal state is ESTABLISHED but T1 Init timer is running");
 					MS_ASSERT(
 					  !this->t1CookieTimer->IsRunning(),
-					  "internal state is ESTABLISHED but T1 Cookie timer is running");
+					  "internal state is ESTABLISHED but T1 cookie timer is running");
 					MS_ASSERT(
 					  !this->t2ShutdownTimer->IsRunning(),
 					  "internal state is ESTABLISHED but T2 Shutdown timer is running");
@@ -2717,7 +2763,7 @@ namespace RTC
 					  "internal state is SHUTDOWN_PENDING but T1 Init timer is running");
 					MS_ASSERT(
 					  !this->t1CookieTimer->IsRunning(),
-					  "internal state is SHUTDOWN_PENDING but T1 Cookie timer is running");
+					  "internal state is SHUTDOWN_PENDING but T1 cookie timer is running");
 					MS_ASSERT(
 					  !this->t2ShutdownTimer->IsRunning(),
 					  "internal state is SHUTDOWN_PENDING but T2 Shutdown timer is running");
@@ -2733,7 +2779,7 @@ namespace RTC
 					  "internal state is SHUTDOWN_SENT but T1 Init timer is running");
 					MS_ASSERT(
 					  !this->t1CookieTimer->IsRunning(),
-					  "internal state is SHUTDOWN_SENT but T1 Cookie timer is running");
+					  "internal state is SHUTDOWN_SENT but T1 cookie timer is running");
 					MS_ASSERT(
 					  this->t2ShutdownTimer->IsRunning(),
 					  "internal state is SHUTDOWN_SENT but T2 Shutdown timer is not running");
@@ -2749,7 +2795,7 @@ namespace RTC
 					  "internal state is SHUTDOWN_RECEIVED but T1 Init timer is running");
 					MS_ASSERT(
 					  !this->t1CookieTimer->IsRunning(),
-					  "internal state is SHUTDOWN_RECEIVED but T1 Cookie timer is running");
+					  "internal state is SHUTDOWN_RECEIVED but T1 cookie timer is running");
 					MS_ASSERT(
 					  !this->t2ShutdownTimer->IsRunning(),
 					  "internal state is SHUTDOWN_RECEIVED but T2 Shutdown timer is running");
@@ -2765,7 +2811,7 @@ namespace RTC
 					  "internal state is SHUTDOWN_ACK_SENT but T1 Init timer is running");
 					MS_ASSERT(
 					  !this->t1CookieTimer->IsRunning(),
-					  "internal state is SHUTDOWN_ACK_SENT but T1 Cookie timer is running");
+					  "internal state is SHUTDOWN_ACK_SENT but T1 cookie timer is running");
 					MS_ASSERT(
 					  this->t2ShutdownTimer->IsRunning(),
 					  "internal state is SHUTDOWN_ACK_SENT but T2 Shutdown timer is not running");
@@ -2775,10 +2821,22 @@ namespace RTC
 			}
 		}
 
+#if MS_LOG_DEV_LEVEL == 3
+		void Association::OnPacketSenderPacketSent(
+		  PacketSender* /*packetSender*/, const Packet* packet, bool sent)
+#else
 		void Association::OnPacketSenderPacketSent(
 		  PacketSender* /*packetSender*/, const Packet* /*packet*/, bool sent)
+#endif
 		{
 			MS_TRACE();
+
+// For debugging purposes.
+#if MS_LOG_DEV_LEVEL == 3
+			MS_DUMP(">>> SCTP packet sent [sent:%s]", sent ? "yes" : "no");
+
+			packet->Dump();
+#endif
 
 			if (sent)
 			{
@@ -2786,7 +2844,7 @@ namespace RTC
 			}
 		}
 
-		void Association::OnTimer(
+		void Association::OnBackoffTimer(
 		  BackoffTimerHandleInterface* backoffTimer, uint64_t& baseTimeoutMs, bool& stop)
 		{
 			MS_TRACE();
@@ -2803,6 +2861,19 @@ namespace RTC
 			{
 				OnT2ShutdownTimer(baseTimeoutMs, stop);
 			}
+		}
+
+		void Association::OnTransmissionControlBlockTooManyTxErrors()
+		{
+			MS_TRACE();
+
+			// NOTE: This is invoked from within a TCB timer handler (t3-rtx, heartbeat
+			// or RE-CONFIG timeout). `InternalClose()` destroys the TCB synchronously,
+			// which is safe because the calling timer handler sets the BackoffTimerHandle
+			// `stop` flag and doesn't touch any member afterwards. `InternalClose()` does
+			// not establish its own deferrer scope, so it relies on the active one set up
+			// by the timer handler.
+			InternalClose(Types::ErrorKind::TOO_MANY_RETRIES, "too many transmission errors");
 		}
 	} // namespace SCTP
 } // namespace RTC

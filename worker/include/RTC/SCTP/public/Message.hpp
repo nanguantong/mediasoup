@@ -2,6 +2,7 @@
 #define MS_RTC_SCTP_MESSAGE_HPP
 
 #include "common.hpp"
+#include <span>
 #include <vector>
 
 namespace RTC
@@ -18,18 +19,26 @@ namespace RTC
 		public:
 			Message(uint16_t streamId, uint32_t ppid, std::vector<uint8_t> payload);
 
-			// Move constructor. No need to do anything special since std::vector
-			// already implements move.
+			/**
+			 * Move constructor. No need to do anything special since std::vector
+			 * already implements move.
+			 */
 			Message(Message&& other) = default;
 
-			// Move assignment. No need to do anything special since std::vector
-			// already implements move.
+			/**
+			 * Move assignment. No need to do anything special since std::vector
+			 * already implements move.
+			 */
 			Message& operator=(Message&& other) = default;
 
-			// Disable copy constructor.
+			/**
+			 * Copy constructor disabled.
+			 */
 			Message(const Message&) = delete;
 
-			// Disable copy assignment.
+			/**
+			 * Copy assignment disabled.
+			 */
 			Message& operator=(const Message&) = delete;
 
 			~Message();
@@ -42,14 +51,16 @@ namespace RTC
 				return this->streamId;
 			}
 
+			void SetStreamId(uint16_t streamId);
+
 			uint32_t GetPayloadProtocolId() const
 			{
 				return this->ppid;
 			}
 
-			const uint8_t* GetPayload() const
+			std::span<const uint8_t> GetPayload() const
 			{
-				return this->payload.data();
+				return this->payload;
 			}
 
 			size_t GetPayloadLength() const
@@ -59,7 +70,7 @@ namespace RTC
 
 			/**
 			 * Useful to extract the payload and its ownership when destructing the
-			 * Message.
+			 * message.
 			 *
 			 * @remarks
 			 * - && at the end means that it can only be called from a rvalue.
@@ -75,9 +86,14 @@ namespace RTC
 				return std::move(this->payload);
 			}
 
+			Message Clone() const
+			{
+				return Message(this->streamId, this->ppid, this->payload);
+			}
+
 		private:
-			uint16_t streamId{ 0 };
-			uint32_t ppid{ 0 };
+			uint16_t streamId;
+			uint32_t ppid;
 			std::vector<uint8_t> payload;
 		};
 	} // namespace SCTP

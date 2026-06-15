@@ -12,7 +12,7 @@ namespace RTC
 		/* Static. */
 
 		static constexpr size_t StunResponseFactoryBufferLength{ 65536 };
-		thread_local uint8_t StunResponseFactoryBuffer[StunResponseFactoryBufferLength];
+		static thread_local uint8_t StunResponseFactoryBuffer[StunResponseFactoryBufferLength];
 		static constexpr size_t MaxTuples{ 8 };
 		static constexpr uint8_t ConsentCheckMinTimeoutSec{ 10u };
 		static constexpr uint8_t ConsentCheckMaxTimeoutSec{ 60u };
@@ -20,7 +20,7 @@ namespace RTC
 		/* Class variables. */
 
 		// clang-format off
-		std::unordered_map<IceServer::IceState, std::string> IceServer::iceStateToString =
+		ankerl::unordered_dense::map<IceServer::IceState, std::string> IceServer::iceStateToString =
 		{
 			{ IceServer::IceState::NEW,          "new"          },
 			{ IceServer::IceState::CONNECTED,    "connected"    },
@@ -560,7 +560,7 @@ namespace RTC
 			}
 			else
 			{
-				thread_local std::string_view errorReasonPhrase;
+				static thread_local std::string_view errorReasonPhrase;
 
 				response->GetErrorCode(errorReasonPhrase);
 

@@ -2,18 +2,16 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/Producer.hpp"
-#include "DepLibUV.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
-#include "Utils.hpp"
 #include "RTC/Consts.hpp"
 #include "RTC/RTCP/Feedback.hpp"
 #include "RTC/RTCP/XrReceiverReferenceTime.hpp"
 #include "RTC/RTP/Codecs/Tools.hpp"
+#include "Utils.hpp"
 #ifdef MS_RTC_LOGGER_RTP
 #include "RTC/RtcLogger.hpp"
 #endif
-#include <absl/container/inlined_vector.h>
 #include <cstring> // std::memcpy()
 
 namespace RTC
@@ -21,7 +19,7 @@ namespace RTC
 	/* Static */
 
 	static constexpr size_t ProducerSendBufferSize{ 65536 };
-	thread_local uint8_t ProducerSendBuffer[ProducerSendBufferSize];
+	static thread_local uint8_t ProducerSendBuffer[ProducerSendBufferSize];
 	static constexpr unsigned int SendNackDelay{ 10u }; // In ms.
 
 	/* Instance methods. */
@@ -1196,8 +1194,8 @@ namespace RTC
 
 		// Mangle RTP header extensions.
 		{
-			thread_local uint8_t buffer[4096];
-			thread_local std::vector<RTC::RTP::Packet::Extension> extensions;
+			static thread_local uint8_t buffer[4096];
+			static thread_local std::vector<RTC::RTP::Packet::Extension> extensions;
 
 			// This happens just once.
 			if (extensions.capacity() != 24)
@@ -1495,7 +1493,7 @@ namespace RTC
 			auto notification = FBS::Producer::CreateTraceNotification(
 			  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 			  FBS::Producer::TraceEventType::KEYFRAME,
-			  DepLibUV::GetTimeMs(),
+			  this->shared->GetTimeMs(),
 			  FBS::Common::TraceDirection::DIRECTION_IN,
 			  FBS::Producer::TraceInfo::KeyFrameTraceInfo,
 			  traceInfo.Union());
@@ -1511,7 +1509,7 @@ namespace RTC
 			auto notification = FBS::Producer::CreateTraceNotification(
 			  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 			  FBS::Producer::TraceEventType::RTP,
-			  DepLibUV::GetTimeMs(),
+			  this->shared->GetTimeMs(),
 			  FBS::Common::TraceDirection::DIRECTION_IN,
 			  FBS::Producer::TraceInfo::RtpTraceInfo,
 			  traceInfo.Union());
@@ -1535,7 +1533,7 @@ namespace RTC
 		auto notification = FBS::Producer::CreateTraceNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::Producer::TraceEventType::PLI,
-		  DepLibUV::GetTimeMs(),
+		  this->shared->GetTimeMs(),
 		  FBS::Common::TraceDirection::DIRECTION_OUT,
 		  FBS::Producer::TraceInfo::PliTraceInfo,
 		  traceInfo.Union());
@@ -1558,7 +1556,7 @@ namespace RTC
 		auto notification = FBS::Producer::CreateTraceNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::Producer::TraceEventType::FIR,
-		  DepLibUV::GetTimeMs(),
+		  this->shared->GetTimeMs(),
 		  FBS::Common::TraceDirection::DIRECTION_OUT,
 		  FBS::Producer::TraceInfo::FirTraceInfo,
 		  traceInfo.Union());
@@ -1578,7 +1576,7 @@ namespace RTC
 		auto notification = FBS::Producer::CreateTraceNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::Producer::TraceEventType::NACK,
-		  DepLibUV::GetTimeMs(),
+		  this->shared->GetTimeMs(),
 		  FBS::Common::TraceDirection::DIRECTION_OUT);
 
 		EmitTraceEvent(notification);
@@ -1605,7 +1603,7 @@ namespace RTC
 		auto notification = FBS::Producer::CreateTraceNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::Producer::TraceEventType::SR,
-		  DepLibUV::GetTimeMs(),
+		  this->shared->GetTimeMs(),
 		  FBS::Common::TraceDirection::DIRECTION_IN,
 		  FBS::Producer::TraceInfo::SrTraceInfo,
 		  traceInfo.Union());

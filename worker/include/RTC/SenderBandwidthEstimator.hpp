@@ -6,6 +6,7 @@
 #include "RTC/RateCalculator.hpp"
 #include "RTC/SeqManager.hpp"
 #include "RTC/TrendCalculator.hpp"
+#include "SharedInterface.hpp"
 #include <map>
 
 namespace RTC
@@ -82,7 +83,9 @@ namespace RTC
 
 	public:
 		SenderBandwidthEstimator(
-		  RTC::SenderBandwidthEstimator::Listener* listener, uint32_t initialAvailableBitrate);
+		  RTC::SenderBandwidthEstimator::Listener* listener,
+		  SharedInterface* shared,
+		  uint32_t initialAvailableBitrate);
 		virtual ~SenderBandwidthEstimator();
 
 	public:
@@ -98,6 +101,7 @@ namespace RTC
 	private:
 		// Passed by argument.
 		Listener* listener{ nullptr };
+		SharedInterface* shared{ nullptr };
 		// Others.
 		uint32_t initialAvailableBitrate{ 0u };
 		uint32_t availableBitrate{ 0u };

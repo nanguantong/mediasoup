@@ -1,12 +1,12 @@
 #define MS_CLASS "RTC::SCTP::RetransmissionQueue"
-// TODO: SCTP: Comment.
-#define MS_LOG_DEV_LEVEL 3
+// #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/SCTP/tx/RetransmissionQueue.hpp"
 #include "Logger.hpp"
-#include "Utils.hpp"
 #include "RTC/SCTP/packet/chunks/DataChunk.hpp"
 #include "RTC/SCTP/packet/chunks/IDataChunk.hpp"
+#include "RTC/SCTP/public/SctpTypes.hpp"
+#include "Utils.hpp"
 #include <cmath>   // std::min()
 #include <numeric> // std::accumulate()
 #include <string>
@@ -19,11 +19,10 @@ namespace RTC
 
 		RetransmissionQueue::RetransmissionQueue(
 		  Listener* listener,
-		  AssociationListener& associationListener,
+		  AssociationListenerInterface& associationListener,
 		  uint32_t localInitialTsn,
 		  uint32_t remoteAdvertisedReceiverWindowCredit,
-		  // TODO: SCTP: Implement
-		  // SendQueue& sendQueue,
+		  SendQueueInterface& sendQueue,
 		  BackoffTimerHandleInterface* t3RtxTimer,
 		  const SctpOptions& sctpOptions,
 		  // NOTE: I don't like default argument values in dcsctp (true and false),
@@ -45,18 +44,14 @@ namespace RTC
 		    // "The initial value of ssthresh MAY be arbitrarily high (for example,
 		    // implementations MAY use the size of the receiver advertised window)."
 		    ssthresh(this->rwnd),
-		    // TODO: SCTP: Implement.
-		    // sendQueue(sendQueue),
+		    sendQueue(sendQueue),
 		    outstandingData(
 		      this->dataChunkHeaderLength,
 		      this->tsnUnwrapper.Unwrap(localInitialTsn - 1),
-		      [/*this*/](uint16_t /*streamId*/, uint32_t /*outgoingMessageId*/)
-		      {
-			      // TODO: SCTP: Implement.
-			      // return this->sendQueue.Discard(streamId, outgoingMessageId);
 
-			      // TODO: SCTP: Remove when the above is uncommented.
-			      return false;
+		      [this](uint16_t streamId, uint32_t outgoingMessageId)
+		      {
+			      return this->sendQueue.Discard(streamId, outgoingMessageId);
 		      })
 		{
 			MS_TRACE();
@@ -76,12 +71,13 @@ namespace RTC
 				return false;
 			}
 
-			const UnwrappedTsn oldLastCumulativeTsnAck = this->outstandingData.GetLastCumulativeTsnAck();
-			const size_t oldUnackedPacketBytes         = this->outstandingData.GetUnackedPacketBytes();
+			const Types::UnwrappedTsn oldLastCumulativeTsnAck =
+			  this->outstandingData.GetLastCumulativeTsnAck();
+			const size_t oldUnackedPacketBytes = this->outstandingData.GetUnackedPacketBytes();
 #if MS_LOG_DEV_LEVEL == 3
 			const size_t oldRwnd = this->rwnd;
 #endif
-			const UnwrappedTsn cumulativeTsnAck =
+			const Types::UnwrappedTsn cumulativeTsnAck =
 			  this->tsnUnwrapper.Unwrap(receivedSackChunk->GetCumulativeTsnAck());
 
 			if (receivedSackChunk->GetValidatedGapAckBlocks().empty())
@@ -108,6 +104,7 @@ namespace RTC
 				this->associationListener.OnAssociationLifecycleMessageEnd(lifecycleId);
 			}
 
+			// Add lifecycle events for abandoned messages.
 			for (const uint64_t lifecycleId : ackInfo.abandonedLifecycleIds)
 			{
 				MS_DEBUG_TAG(
@@ -124,7 +121,7 @@ namespace RTC
 			UpdateReceiverWindow(receivedSackChunk->GetAdvertisedReceiverWindowCredit());
 
 			MS_DEBUG_DEV(
-			  "Received SACK [cumulativeTsnAck:%" PRIu32 ", oldLastCumulativeTsnAck:%" PRIu32
+			  "received SACK [cumulativeTsnAck:%" PRIu32 ", oldLastCumulativeTsnAck:%" PRIu32
 			  ", unackedPacketBytes:%zu, oldUnackedPacketBytes:%zu, rwnd:%zu, oldRwnd:%zu]",
 			  cumulativeTsnAck.Wrap(),
 			  oldLastCumulativeTsnAck.Wrap(),
@@ -215,7 +212,8 @@ namespace RTC
 
 			MS_DEBUG_TAG(
 			  sctp,
-			  "T3-rtx timer has expired [cwnd:%zu, oldCwnd:%zu, ssthresh:%zu, unackedPacketBytes:%zu, oldUnackedPacketBytes:%zu]",
+			  "%s timer has expired [cwnd:%zu, oldCwnd:%zu, ssthresh:%zu, unackedPacketBytes:%zu, oldUnackedPacketBytes:%zu]",
+			  this->t3RtxTimer->GetLabel().c_str(),
 			  this->cwnd,
 			  oldCwnd,
 			  this->ssthresh,
@@ -235,21 +233,21 @@ namespace RTC
 			  "given maxLength %zu is not divisible by 4",
 			  maxLength);
 
-			std::vector<std::pair<uint32_t /*tsn*/, UserData>> result;
+			std::vector<std::pair<uint32_t /*tsn*/, UserData>> toBeSent;
 
 #if MS_LOG_DEV_LEVEL == 3
 			const size_t oldUnackedPacketBytes = GetUnackedPacketBytes();
 #endif
 
-			result = this->outstandingData.GetChunksToBeFastRetransmitted(maxLength);
+			toBeSent = this->outstandingData.GetChunksToBeFastRetransmitted(maxLength);
 
-			MS_ASSERT(!result.empty(), "result cannot be empty");
+			MS_ASSERT(!toBeSent.empty(), "toBeSent cannot be empty");
 
 			// https://datatracker.ietf.org/doc/html/rfc9260#section-7.2.4
 			//
 			// "4)  Restart the T3-rtx timer only if ... the endpoint is retransmitting
 			// the first outstanding DATA chunk sent to that address."
-			if (result[0].first == this->outstandingData.GetLastCumulativeTsnAck().GetNextValue().Wrap())
+			if (toBeSent[0].first == this->outstandingData.GetLastCumulativeTsnAck().GetNextValue().Wrap())
 			{
 				MS_DEBUG_DEV("first outstanding data to be retransmitted, restarting T3-rtx timer");
 
@@ -267,8 +265,8 @@ namespace RTC
 			}
 
 			const size_t bytesRetransmitted = std::accumulate(
-			  result.begin(),
-			  result.end(),
+			  toBeSent.begin(),
+			  toBeSent.end(),
 			  size_t{ 0 },
 			  [&](size_t r, const std::pair<uint32_t /*tsn*/, UserData>& data)
 			  {
@@ -281,7 +279,7 @@ namespace RTC
 #if MS_LOG_DEV_LEVEL == 3
 			std::string tsnList;
 
-			for (const auto& [tsn, data] : result)
+			for (const auto& [tsn, data] : toBeSent)
 			{
 				if (!tsnList.empty())
 				{
@@ -292,18 +290,18 @@ namespace RTC
 			}
 
 			MS_DEBUG_DEV(
-			  "fast-retransmitting TSN %s - %zu bytes [unackedPacketBytes:%zu, oldUnackedPacketBytes:%zu]",
+			  "fast-retransmitting TSN %s (%zu bytes) [unackedPacketBytes:%zu, oldUnackedPacketBytes:%zu]",
 			  tsnList.c_str(),
 			  bytesRetransmitted,
 			  GetUnackedPacketBytes(),
 			  oldUnackedPacketBytes);
 #endif
 
-			return result;
+			return toBeSent;
 		}
 
 		std::vector<std::pair<uint32_t /*tsn*/, UserData>> RetransmissionQueue::GetChunksToSend(
-		  uint64_t /*nowMs*/, size_t maxLength)
+		  uint64_t nowMs, size_t maxLength)
 		{
 			MS_TRACE();
 
@@ -312,7 +310,7 @@ namespace RTC
 			  "given maxLength %zu is not divisible by 4",
 			  maxLength);
 
-			std::vector<std::pair<uint32_t /*tsn*/, UserData>> result;
+			std::vector<std::pair<uint32_t /*tsn*/, UserData>> toBeSent;
 
 			const size_t oldUnackedPacketBytes = GetUnackedPacketBytes();
 #if MS_LOG_DEV_LEVEL == 3
@@ -340,11 +338,11 @@ namespace RTC
 			size_t maxBytes = Utils::Byte::PadDownTo4Bytes(
 			  std::min({ maxPacketBytesAllowedByCwnd, maxPacketBytesAllowedByRwnd, maxLength }));
 
-			result = this->outstandingData.GetChunksToBeRetransmitted(maxBytes);
+			toBeSent = this->outstandingData.GetChunksToBeRetransmitted(maxBytes);
 
 			const size_t bytesRetransmitted = std::accumulate(
-			  result.begin(),
-			  result.end(),
+			  toBeSent.begin(),
+			  toBeSent.end(),
 			  size_t{ 0 },
 			  [&](size_t r, const std::pair<uint32_t /*tsn*/, UserData>& data)
 			  {
@@ -353,7 +351,7 @@ namespace RTC
 
 			maxBytes -= bytesRetransmitted;
 
-			if (!result.empty())
+			if (!toBeSent.empty())
 			{
 				++this->rtxPacketsCount;
 				this->rtxBytesCount += bytesRetransmitted;
@@ -366,43 +364,41 @@ namespace RTC
 				  "computed maxBytes %zu during the loop is not divisible by 4",
 				  maxBytes);
 
-				// TODO: SCTP: Implement and uncomment.
+				std::optional<SendQueueInterface::DataToSend> dataToSend =
+				  this->sendQueue.Produce(nowMs, maxBytes - this->dataChunkHeaderLength);
 
-				// std::optional<SendQueue::DataToSend> chunkOpt =
-				//   this->sendQueue.Produce(nowMs, maxBytes - this->dataChunkHeaderLength);
+				if (!dataToSend.has_value())
+				{
+					break;
+				}
 
-				// if (!chunkOpt.has_value())
-				// {
-				// 	break;
-				// }
+				const size_t chunkSize = GetSerializedChunkLength(dataToSend->data);
 
-				// const size_t chunkSize = GetSerializedChunkSize(chunkOpt->data);
+				maxBytes -= chunkSize;
 
-				// maxBytes -= chunkSize;
+				this->rwnd -= dataToSend->data.GetPayloadLength();
 
-				// this->rwnd -= chunkOpt->data.size();
+				const std::optional<Types::UnwrappedTsn> tsn = this->outstandingData.Insert(
+				  dataToSend->outgoingMessageId,
+				  dataToSend->data,
+				  nowMs,
+				  this->supportsPartialReliability ? dataToSend->maxRetransmissions
+				                                   : Types::MaxRetransmitsNoLimit,
+				  this->supportsPartialReliability ? dataToSend->expiresAtMs : Types::ExpiresAtMsInfinite,
+				  dataToSend->lifecycleId);
 
-				// const std::optional<UnwrappedTsn> tsn = this->outstandingData.Insert(
-				//   chunkOpt->messageId,
-				//   chunkOpt->data,
-				//   nowMs,
-				//   this->supportsPartialReliability ? chunkOpt->maxRetransmissions
-				//                                    : OutstandingData::MaxRetransmitsNoLimit,
-				//   this->supportsPartialReliability ? chunkOpt->expiresAtMs
-				//                                    : OutstandingData::ExpiresAtMsInfinite,
-				//   chunkOpt->lifecycleId);
+				if (tsn.has_value())
+				{
+					if (dataToSend->lifecycleId.has_value())
+					{
+						MS_ASSERT(dataToSend->data.IsEnd(), "data.IsEnd() should return true");
 
-				// if (tsn.has_value())
-				// {
-				// 	if (chunkOpt->lifecycleId != 0)
-				// 	{
-				// 		MS_ASSERT(chunkOpt->data.IsEnd(), "data.IsEnd() should return true");
+						this->associationListener.OnAssociationLifecycleMessageFullySent(
+						  dataToSend->lifecycleId.value());
+					}
 
-				// 		this->associationListener.OnAssociationLifecycleMessageFullySent(chunkOpt->lifecycleId);
-				// 	}
-
-				// 	result.emplace_back(tsn->Wrap(), std::move(chunkOpt->data));
-				// }
+					toBeSent.emplace_back(tsn->Wrap(), std::move(dataToSend->data));
+				}
 			}
 
 			// https://tools.ietf.org/html/rfc9260#section-6.3.2
@@ -410,7 +406,7 @@ namespace RTC
 			// "Every time a DATA chunk is sent to any address (including a
 			// retransmission), if the T3-rtx timer of that address is not running,
 			// start it running so that it will expire after the RTO of that address."
-			if (!result.empty())
+			if (!toBeSent.empty())
 			{
 				if (!this->t3RtxTimer->IsRunning())
 				{
@@ -420,7 +416,7 @@ namespace RTC
 #if MS_LOG_DEV_LEVEL == 3
 				std::string tsnList;
 
-				for (const auto& [tsn, data] : result)
+				for (const auto& [tsn, data] : toBeSent)
 				{
 					if (!tsnList.empty())
 					{
@@ -431,8 +427,8 @@ namespace RTC
 				}
 
 				const size_t bytesRetransmitted = std::accumulate(
-				  result.begin(),
-				  result.end(),
+				  toBeSent.begin(),
+				  toBeSent.end(),
 				  size_t{ 0 },
 				  [&](size_t r, const std::pair<uint32_t, UserData>& d)
 				  {
@@ -440,7 +436,7 @@ namespace RTC
 				  });
 
 				MS_DEBUG_DEV(
-				  "sending TSN %s - %zu bytes [unackedPacketBytes:%zu, oldUnackedPacketBytes:%zu, cwnd:%zu, rwnd:%zu, oldRwnd:%zu]",
+				  "sending TSN %s (%zu bytes) [unackedPacketBytes:%zu, oldUnackedPacketBytes:%zu, cwnd:%zu, rwnd:%zu, oldRwnd:%zu]",
 				  tsnList.c_str(),
 				  bytesRetransmitted,
 				  GetUnackedPacketBytes(),
@@ -451,7 +447,7 @@ namespace RTC
 #endif
 			}
 
-			return result;
+			return toBeSent;
 		}
 
 		bool RetransmissionQueue::ShouldSendForwardTsn(uint64_t nowMs)
@@ -468,29 +464,25 @@ namespace RTC
 			return this->outstandingData.ShouldSendForwardTsn();
 		}
 
-		void RetransmissionQueue::PrepareResetStream(uint16_t /*streamId*/)
+		void RetransmissionQueue::PrepareResetStream(uint16_t streamId)
 		{
 			MS_TRACE();
 
 			// TODO: As per TODO comment in same method in dcsctp:
 			//
-			// "These calls are now only affecting the send queue. The packet buffer
+			// These calls are now only affecting the send queue. The packet buffer
 			// can also change behavior - for example draining the chunk producer and
 			// eagerly assign TSNs so that an "Outgoing SSN Reset Request" can be sent
-			// quickly, with a known `sender_last_assigned_tsn`.
-			// TODO: SCTP: Implement it.
-			// this->sendQueue.PrepareResetStream(streamId);
+			// quickly, with a known sender last assigned TSN.
+
+			this->sendQueue.PrepareResetStream(streamId);
 		}
 
 		bool RetransmissionQueue::HasStreamsReadyToBeReset() const
 		{
 			MS_TRACE();
 
-			// TODO: SCTP: Implement it.
-			// return this->sendQueue.HasStreamsReadyToBeReset();
-
-			// TODO: SCTP: Remove.
-			return false;
+			return this->sendQueue.HasStreamsReadyToBeReset();
 		}
 
 		std::vector<uint16_t /*streamId*/> RetransmissionQueue::BeginResetStreams()
@@ -499,27 +491,21 @@ namespace RTC
 
 			this->outstandingData.BeginResetStreams();
 
-			// TODO: SCTP: Implement it.
-			// this->sendQueue.GetStreamsReadyToBeReset();
-
-			// TODO: SCTP: Remove.
-			return {};
+			return this->sendQueue.GetStreamsReadyToBeReset();
 		}
 
 		void RetransmissionQueue::CommitResetStreams()
 		{
 			MS_TRACE();
 
-			// TODO: SCTP: Implement it.
-			// this->sendQueue.CommitResetStreams();
+			this->sendQueue.CommitResetStreams();
 		}
 
 		void RetransmissionQueue::RollbackResetStreams()
 		{
 			MS_TRACE();
 
-			// TODO: SCTP: Implement it.
-			// this->sendQueue.RollbackResetStreams();
+			this->sendQueue.RollbackResetStreams();
 		}
 
 		size_t RetransmissionQueue::GetSerializedChunkLength(const UserData& data) const
@@ -543,7 +529,7 @@ namespace RTC
 			// @remarks
 			// - Important not to drop SACKs with identical TSN to that previously
 			//   received, as the gap-ack-blocks or dup tsn fields may have changed.
-			const UnwrappedTsn cumulativeTsnAck =
+			const Types::UnwrappedTsn cumulativeTsnAck =
 			  this->tsnUnwrapper.PeekUnwrap(sackChunk->GetCumulativeTsnAck());
 
 			if (cumulativeTsnAck < this->outstandingData.GetLastCumulativeTsnAck())
@@ -562,15 +548,15 @@ namespace RTC
 			}
 
 			return std::ranges::all_of(
-			  sackChunk->GetValidatedGapAckBlocks(),
+			  sackChunk->GetGapAckBlocks(),
 			  [&](const auto& block)
 			  {
-				  return UnwrappedTsn::AddTo(cumulativeTsnAck, block.end) <=
+				  return Types::UnwrappedTsn::AddTo(cumulativeTsnAck, block.end) <=
 				         this->outstandingData.GetHighestOutstandingTsn();
 			  });
 		}
 
-		void RetransmissionQueue::UpdateRttMs(uint64_t nowMs, UnwrappedTsn cumulativeTsnAck)
+		void RetransmissionQueue::UpdateRttMs(uint64_t nowMs, Types::UnwrappedTsn cumulativeTsnAck)
 		{
 			MS_TRACE();
 
@@ -582,7 +568,7 @@ namespace RTC
 			//
 			// TODO: As per TODO comment in same method in dcsctp:
 			//
-			// "Consider occasionally sending DATA chunks with I-bit set and use only
+			// Consider occasionally sending DATA chunks with I-bit set and use only
 			// those packets for measurement.
 
 			const auto rttMs = this->outstandingData.MeasureRtt(nowMs, cumulativeTsnAck);
@@ -593,7 +579,7 @@ namespace RTC
 			}
 		}
 
-		void RetransmissionQueue::MayExitFastRecovery(UnwrappedTsn cumulativeTsnAck)
+		void RetransmissionQueue::MayExitFastRecovery(Types::UnwrappedTsn cumulativeTsnAck)
 		{
 			MS_TRACE();
 
@@ -611,11 +597,12 @@ namespace RTC
 			}
 		}
 
-		void RetransmissionQueue::StopT3RtxTimerOnIncreasedCumulativeTsnAck(UnwrappedTsn /*cumulativeTsnAck*/)
+		void RetransmissionQueue::StopT3RtxTimerOnIncreasedCumulativeTsnAck(
+		  Types::UnwrappedTsn /*cumulativeTsnAck*/)
 		{
 			MS_TRACE();
 
-			// TODO: This method is NOT defined in dcsctp!
+			// TODO: This method is NOT implemented in dcsctp!
 			//
 			// @see https://issues.webrtc.org/issues/505751236
 		}
@@ -699,7 +686,7 @@ namespace RTC
 			}
 		}
 
-		void RetransmissionQueue::HandlePacketLoss(UnwrappedTsn /*highestTsnAcked*/)
+		void RetransmissionQueue::HandlePacketLoss(Types::UnwrappedTsn /*highestTsnAcked*/)
 		{
 			MS_TRACE();
 
@@ -774,7 +761,7 @@ namespace RTC
 				// Note: Already stopped in `StopT3RtxTimerOnIncreasedCumulativeTsnAck()`."
 				//
 				// TODO: As said above, `StopT3RtxTimerOnIncreasedCumulativeTsnAck()`
-				// is NOT defined in dcsctp and of course it's never called from
+				// is NOT implemented in dcsctp and of course it's never called from
 				// anywhere.
 			}
 			else

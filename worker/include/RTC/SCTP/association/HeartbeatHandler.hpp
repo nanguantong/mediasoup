@@ -2,13 +2,13 @@
 #define MS_RTC_SCTP_HEARTBEAT_HANDLER_HPP
 
 #include "common.hpp"
-#include "SharedInterface.hpp"
-#include "RTC/SCTP/association/TCBContext.hpp"
+#include "handles/BackoffTimerHandleInterface.hpp"
+#include "RTC/SCTP/association/AssociationListenerDeferrer.hpp"
+#include "RTC/SCTP/association/TransmissionControlBlockContextInterface.hpp"
 #include "RTC/SCTP/packet/chunks/HeartbeatAckChunk.hpp"
 #include "RTC/SCTP/packet/chunks/HeartbeatRequestChunk.hpp"
-#include "RTC/SCTP/public/AssociationListener.hpp"
 #include "RTC/SCTP/public/SctpOptions.hpp"
-#include "handles/BackoffTimerHandleInterface.hpp"
+#include "SharedInterface.hpp"
 
 namespace RTC
 {
@@ -26,10 +26,10 @@ namespace RTC
 		{
 		public:
 			HeartbeatHandler(
-			  AssociationListener& associationListener,
+			  AssociationListenerDeferrer& associationListenerDeferrer,
 			  const SctpOptions& sctpOptions,
 			  SharedInterface* shared,
-			  TCBContext* tcbContext);
+			  TransmissionControlBlockContextInterface* tcbContext);
 
 			~HeartbeatHandler() override;
 
@@ -42,13 +42,13 @@ namespace RTC
 			void RestartTimer();
 
 			/**
-			 * Called on received HEARTBEAT_REQUEST Chunk.
+			 * Called on received HEARTBEAT-REQUEST chunk.
 			 */
 			void HandleReceivedHeartbeatRequestChunk(
 			  const HeartbeatRequestChunk* receivedHeartbeatRequestChunk);
 
 			/**
-			 * Called on received HEARTBEAT_ACK Chunk.
+			 * Called on received HEARTBEAT-ACK chunk.
 			 */
 			void HandleReceivedHeartbeatAckChunk(const HeartbeatAckChunk* receivedHeartbeatAckChunk);
 
@@ -59,18 +59,19 @@ namespace RTC
 
 			/* Pure virtual methods inherited from BackoffTimerHandleInterface::Listener. */
 		public:
-			void OnTimer(BackoffTimerHandleInterface* backoffTimer, uint64_t& baseTimeoutMs, bool& stop) override;
+			void OnBackoffTimer(
+			  BackoffTimerHandleInterface* backoffTimer, uint64_t& baseTimeoutMs, bool& stop) override;
 
 		private:
-			AssociationListener& associationListener;
+			AssociationListenerDeferrer& associationListenerDeferrer;
 			const SctpOptions sctpOptions;
 			SharedInterface* shared;
-			TCBContext* tcbContext{ nullptr };
+			TransmissionControlBlockContextInterface* tcbContext;
 			// The time for a connection to be idle before a heartbeat is sent.
-			const uint64_t intervalDurationMs{ 0 };
+			const uint64_t intervalDurationMs;
 			// Adding RTT to the duration will add some jitter, which is good in
 			// production, but less good in unit tests, which is why it can be disabled.
-			const bool intervalDurationShouldIncludeRtt{ false };
+			const bool intervalDurationShouldIncludeRtt;
 			const std::unique_ptr<BackoffTimerHandleInterface> intervalTimer;
 			const std::unique_ptr<BackoffTimerHandleInterface> timeoutTimer;
 		};

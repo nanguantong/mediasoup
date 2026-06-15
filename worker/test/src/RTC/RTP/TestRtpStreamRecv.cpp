@@ -1,9 +1,8 @@
 #include "common.hpp"
-#include "DepLibUV.hpp"
-#include "mocks/include/MockShared.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RTP/RtpStream.hpp"
 #include "RTC/RTP/RtpStreamRecv.hpp"
+#include "mocks/include/MockShared.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <vector>
 
@@ -119,7 +118,11 @@ SCENARIO("RtpStreamRecv", "[rtp][rtpstream][rtpstreamrecv]")
 		std::vector<uint16_t> nackedSeqNumbers;
 	};
 
-	mocks::MockShared shared;
+	mocks::MockShared shared(/*getTimeMs*/
+	                         []()
+	                         {
+		                         return 1000;
+	                         });
 
 	// clang-format off
 	alignas(4) uint8_t buffer[] =
@@ -249,7 +252,4 @@ SCENARIO("RtpStreamRecv", "[rtp][rtpstream][rtpstreamrecv]")
 		listener.shouldTriggerFIR = false;
 		rtpStream.ReceivePacket(packet.get());
 	}
-
-	// Must run the loop to wait for UV timers and close them.
-	DepLibUV::RunLoop();
 }

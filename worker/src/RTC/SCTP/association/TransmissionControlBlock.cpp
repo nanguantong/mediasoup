@@ -1,15 +1,13 @@
 #define MS_CLASS "RTC::SCTP::TransmissionControlBlock"
-// TODO: SCTP: COMMENT
-#define MS_LOG_DEV_LEVEL 3
+// #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/SCTP/association/TransmissionControlBlock.hpp"
-#include "DepLibUV.hpp"
 #include "Logger.hpp"
-#include "RTC/Consts.hpp"
+#include "MediaSoupErrors.hpp"
+#include "RTC/SCTP/packet/chunks/CookieAckChunk.hpp"
+#include "RTC/SCTP/packet/chunks/CookieEchoChunk.hpp"
 #include "RTC/SCTP/packet/chunks/DataChunk.hpp"
 #include "RTC/SCTP/packet/chunks/IDataChunk.hpp"
-#include "handles/BackoffTimerHandle.hpp"
-#include <cmath> // std::min()
 #include <string>
 
 namespace RTC
@@ -18,17 +16,17 @@ namespace RTC
 	{
 		/* Static. */
 
-		alignas(4) thread_local static uint8_t PacketFactoryBuffer[RTC::Consts::MaxSafeMtuSizeForSctp];
+		alignas(4) static thread_local uint8_t PacketFactoryBuffer[65536];
 
 		/* Instance methods. */
 
 		TransmissionControlBlock::TransmissionControlBlock(
-		  AssociationListener& associationListener,
+		  TransmissionControlBlockContextInterface::Listener* listener,
+		  AssociationListenerDeferrer& associationListenerDeferrer,
 		  const SctpOptions& sctpOptions,
 		  SharedInterface* shared,
+		  SendQueueInterface& sendQueue,
 		  PacketSender& packetSender,
-		  // TODO: SCTP: Implement it.
-		  // SendQueue& sendQueue,
 		  uint32_t localVerificationTag,
 		  uint32_t remoteVerificationTag,
 		  uint32_t localInitialTsn,
@@ -36,12 +34,12 @@ namespace RTC
 		  uint32_t remoteAdvertisedReceiverWindowCredit,
 		  uint64_t tieTag,
 		  const NegotiatedCapabilities& negotiatedCapabilities,
+		  size_t maxPacketLength,
 		  std::function<bool()> isAssociationEstablished)
-		  : associationListener(associationListener),
+		  : listener(listener),
+		    associationListenerDeferrer(associationListenerDeferrer),
 		    sctpOptions(sctpOptions),
 		    shared(shared),
-		    // TODO: SCTP: Implement it.
-		    // sendQueue(sendQueue),
 		    packetSender(packetSender),
 		    localVerificationTag(localVerificationTag),
 		    remoteVerificationTag(remoteVerificationTag),
@@ -50,10 +48,12 @@ namespace RTC
 		    remoteAdvertisedReceiverWindowCredit(remoteAdvertisedReceiverWindowCredit),
 		    tieTag(tieTag),
 		    negotiatedCapabilities(negotiatedCapabilities),
+		    maxPacketLength(maxPacketLength),
 		    isAssociationEstablished(std::move(isAssociationEstablished)),
 		    t3RtxTimer(this->shared->CreateBackoffTimer(
 		      BackoffTimerHandleInterface::BackoffTimerHandleOptions{
 		        .listener            = this,
+		        .label               = "sctp-t3-rtx",
 		        .baseTimeoutMs       = sctpOptions.initialRtoMs,
 		        .backoffAlgorithm    = BackoffTimerHandleInterface::BackoffAlgorithm::EXPONENTIAL,
 		        .maxBackoffTimeoutMs = sctpOptions.timerMaxBackoffTimeoutMs,
@@ -61,38 +61,38 @@ namespace RTC
 		    delayedAckTimer(this->shared->CreateBackoffTimer(
 		      BackoffTimerHandleInterface::BackoffTimerHandleOptions{
 		        .listener            = this,
+		        .label               = "sctp-delayed-ack",
 		        .baseTimeoutMs       = sctpOptions.delayedAckMaxTimeoutMs,
 		        .backoffAlgorithm    = BackoffTimerHandleInterface::BackoffAlgorithm::EXPONENTIAL,
 		        .maxBackoffTimeoutMs = std::nullopt,
 		        .maxRestarts         = 0 })),
 		    rto(sctpOptions),
 		    txErrorCounter(sctpOptions),
-		    // TODO: SCTP: Implement.
-		    // dataTracker(),
-		    // TODO: SCTP: Implement.
-		    // reassemblyQueue(),
+		    dataTracker(this->delayedAckTimer.get(), remoteInitialTsn),
+		    reassemblyQueue(
+		      sctpOptions.maxReceiverWindowBufferSize, negotiatedCapabilities.messageInterleaving),
 		    retransmissionQueue(
 		      this,
-		      this->associationListener,
+		      this->associationListenerDeferrer,
 		      localInitialTsn,
 		      remoteAdvertisedReceiverWindowCredit,
-		      // TODO: SCTP: Implement
-		      // this->sendQueue,
+		      sendQueue,
 		      this->t3RtxTimer.get(),
 		      sctpOptions,
 		      negotiatedCapabilities.partialReliability,
 		      negotiatedCapabilities.messageInterleaving),
 		    streamResetHandler(
-		      this->associationListener,
+		      this->associationListenerDeferrer,
 		      this->shared,
 		      this,
-		      // TODO: SCTP: Implement.
-		      // std::addressof(this->dataTracker),
-		      // std::addressof(this->reassemblyQueue),
+		      std::addressof(this->dataTracker),
+		      std::addressof(this->reassemblyQueue),
 		      std::addressof(this->retransmissionQueue)),
-		    heartbeatHandler(this->associationListener, sctpOptions, this->shared, this)
+		    heartbeatHandler(this->associationListenerDeferrer, sctpOptions, this->shared, this)
 		{
 			MS_TRACE();
+
+			sendQueue.EnableMessageInterleaving(this->negotiatedCapabilities.messageInterleaving);
 		}
 
 		TransmissionControlBlock::~TransmissionControlBlock()
@@ -163,7 +163,7 @@ namespace RTC
 			MS_TRACE();
 
 			auto packet =
-			  std::unique_ptr<Packet>(Packet::Factory(PacketFactoryBuffer, sizeof(PacketFactoryBuffer)));
+			  std::unique_ptr<Packet>{ Packet::Factory(PacketFactoryBuffer, this->maxPacketLength) };
 
 			packet->SetSourcePort(this->sctpOptions.sourcePort);
 			packet->SetDestinationPort(this->sctpOptions.destinationPort);
@@ -172,11 +172,11 @@ namespace RTC
 			return packet;
 		}
 
-		void TransmissionControlBlock::Send(Packet* packet)
+		bool TransmissionControlBlock::SendPacket(Packet* packet)
 		{
 			MS_TRACE();
 
-			this->packetSender.SendPacket(
+			return this->packetSender.SendPacket(
 			  packet,
 			  /*writeChecksum*/ !this->negotiatedCapabilities.zeroChecksum);
 		}
@@ -199,22 +199,19 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			// TODO: SCTP: Implement it.
-			// if (!this->dataTracker.ShouldSendAckChunk(/*alsoIfDelayed*/ false))
-			// {
-			// 	return;
-			// }
+			if (!this->dataTracker.ShouldSendAck(/*alsoIfDelayed*/ false))
+			{
+				return;
+			}
 
-			// auto packet = CreatePacket();
+			const auto packet = CreatePacket();
 
-			// TODO: SCTP: Here we must create a SackChunk in the Packet, however the
-			// SackChunk is in theory generated by this->dataTracker... Let's see.
-			// builder.Add(this->dataTracker.CreateSelectiveAck(this->reassemblyQueue.GetRemainingBytes()));
+			this->dataTracker.AddSackSelectiveAck(packet.get(), this->reassemblyQueue.GetRemainingBytes());
 
-			// Send(packet.get());
+			SendPacket(packet.get());
 		}
 
-		void TransmissionControlBlock::MaybeSendForwardTsnChunk(Packet* packet, uint64_t nowMs)
+		void TransmissionControlBlock::MayAddForwardTsnChunk(Packet* packet, uint64_t nowMs)
 		{
 			MS_TRACE();
 
@@ -222,11 +219,11 @@ namespace RTC
 			{
 				if (this->negotiatedCapabilities.messageInterleaving)
 				{
-					this->retransmissionQueue.CreateIForwardTsn(packet);
+					this->retransmissionQueue.AddIForwardTsn(packet);
 				}
 				else
 				{
-					this->retransmissionQueue.CreateForwardTsn(packet);
+					this->retransmissionQueue.AddForwardTsn(packet);
 				}
 
 				// https://datatracker.ietf.org/doc/html/rfc3758
@@ -259,19 +256,19 @@ namespace RTC
 			// performed, the sender SHOULD ignore the value of cwnd and SHOULD NOT
 			// delay retransmission for this single packet."
 
-			auto packet = CreatePacket();
-			const auto result =
+			const auto packet = CreatePacket();
+
+			auto result =
 			  this->retransmissionQueue.GetChunksForFastRetransmit(packet->GetAvailableLength());
 
-			for (const auto& [tsn, data] : result)
+			for (auto& [tsn, data] : result)
 			{
 				if (this->negotiatedCapabilities.messageInterleaving)
 				{
 					auto* iDataChunk = packet->BuildChunkInPlace<IDataChunk>();
 
 					iDataChunk->SetTsn(tsn);
-					// TODO: SCTP: Implement.
-					// iDataChunk->SetUserData(data);
+					iDataChunk->SetUserData(std::move(data));
 					iDataChunk->Consolidate();
 				}
 				else
@@ -279,16 +276,140 @@ namespace RTC
 					auto* dataChunk = packet->BuildChunkInPlace<DataChunk>();
 
 					dataChunk->SetTsn(tsn);
-					// TODO: SCTP: Implement.
-					// dataChunk->SetUserData(data);
+					dataChunk->SetUserData(std::move(data));
 					dataChunk->Consolidate();
 				}
 			}
 
-			Send(packet.get());
+			SendPacket(packet.get());
 		}
 
-		void TransmissionControlBlock::OnT3RtxTimer(uint64_t& /*baseTimeoutMs*/, bool& /*stop*/)
+		void TransmissionControlBlock::SendBufferedPackets(uint64_t nowMs, bool addCookieAckChunk)
+		{
+			MS_TRACE();
+
+			for (size_t packetIdx{ 0 }; packetIdx < this->sctpOptions.maxBurst; ++packetIdx)
+			{
+				const auto packet = CreatePacket();
+
+				// Only add control chunks to the first packet that is sent, if sending
+				// multiple packets in one go (as allowed by the congestion window).
+				if (packetIdx == 0)
+				{
+					if (addCookieAckChunk)
+					{
+						MS_DEBUG_DEV("adding COOKIE-ACK chunk to the packet");
+
+						const auto* cookieAckChunk = packet->BuildChunkInPlace<CookieAckChunk>();
+
+						cookieAckChunk->Consolidate();
+					}
+
+					if (this->remoteStateCookie.has_value())
+					{
+						// https://datatracker.ietf.org/doc/html/rfc9260#section-5.1
+						//
+						// "The COOKIE ECHO chunk can be bundled with any pending outbound
+						// DATA chunks, but it MUST be the first chunk in the packet..."
+						if (packet->GetChunksCount() > 0)
+						{
+							MS_THROW_ERROR(
+							  "packet must have no chunks [addCookieAckChunk:%s]",
+							  addCookieAckChunk ? "true" : "no");
+						}
+
+						auto* cookieEchoChunk = packet->BuildChunkInPlace<CookieEchoChunk>();
+
+						cookieEchoChunk->SetCookie(
+						  remoteStateCookie->data(), static_cast<uint16_t>(remoteStateCookie->size()));
+						cookieEchoChunk->Consolidate();
+					}
+
+					// https://datatracker.ietf.org/doc/html/rfc9260#section-6
+					//
+					// "Before an endpoint transmits a DATA chunk, if any received DATA
+					// chunks have not been acknowledged (e.g., due to delayed ack), the
+					// sender should create a SACK and bundle it with the outbound DATA
+					// chunk, as long as the size of the final SCTP packet does not exceed
+					// the current MTU."
+					if (this->dataTracker.ShouldSendAck(/*alsoIfDelayed*/ true))
+					{
+						this->dataTracker.AddSackSelectiveAck(
+						  packet.get(), this->reassemblyQueue.GetRemainingBytes());
+					}
+
+					const uint64_t nowMs = this->shared->GetTimeMs();
+
+					MayAddForwardTsnChunk(packet.get(), nowMs);
+
+					if (this->streamResetHandler.ShouldSendStreamResetRequest())
+					{
+						this->streamResetHandler.AddStreamResetRequest(packet.get());
+					}
+				}
+
+				auto chunksToSend =
+				  this->retransmissionQueue.GetChunksToSend(nowMs, packet->GetAvailableLength());
+
+				if (!chunksToSend.empty())
+				{
+					// https://datatracker.ietf.org/doc/html/rfc9260#section-8.3
+					//
+					// Sending DATA means that the path is not idle, restart heartbeat
+					// timer.
+					this->heartbeatHandler.RestartTimer();
+				}
+
+				const bool immediateAck =
+				  GetCwnd() < (this->sctpOptions.immediateSackUnderCwndMtus * this->sctpOptions.mtu);
+
+				for (auto& [tsn, data] : chunksToSend)
+				{
+					if (this->negotiatedCapabilities.messageInterleaving)
+					{
+						auto* iDataChunk = packet->BuildChunkInPlace<IDataChunk>();
+
+						iDataChunk->SetTsn(tsn);
+						iDataChunk->SetI(immediateAck);
+						iDataChunk->SetUserData(std::move(data));
+						iDataChunk->Consolidate();
+					}
+					else
+					{
+						auto* dataChunk = packet->BuildChunkInPlace<DataChunk>();
+
+						dataChunk->SetTsn(tsn);
+						dataChunk->SetI(immediateAck);
+						dataChunk->SetUserData(std::move(data));
+						dataChunk->Consolidate();
+					}
+				}
+
+				// https://datatracker.ietf.org/doc/html/rfc9653#section-5.2
+				//
+				// "When an end point sends a packet containing a COOKIE ECHO chunk, it
+				// MUST include a correct CRC32c checksum in the packet containing the
+				// COOKIE ECHO chunk."
+				if (!this->packetSender.SendPacket(
+				      packet.get(),
+				      /*writeChecksum*/ !negotiatedCapabilities.zeroChecksum ||
+				        this->remoteStateCookie.has_value()))
+				{
+					break;
+				}
+
+				// https://datatracker.ietf.org/doc/html/rfc9260#section-5.1
+				//
+				// "until the COOKIE ACK is returned the sender MUST NOT send any
+				// other packets to the peer."
+				if (this->remoteStateCookie.has_value())
+				{
+					break;
+				}
+			}
+		}
+
+		void TransmissionControlBlock::OnT3RtxTimer(uint64_t& /*baseTimeoutMs*/, bool& stop)
 		{
 			MS_TRACE();
 
@@ -296,11 +417,17 @@ namespace RTC
 
 			MS_DEBUG_TAG(
 			  sctp,
-			  "T3-rtx timer has expired [%zu/%s]",
+			  "%s timer has expired [expirations:%zu, maxRestarts:%s]",
+			  this->t3RtxTimer->GetLabel().c_str(),
 			  this->t3RtxTimer->GetExpirationCount(),
 			  maxRestarts ? std::to_string(maxRestarts.value()).c_str() : "Infinite");
 
-			// In the COOKIE_ECHO state, let the T1-COOKIE timer trigger
+			// This is a top-level timer entry point (invoked by libuv outside any other
+			// SCTP API call), so it must establish the deferrer scope itself, just like
+			// Association does in its own timer handlers.
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->associationListenerDeferrer);
+
+			// In the COOKIE-ECHO state, let the T1-COOKIE timer trigger
 			// retransmissions, to avoid having two timers doing that.
 			if (this->remoteStateCookie.has_value())
 			{
@@ -312,10 +439,18 @@ namespace RTC
 				{
 					this->retransmissionQueue.HandleT3RtxTimerExpiry();
 
-					// const uint64_t nowMs = DepLibUV::GetTimeMs();
+					const uint64_t nowMs = this->shared->GetTimeMs();
 
-					// TODO: SCTP: Implement
-					// SendBufferedPackets(nowMs);
+					SendBufferedPackets(nowMs);
+				}
+				else
+				{
+					// `IncrementTxErrorCounter()` has closed (and destroyed) this TCB and
+					// its timers. Signal the firing timer to stop and don't touch any
+					// member afterwards.
+					stop = true;
+
+					return;
 				}
 			}
 		}
@@ -324,21 +459,29 @@ namespace RTC
 		{
 			MS_TRACE();
 
+#if MS_LOG_DEV_LEVEL == 3
 			const auto maxRestarts = this->delayedAckTimer->GetMaxRestarts();
+#endif
 
-			MS_DEBUG_TAG(
-			  sctp,
-			  "delayer ack timer has expired [%zu/%s]",
+			// NOTE: This timer expires very frequently (whenever received data is
+			// pending to be acked), so it's logged at dev level to avoid being noisy.
+			MS_DEBUG_DEV(
+			  "%s timer has expired [expirations:%zu, maxRestarts:%s]",
+			  this->delayedAckTimer->GetLabel().c_str(),
 			  this->delayedAckTimer->GetExpirationCount(),
 			  maxRestarts ? std::to_string(maxRestarts.value()).c_str() : "Infinite");
 
-			// TODO: SCTP: Implement it.
-			// this->dataTracker.HandleDelayedAckTimerExpiry();
+			// This is a top-level timer entry point (invoked by libuv outside any other
+			// SCTP API call), so it must establish the deferrer scope itself, just like
+			// Association does in its own timer handlers.
+			const AssociationListenerDeferrer::ScopedDeferrer deferrer(this->associationListenerDeferrer);
+
+			this->dataTracker.HandleDelayedAckTimerExpiry();
 
 			MaySendSackChunk();
 		}
 
-		void TransmissionControlBlock::OnTimer(
+		void TransmissionControlBlock::OnBackoffTimer(
 		  BackoffTimerHandleInterface* backoffTimer, uint64_t& baseTimeoutMs, bool& stop)
 		{
 			MS_TRACE();

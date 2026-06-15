@@ -4,15 +4,15 @@
 #include "RTC/Transport.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
-#include "Settings.hpp"
 #include "Utils.hpp"
 #ifdef MS_LIBURING_SUPPORTED
 #include "DepLibUring.hpp"
 #endif
+#include "FBS/sctpAssociation.h"
 #include "FBS/transport.h"
 #include "RTC/BweType.hpp"
 #include "RTC/Consts.hpp"
-#include "RTC/PipeConsumer.hpp"
+#include "RTC/Consumer.hpp"
 #include "RTC/RTCP/FeedbackPs.hpp"
 #include "RTC/RTCP/FeedbackPsAfb.hpp"
 #include "RTC/RTCP/FeedbackPsRemb.hpp"
@@ -22,21 +22,16 @@
 #include "RTC/RtpDictionaries.hpp"
 #include "RTC/SCTP/association/Association.hpp"
 #include "RTC/SCTP/public/SctpOptions.hpp"
-#include "RTC/SimpleConsumer.hpp"
-#include "RTC/SimulcastConsumer.hpp"
-#include "RTC/SvcConsumer.hpp"
 #ifdef MS_RTC_LOGGER_RTP
 #include "RTC/RtcLogger.hpp"
 #endif
 #include <libwebrtc/modules/rtp_rtcp/include/rtp_rtcp_defines.h> // webrtc::RtpPacketSendInfo
-#include <iterator>                                              // std::ostream_iterator
-#include <map>                                                   // std::multimap
+#include <array>
+#include <iterator> // std::ostream_iterator
+#include <map>      // std::multimap
 
 namespace RTC
 {
-	static const size_t DefaultSctpSendBufferSize{ 262144 }; // 2^18 bytes.
-	static const size_t MaxSctpSendBufferSize{ 268435456 };  // 2^28 bytes.
-
 	/* Instance methods. */
 
 	Transport::Transport(
@@ -47,22 +42,26 @@ namespace RTC
 	  : id(id),
 	    shared(shared),
 	    listener(listener),
-	    recvRtpTransmission(/*ignorePaddingOnlyPackets*/ false),
-	    sendRtpTransmission(/*ignorePaddingOnlyPackets*/ false),
-	    recvRtxTransmission(/*ignorePaddingOnlyPackets*/ false, 1000u),
-	    sendRtxTransmission(/*ignorePaddingOnlyPackets*/ false, 1000u),
-	    sendProbationTransmission(/*ignorePaddingOnlyPackets*/ false, 100u)
+	    recvRtpTransmission(shared, /*ignorePaddingOnlyPackets*/ false),
+	    sendRtpTransmission(shared, /*ignorePaddingOnlyPackets*/ false),
+	    recvRtxTransmission(shared, /*ignorePaddingOnlyPackets*/ false, 1000u),
+	    sendRtxTransmission(shared, /*ignorePaddingOnlyPackets*/ false, 1000u),
+	    sendProbationTransmission(shared, /*ignorePaddingOnlyPackets*/ false, 100u)
 	{
 		MS_TRACE();
+
+		this->maxSendMessageSize    = options->maxSendMessageSize();
+		this->maxReceiveMessageSize = options->maxReceiveMessageSize();
 
 		if (options->direct())
 		{
 			this->direct = true;
-
-			if (auto maxMessageSize = options->maxMessageSize(); maxMessageSize.has_value())
-			{
-				this->maxMessageSize = maxMessageSize.value();
-			}
+		}
+		else
+		{
+			this->sctpSendBufferSize              = options->sctpSendBufferSize();
+			this->sctpPerStreamSendQueueLimit     = options->sctpPerStreamSendQueueLimit();
+			this->sctpMaxReceiverWindowBufferSize = options->sctpMaxReceiverWindowBufferSize();
 		}
 
 		if (
@@ -79,62 +78,17 @@ namespace RTC
 				MS_THROW_TYPE_ERROR("cannot enable SCTP in a direct Transport");
 			}
 
-			// numSctpStreams is mandatory.
-			if (!flatbuffers::IsFieldPresent(options, FBS::Transport::Options::VT_NUMSCTPSTREAMS))
-			{
-				MS_THROW_TYPE_ERROR("numSctpStreams missing");
-			}
+			const RTC::SCTP::SctpOptions sctpOptions = {
+				.mtu                         = RTC::Consts::MaxSafeMtuSizeForSctp,
+				.maxSendMessageSize          = this->maxSendMessageSize,
+				.maxSendBufferSize           = this->sctpSendBufferSize,
+				.perStreamSendQueueLimit     = this->sctpPerStreamSendQueueLimit,
+				.maxReceiveMessageSize       = this->maxReceiveMessageSize,
+				.maxReceiverWindowBufferSize = this->sctpMaxReceiverWindowBufferSize
+			};
 
-			// maxSctpMessageSize is mandatory.
-			if (!flatbuffers::IsFieldPresent(options, FBS::Transport::Options::VT_MAXSCTPMESSAGESIZE))
-			{
-				MS_THROW_TYPE_ERROR("maxSctpMessageSize missing");
-			}
-
-			this->maxMessageSize = options->maxSctpMessageSize();
-
-			size_t sctpSendBufferSize;
-
-			// sctpSendBufferSize is optional.
-			if (flatbuffers::IsFieldPresent(options, FBS::Transport::Options::VT_SCTPSENDBUFFERSIZE))
-			{
-				if (options->sctpSendBufferSize() > MaxSctpSendBufferSize)
-				{
-					MS_THROW_TYPE_ERROR("wrong sctpSendBufferSize (maximum value exceeded)");
-				}
-
-				sctpSendBufferSize = options->sctpSendBufferSize();
-			}
-			else
-			{
-				sctpSendBufferSize = DefaultSctpSendBufferSize;
-			}
-
-			if (Settings::configuration.useBuiltInSctpStack)
-			{
-				// TODO: SCTP: Many interesting options missing.
-				// NOTE: When using the built-in SCTP stack, `numSctpStreams` given to the
-				// transport is ignored.
-				const RTC::SCTP::SctpOptions sctpOptions = { // TODO: SCTP: Sure?
-					                                           .maxSendMessageSize = this->maxMessageSize,
-					                                           .maxSendBufferSize  = sctpSendBufferSize
-				};
-
-				this->sctpAssociation =
-				  std::make_unique<RTC::SCTP::Association>(sctpOptions, this, this->shared);
-			}
-			// TODO: Remove once we only use built-in SCTP stack.
-			else
-			{
-				// This may throw.
-				this->oldSctpAssociation = new RTC::SctpAssociation(
-				  this,
-				  options->numSctpStreams()->os(),
-				  options->numSctpStreams()->mis(),
-				  this->maxMessageSize,
-				  sctpSendBufferSize,
-				  options->isDataChannel());
-			}
+			this->sctpAssociation = std::make_unique<RTC::SCTP::Association>(
+			  sctpOptions, this, this->shared, options->isDataChannel(), /*mayConnectOnReceivedSctpData*/ true);
 		}
 
 		// Create the RTCP timer.
@@ -184,24 +138,15 @@ namespace RTC
 			delete dataConsumer;
 		}
 		this->mapDataConsumers.clear();
+		this->mapSctpStreamIdDataConsumers.clear();
 
-		if (Settings::configuration.useBuiltInSctpStack)
-		{
-			// NOTE: When using the built-in SCTP stack we don't do anything here since
-			// the `Destroying()` method has already been called by the Transport subclas
-			// and it closed the SCTP Association.
-			// NOTE: We cannot do it here in the destructor because here we are no longer
-			// the Transport subclass but Transport parent (this is how the destruction
-			// chain works in C++).
-		}
-		// TODO: Remove once we only use built-in SCTP stack.
-		else
-		{
-			// Delete SCTP association.
-			// TODO: Remove once we only use built-in SCTP stack.
-			delete this->oldSctpAssociation;
-			this->oldSctpAssociation = nullptr;
-		}
+		// NOTE: We don't close `this->sctpAssociation` here since the
+		// `SetDestroying()` method has already been called by the Transport
+		// subclass and it closed the SCTP association.
+		//
+		// NOTE: We cannot do it here in the destructor because here we are no longer
+		// the Transport subclass but Transport parent (this is how the destruction
+		// chain works in C++).
 
 		// Delete the RTCP timer.
 		delete this->rtcpTimer;
@@ -267,6 +212,7 @@ namespace RTC
 			delete dataConsumer;
 		}
 		this->mapDataConsumers.clear();
+		this->mapSctpStreamIdDataConsumers.clear();
 	}
 
 	void Transport::ListenServerClosed()
@@ -374,7 +320,7 @@ namespace RTC
 		// Add sctpListener.
 		flatbuffers::Offset<FBS::Transport::SctpListener> sctpListener;
 
-		if (Settings::configuration.useBuiltInSctpStack && this->sctpAssociation)
+		if (this->sctpAssociation)
 		{
 			// Add sctpParameters.
 			sctpParameters = this->sctpAssociation->FillBuffer(builder);
@@ -410,47 +356,6 @@ namespace RTC
 
 			sctpListener = this->sctpListener.FillBuffer(builder);
 		}
-		// TODO: Remove once we only use built-in SCTP stack.
-		else if (!Settings::configuration.useBuiltInSctpStack && this->oldSctpAssociation)
-		{
-			// Add sctpParameters.
-			sctpParameters = this->oldSctpAssociation->FillBuffer(builder);
-
-			switch (this->oldSctpAssociation->GetState())
-			{
-				case RTC::SctpAssociation::SctpState::NEW:
-				{
-					sctpState = FBS::SctpAssociation::SctpState::NEW;
-					break;
-				}
-
-				case RTC::SctpAssociation::SctpState::CONNECTING:
-				{
-					sctpState = FBS::SctpAssociation::SctpState::CONNECTING;
-					break;
-				}
-
-				case RTC::SctpAssociation::SctpState::CONNECTED:
-				{
-					sctpState = FBS::SctpAssociation::SctpState::CONNECTED;
-					break;
-				}
-
-				case RTC::SctpAssociation::SctpState::FAILED:
-				{
-					sctpState = FBS::SctpAssociation::SctpState::FAILED;
-					break;
-				}
-
-				case RTC::SctpAssociation::SctpState::CLOSED:
-				{
-					sctpState = FBS::SctpAssociation::SctpState::CLOSED;
-					break;
-				}
-			}
-
-			sctpListener = this->sctpListener.FillBuffer(builder);
-		}
 
 		// Add traceEventTypes.
 		std::vector<FBS::Transport::TraceEventType> traceEventTypes;
@@ -476,11 +381,11 @@ namespace RTC
 		  &dataConsumerIds,
 		  recvRtpHeaderExtensions,
 		  rtpListenerOffset,
-		  this->maxMessageSize,
+		  this->maxSendMessageSize,
+		  this->maxReceiveMessageSize,
 		  sctpParameters,
-		  (this->sctpAssociation || this->oldSctpAssociation)
-		    ? flatbuffers::Optional<FBS::SctpAssociation::SctpState>(sctpState)
-		    : flatbuffers::nullopt,
+		  this->sctpAssociation ? flatbuffers::Optional<FBS::SctpAssociation::SctpState>(sctpState)
+		                        : flatbuffers::nullopt,
 		  sctpListener,
 		  &traceEventTypes);
 	}
@@ -490,13 +395,13 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		auto nowMs = DepLibUV::GetTimeMs();
+		auto nowMs = this->shared->GetTimeMs();
 
 		// Add sctpState.
 		FBS::SctpAssociation::SctpState sctpState{ FBS::SctpAssociation::SctpState::NEW };
 
 		// Add sctpState.
-		if (Settings::configuration.useBuiltInSctpStack && this->sctpAssociation)
+		if (this->sctpAssociation)
 		{
 			// NOTE: There is never permanent FAILED state.
 			switch (this->sctpAssociation->GetAssociationState())
@@ -527,42 +432,6 @@ namespace RTC
 				}
 			}
 		}
-		// TODO: Remove once we only use built-in SCTP stack.
-		else if (!Settings::configuration.useBuiltInSctpStack && this->oldSctpAssociation)
-		{
-			switch (this->oldSctpAssociation->GetState())
-			{
-				case RTC::SctpAssociation::SctpState::NEW:
-				{
-					sctpState = FBS::SctpAssociation::SctpState::NEW;
-					break;
-				}
-
-				case RTC::SctpAssociation::SctpState::CONNECTING:
-				{
-					sctpState = FBS::SctpAssociation::SctpState::CONNECTING;
-					break;
-				}
-
-				case RTC::SctpAssociation::SctpState::CONNECTED:
-				{
-					sctpState = FBS::SctpAssociation::SctpState::CONNECTED;
-					break;
-				}
-
-				case RTC::SctpAssociation::SctpState::FAILED:
-				{
-					sctpState = FBS::SctpAssociation::SctpState::FAILED;
-					break;
-				}
-
-				case RTC::SctpAssociation::SctpState::CLOSED:
-				{
-					sctpState = FBS::SctpAssociation::SctpState::CLOSED;
-					break;
-				}
-			}
-		}
 
 		return FBS::Transport::CreateStatsDirect(
 		  builder,
@@ -571,9 +440,8 @@ namespace RTC
 		  // timestamp.
 		  nowMs,
 		  // sctpState.
-		  (this->sctpAssociation || this->oldSctpAssociation)
-		    ? flatbuffers::Optional<FBS::SctpAssociation::SctpState>(sctpState)
-		    : flatbuffers::nullopt,
+		  this->sctpAssociation ? flatbuffers::Optional<FBS::SctpAssociation::SctpState>(sctpState)
+		                        : flatbuffers::nullopt,
 		  // bytesReceived.
 		  this->recvTransmission.GetBytes(),
 		  // recvBitrate.
@@ -909,44 +777,8 @@ namespace RTC
 					MS_THROW_ERROR("a Consumer with same consumerId already exists");
 				}
 
-				auto type = RTC::RtpParameters::Type(body->type());
-
-				RTC::Consumer* consumer{ nullptr };
-
-				switch (type)
-				{
-					case RTC::RtpParameters::Type::SIMPLE:
-					{
-						// This may throw.
-						consumer = new RTC::SimpleConsumer(this->shared, consumerId, producerId, this, body);
-
-						break;
-					}
-
-					case RTC::RtpParameters::Type::SIMULCAST:
-					{
-						// This may throw.
-						consumer = new RTC::SimulcastConsumer(this->shared, consumerId, producerId, this, body);
-
-						break;
-					}
-
-					case RTC::RtpParameters::Type::SVC:
-					{
-						// This may throw.
-						consumer = new RTC::SvcConsumer(this->shared, consumerId, producerId, this, body);
-
-						break;
-					}
-
-					case RTC::RtpParameters::Type::PIPE:
-					{
-						// This may throw.
-						consumer = new RTC::PipeConsumer(this->shared, consumerId, producerId, this, body);
-
-						break;
-					}
-				}
+				// This may throw.
+				auto* consumer = new RTC::Consumer(this->shared, consumerId, producerId, this, body);
 
 				// Notify the listener.
 				// This may throw if no Producer is found.
@@ -1129,7 +961,7 @@ namespace RTC
 					};
 
 					this->senderBwe = std::make_shared<RTC::SenderBandwidthEstimator>(
-					  this, this->initialAvailableOutgoingBitrate);
+					  this, this->shared, this->initialAvailableOutgoingBitrate);
 
 					if (IsConnected())
 					{
@@ -1156,10 +988,7 @@ namespace RTC
 			case Channel::ChannelRequest::Method::TRANSPORT_PRODUCE_DATA:
 			{
 				// Early check. The Transport must support SCTP or be direct.
-				if (
-				  ((Settings::configuration.useBuiltInSctpStack && !this->sctpAssociation) ||
-				   (!Settings::configuration.useBuiltInSctpStack && !this->oldSctpAssociation)) &&
-				  !this->direct)
+				if (!this->sctpAssociation && !this->direct)
 				{
 					MS_THROW_ERROR("SCTP not enabled and not a direct Transport");
 				}
@@ -1172,17 +1001,15 @@ namespace RTC
 				CheckNoDataProducer(dataProducerId);
 
 				// This may throw.
-				auto* dataProducer =
-				  new RTC::DataProducer(this->shared, dataProducerId, this->maxMessageSize, this, body);
+				auto* dataProducer = new RTC::DataProducer(
+				  this->shared, dataProducerId, this->maxReceiveMessageSize, this, body);
 
 				// Verify the type of the DataProducer.
 				switch (dataProducer->GetType())
 				{
 					case RTC::DataProducer::Type::SCTP:
 					{
-						if (
-						  (Settings::configuration.useBuiltInSctpStack && !this->sctpAssociation) ||
-						  (!Settings::configuration.useBuiltInSctpStack && !this->oldSctpAssociation))
+						if (!this->sctpAssociation)
 						{
 							delete dataProducer;
 
@@ -1255,15 +1082,7 @@ namespace RTC
 				if (dataProducer->GetType() == RTC::DataProducer::Type::SCTP)
 				{
 					// Tell to the SCTP association.
-					if (Settings::configuration.useBuiltInSctpStack)
-					{
-						this->sctpAssociation->MayConnect();
-					}
-					// TODO: Remove once we only use built-in SCTP stack.
-					else
-					{
-						this->oldSctpAssociation->HandleDataProducer(dataProducer);
-					}
+					this->sctpAssociation->MayConnect();
 				}
 
 				break;
@@ -1272,10 +1091,7 @@ namespace RTC
 			case Channel::ChannelRequest::Method::TRANSPORT_CONSUME_DATA:
 			{
 				// Early check. The Transport must support SCTP or be direct.
-				if (
-				  ((Settings::configuration.useBuiltInSctpStack && !this->sctpAssociation) ||
-				   (!Settings::configuration.useBuiltInSctpStack && !this->oldSctpAssociation)) &&
-				  !this->direct)
+				if (!this->sctpAssociation && !this->direct)
 				{
 					MS_THROW_ERROR("SCTP not enabled and not a direct Transport");
 				}
@@ -1290,22 +1106,32 @@ namespace RTC
 
 				// This may throw.
 				auto* dataConsumer = new RTC::DataConsumer(
-				  this->shared, dataConsumerId, dataProducerId, this, body, this->maxMessageSize);
+				  this->shared, dataConsumerId, dataProducerId, this, body, this->maxSendMessageSize);
 
 				// Verify the type of the DataConsumer.
 				switch (dataConsumer->GetType())
 				{
 					case RTC::DataConsumer::Type::SCTP:
 					{
-						if (
-						  (Settings::configuration.useBuiltInSctpStack && !this->sctpAssociation) ||
-						  (!Settings::configuration.useBuiltInSctpStack && !this->oldSctpAssociation))
+						if (!this->sctpAssociation)
 						{
 							delete dataConsumer;
 
 							MS_THROW_TYPE_ERROR(
 							  "cannot create a DataConsumer of type 'sctp', SCTP not enabled in this Transport");
 							;
+						}
+
+						try
+						{
+							// This may throw.
+							CheckNoSctpDataConsumer(dataConsumer->GetSctpStreamParameters().streamId);
+						}
+						catch (const MediaSoupError& error)
+						{
+							delete dataConsumer;
+
+							throw;
 						}
 
 						break;
@@ -1342,6 +1168,12 @@ namespace RTC
 				// Insert into the maps.
 				this->mapDataConsumers[dataConsumerId] = dataConsumer;
 
+				if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
+				{
+					this->mapSctpStreamIdDataConsumers[dataConsumer->GetSctpStreamParameters().streamId] =
+					  dataConsumer;
+				}
+
 				MS_DEBUG_DEV(
 				  "DataConsumer created [dataConsumerId:%s, dataProducerId:%s]",
 				  dataConsumerId.c_str(),
@@ -1358,29 +1190,14 @@ namespace RTC
 
 				if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
 				{
-					if (Settings::configuration.useBuiltInSctpStack)
+					if (this->sctpAssociation->GetAssociationState() == RTC::SCTP::Types::AssociationState::CONNECTED)
 					{
-						if (this->sctpAssociation->GetAssociationState() == RTC::SCTP::Types::AssociationState::CONNECTED)
-						{
-							// Tell to the DataConsumer.
-							dataConsumer->SctpAssociationConnected();
-						}
-
-						// Tell to the SCTP association.
-						this->sctpAssociation->MayConnect();
+						// Tell to the DataConsumer.
+						dataConsumer->SctpAssociationConnected();
 					}
-					// TODO: Remove once we only use built-in SCTP stack.
-					else
-					{
-						if (this->oldSctpAssociation->GetState() == RTC::SctpAssociation::SctpState::CONNECTED)
-						{
-							// Tell to the DataConsumer.
-							dataConsumer->SctpAssociationConnected();
-						}
 
-						// Tell to the SCTP association.
-						this->oldSctpAssociation->HandleDataConsumer(dataConsumer);
-					}
+					// Tell to the SCTP association.
+					this->sctpAssociation->MayConnect();
 				}
 
 				break;
@@ -1425,7 +1242,7 @@ namespace RTC
 				const auto* body = request->data->body_as<FBS::Transport::CloseProducerRequest>();
 
 				// This may throw.
-				RTC::Producer* producer = GetProducerById(body->producerId()->str());
+				RTC::Producer* producer = AssertAndGetProducerById(body->producerId()->str());
 
 				// Remove it from the RtpListener.
 				this->rtpListener.RemoveProducer(producer);
@@ -1464,7 +1281,7 @@ namespace RTC
 				const auto* body = request->data->body_as<FBS::Transport::CloseConsumerRequest>();
 
 				// This may throw.
-				RTC::Consumer* consumer = GetConsumerById(body->consumerId()->str());
+				RTC::Consumer* consumer = AssertAndGetConsumerById(body->consumerId()->str());
 
 				// Remove it from the maps.
 				this->mapConsumers.erase(consumer->id);
@@ -1507,10 +1324,7 @@ namespace RTC
 
 			case Channel::ChannelRequest::Method::TRANSPORT_CLOSE_DATAPRODUCER:
 			{
-				if (
-				  ((Settings::configuration.useBuiltInSctpStack && !this->sctpAssociation) ||
-				   (!Settings::configuration.useBuiltInSctpStack && !this->oldSctpAssociation)) &&
-				  !this->direct)
+				if (!this->sctpAssociation && !this->direct)
 				{
 					MS_THROW_ERROR("cannot close DataProducer, SCTP not enabled and not a direct Transport");
 				}
@@ -1518,7 +1332,7 @@ namespace RTC
 				const auto* body = request->data->body_as<FBS::Transport::CloseDataProducerRequest>();
 
 				// This may throw.
-				RTC::DataProducer* dataProducer = GetDataProducerById(body->dataProducerId()->str());
+				RTC::DataProducer* dataProducer = AssertAndGetDataProducerById(body->dataProducerId()->str());
 
 				if (dataProducer->GetType() == RTC::DataProducer::Type::SCTP)
 				{
@@ -1529,24 +1343,23 @@ namespace RTC
 				// Remove it from the map.
 				this->mapDataProducers.erase(dataProducer->id);
 
+				// https://datatracker.ietf.org/doc/html/rfc8831#section-6.7
+				//
+				// "Closing of a data channel MUST be signaled by resetting the corresponding
+				// outgoing streams [RFC6525]. This means that if one side decides to close
+				// the data channel, it resets the corresponding outgoing stream. When the
+				// peer sees that an incoming stream was reset, it also resets its
+				// corresponding outgoing stream."
+				if (this->sctpAssociation && this->sctpAssociation->IsDataChannel())
+				{
+					this->sctpAssociation->ResetStreams(
+					  std::array<uint16_t, 1>{ dataProducer->GetSctpStreamParameters().streamId });
+				}
+
 				// Notify the listener.
 				this->listener->OnTransportDataProducerClosed(this, dataProducer);
 
 				MS_DEBUG_DEV("DataProducer closed [dataProducerId:%s]", dataProducer->id.c_str());
-
-				if (dataProducer->GetType() == RTC::DataProducer::Type::SCTP)
-				{
-					if (Settings::configuration.useBuiltInSctpStack)
-					{
-						// TODO: SCTP
-					}
-					// TODO: Remove once we only use built-in SCTP stack.
-					else
-					{
-						// Tell the SctpAssociation so it can reset the SCTP stream.
-						this->oldSctpAssociation->DataProducerClosed(dataProducer);
-					}
-				}
 
 				// Delete it.
 				delete dataProducer;
@@ -1558,10 +1371,7 @@ namespace RTC
 
 			case Channel::ChannelRequest::Method::TRANSPORT_CLOSE_DATACONSUMER:
 			{
-				if (
-				  ((Settings::configuration.useBuiltInSctpStack && !this->sctpAssociation) ||
-				   (!Settings::configuration.useBuiltInSctpStack && !this->oldSctpAssociation)) &&
-				  !this->direct)
+				if (!this->sctpAssociation && !this->direct)
 				{
 					MS_THROW_ERROR("cannot close DataConsumer, SCTP not enabled and not a direct Transport");
 				}
@@ -1569,29 +1379,26 @@ namespace RTC
 				const auto* body = request->data->body_as<FBS::Transport::CloseDataConsumerRequest>();
 
 				// This may throw.
-				RTC::DataConsumer* dataConsumer = GetDataConsumerById(body->dataConsumerId()->str());
+				RTC::DataConsumer* dataConsumer = AssertAndGetDataConsumerById(body->dataConsumerId()->str());
 
 				// Remove it from the maps.
 				this->mapDataConsumers.erase(dataConsumer->id);
+
+				if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
+				{
+					this->mapSctpStreamIdDataConsumers.erase(dataConsumer->GetSctpStreamParameters().streamId);
+				}
+
+				if (this->sctpAssociation)
+				{
+					this->sctpAssociation->ResetStreams(
+					  std::array<uint16_t, 1>{ dataConsumer->GetSctpStreamParameters().streamId });
+				}
 
 				// Notify the listener.
 				this->listener->OnTransportDataConsumerClosed(this, dataConsumer);
 
 				MS_DEBUG_DEV("DataConsumer closed [dataConsumerId:%s]", dataConsumer->id.c_str());
-
-				if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
-				{
-					if (Settings::configuration.useBuiltInSctpStack)
-					{
-						// TODO: SCTP
-					}
-					// TODO: Remove once we only use built-in SCTP stack.
-					else
-					{
-						// Tell the SctpAssociation so it can reset the SCTP stream.
-						this->oldSctpAssociation->DataConsumerClosed(dataConsumer);
-					}
-				}
 
 				// Delete it.
 				delete dataConsumer;
@@ -1631,23 +1438,20 @@ namespace RTC
 		}
 	}
 
-	void Transport::Destroying()
+	void Transport::SetDestroying()
 	{
 		MS_TRACE();
 
-		if (Settings::configuration.useBuiltInSctpStack)
+		if (this->sctpAssociation)
 		{
-			if (this->sctpAssociation)
-			{
-				// NOTE: We don't invoke `Shutdown()` but `Close()` in the SCTP Association
-				// because at this point we are closing everything and we won't have any
-				// chance to complete the SCTP SHUTDOWN + SHUTDOWN_ACK + SHUTDOWN_COMPLETE
-				// dance, so we invoke `Close()` which just sends a SCTP ABORT.
-				this->sctpAssociation->Close();
-			}
+			// NOTE: We don't invoke `Shutdown()` but `Close()` in the SCTP association
+			// because at this point we are closing everything and we won't have any
+			// chance to complete the SCTP SHUTDOWN + SHUTDOWN_ACK + SHUTDOWN_COMPLETE
+			// dance, so we invoke `Close()` which just sends a SCTP ABORT.
+			this->sctpAssociation->Close();
 		}
 
-		this->destroying = true;
+		this->isDestroying = true;
 	}
 
 	void Transport::Connected()
@@ -1671,14 +1475,9 @@ namespace RTC
 		}
 
 		// Tell the SctpAssociation.
-		if (Settings::configuration.useBuiltInSctpStack && this->sctpAssociation)
+		if (this->sctpAssociation)
 		{
 			this->sctpAssociation->MayConnect();
-		}
-		// TODO: Remove once we only use built-in SCTP stack.
-		else if (!Settings::configuration.useBuiltInSctpStack && this->oldSctpAssociation)
-		{
-			this->oldSctpAssociation->TransportConnected();
 		}
 
 		// Start the RTCP timer.
@@ -1725,13 +1524,6 @@ namespace RTC
 			dataConsumer->TransportDisconnected();
 		}
 
-		// TODO: Remove once we only use built-in SCTP stack.
-		// Tell the SctpAssociation.
-		if (!Settings::configuration.useBuiltInSctpStack && this->oldSctpAssociation)
-		{
-			this->oldSctpAssociation->TransportDisconnected();
-		}
-
 		// Stop the RTCP timer.
 		this->rtcpTimer->Stop();
 
@@ -1768,7 +1560,7 @@ namespace RTC
 		// them.
 		packet->AssignExtensionIds(this->recvRtpHeaderExtensionIds);
 
-		auto nowMs = DepLibUV::GetTimeMs();
+		auto nowMs = this->shared->GetTimeMs();
 
 		// Feed the TransportCongestionControlServer.
 		if (this->tccServer)
@@ -1856,9 +1648,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		if (
-		  (Settings::configuration.useBuiltInSctpStack && !this->sctpAssociation) ||
-		  (!Settings::configuration.useBuiltInSctpStack && !this->oldSctpAssociation))
+		if (!this->sctpAssociation)
 		{
 			MS_DEBUG_TAG(sctp, "ignoring SCTP packet (SCTP not enabled)");
 
@@ -1866,14 +1656,97 @@ namespace RTC
 		}
 
 		// Pass it to the SctpAssociation.
-		if (Settings::configuration.useBuiltInSctpStack)
+		this->sctpAssociation->ReceiveSctpData(data, len);
+	}
+
+	void Transport::SendSctpMessage(
+	  RTC::DataConsumer* dataConsumer, RTC::SCTP::Message message, onQueuedCallback* cb)
+	{
+		MS_TRACE();
+
+		// NOTE: The `message` must already have its `streamId` pointing to the same
+		// as in the `dataConsumer` if its type is "sctp", or 0 otherwise.
+
+		if (!this->sctpAssociation)
 		{
-			this->sctpAssociation->ReceiveSctpData(data, len);
+			MS_THROW_ERROR("SCTP not enabled");
+
+			if (cb)
+			{
+				(*cb)(false, false);
+				delete cb;
+			}
+
+			return;
 		}
-		else
+
+		const auto& sctpStreamParameters = dataConsumer->GetSctpStreamParameters();
+		const RTC::SCTP::SendMessageOptions sendMessageOptions{
+			.unordered          = !sctpStreamParameters.ordered,
+			.lifetimeMs         = sctpStreamParameters.ordered
+			                        ? std::nullopt
+			                        : std::optional<uint64_t>(sctpStreamParameters.maxPacketLifeTime),
+			.maxRetransmissions = sctpStreamParameters.ordered
+			                        ? std::nullopt
+			                        : std::optional<uint64_t>(sctpStreamParameters.maxRetransmits),
+			// NOTE: We don't set `lifecyleId` in production.
+		};
+
+		const auto sendStatus =
+		  this->sctpAssociation->SendMessage(std::move(message), sendMessageOptions);
+
+		switch (sendStatus)
 		{
-			this->oldSctpAssociation->ProcessSctpData(data, len);
+			case RTC::SCTP::Types::SendMessageStatus::SUCCESS:
+			{
+				if (cb)
+				{
+					(*cb)(true, /*sctpSendBufferFull*/ false);
+				}
+
+				break;
+			}
+
+			case RTC::SCTP::Types::SendMessageStatus::ERROR_RESOURCE_EXHAUSTION:
+			{
+				const auto sendStatusStringView = RTC::SCTP::Types::SendMessageStatusToString(sendStatus);
+
+				MS_WARN_TAG(
+				  sctp,
+				  "failed to send SCTP message [sendStatus:%.*s]",
+				  static_cast<int>(sendStatusStringView.size()),
+				  sendStatusStringView.data());
+
+				if (cb)
+				{
+					(*cb)(false, /*sctpSendBufferFull*/ true);
+				}
+
+				dataConsumer->SctpSendBufferFull();
+
+				break;
+			}
+
+			default:
+			{
+				const auto sendStatusStringView = RTC::SCTP::Types::SendMessageStatusToString(sendStatus);
+
+				MS_WARN_TAG(
+				  sctp,
+				  "failed to send SCTP message [sendStatus:%.*s]",
+				  static_cast<int>(sendStatusStringView.size()),
+				  sendStatusStringView.data());
+
+				if (cb)
+				{
+					(*cb)(false, /*sctpSendBufferFull*/ false);
+				}
+
+				break;
+			}
 		}
+
+		delete cb;
 	}
 
 	void Transport::CheckNoDataProducer(const std::string& dataProducerId) const
@@ -1894,7 +1767,17 @@ namespace RTC
 		}
 	}
 
-	RTC::Producer* Transport::GetProducerById(const std::string& producerId) const
+	void Transport::CheckNoSctpDataConsumer(uint16_t streamId) const
+	{
+		MS_TRACE();
+
+		if (this->mapSctpStreamIdDataConsumers.find(streamId) != this->mapSctpStreamIdDataConsumers.end())
+		{
+			MS_THROW_ERROR("an SCTP DataConsumer with same streamId %" PRIu16 " already exists", streamId);
+		}
+	}
+
+	RTC::Producer* Transport::AssertAndGetProducerById(const std::string& producerId) const
 	{
 		MS_TRACE();
 
@@ -1908,7 +1791,7 @@ namespace RTC
 		return it->second;
 	}
 
-	RTC::Consumer* Transport::GetConsumerById(const std::string& consumerId) const
+	RTC::Consumer* Transport::AssertAndGetConsumerById(const std::string& consumerId) const
 	{
 		MS_TRACE();
 
@@ -1954,7 +1837,7 @@ namespace RTC
 		return consumer;
 	}
 
-	RTC::DataProducer* Transport::GetDataProducerById(const std::string& dataProducerId) const
+	RTC::DataProducer* Transport::AssertAndGetDataProducerById(const std::string& dataProducerId) const
 	{
 		MS_TRACE();
 
@@ -1968,7 +1851,7 @@ namespace RTC
 		return it->second;
 	}
 
-	RTC::DataConsumer* Transport::GetDataConsumerById(const std::string& dataConsumerId) const
+	RTC::DataConsumer* Transport::AssertAndGetDataConsumerById(const std::string& dataConsumerId) const
 	{
 		MS_TRACE();
 
@@ -1977,6 +1860,20 @@ namespace RTC
 		if (it == this->mapDataConsumers.end())
 		{
 			MS_THROW_ERROR("DataConsumer not found");
+		}
+
+		return it->second;
+	}
+
+	RTC::DataConsumer* Transport::GetSctpDataConsumerByStreamId(uint16_t streamId) const
+	{
+		MS_TRACE();
+
+		auto it = this->mapSctpStreamIdDataConsumers.find(streamId);
+
+		if (it == this->mapSctpStreamIdDataConsumers.end())
+		{
+			MS_THROW_ERROR("SCTP DataConsumer with streamId %" PRIu16 " not found", streamId);
 		}
 
 		return it->second;
@@ -2039,7 +1936,7 @@ namespace RTC
 						}
 					}
 
-					this->tccClient->ReceiveRtcpReceiverReport(rr, rtt, DepLibUV::GetTimeMsInt64());
+					this->tccClient->ReceiveRtcpReceiverReport(rr, rtt, this->shared->GetTimeMsInt64());
 				}
 
 				break;
@@ -2063,7 +1960,7 @@ namespace RTC
 						{
 							MS_DEBUG_TAG(
 							  rtcp,
-							  "no Consumer found for received PLI Feedback packet "
+							  "no Consumer found for received PLI feedback packet "
 							  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
 							  feedback->GetSenderSsrc(),
 							  feedback->GetMediaSsrc());
@@ -2102,7 +1999,7 @@ namespace RTC
 							{
 								MS_DEBUG_TAG(
 								  rtcp,
-								  "no Consumer found for received FIR Feedback packet "
+								  "no Consumer found for received FIR feedback packet "
 								  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 ", item ssrc:%" PRIu32 "]",
 								  feedback->GetSenderSsrc(),
 								  feedback->GetMediaSsrc(),
@@ -2146,7 +2043,7 @@ namespace RTC
 						{
 							MS_DEBUG_TAG(
 							  rtcp,
-							  "ignoring unsupported %s Feedback PS AFB packet "
+							  "ignoring unsupported %s feedback PS AFB packet "
 							  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
 							  RTC::RTCP::FeedbackPsPacket::MessageTypeToString(feedback->GetMessageType()).c_str(),
 							  feedback->GetSenderSsrc(),
@@ -2160,7 +2057,7 @@ namespace RTC
 					{
 						MS_DEBUG_TAG(
 						  rtcp,
-						  "ignoring unsupported %s Feedback packet "
+						  "ignoring unsupported %s feedback packet "
 						  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
 						  RTC::RTCP::FeedbackPsPacket::MessageTypeToString(feedback->GetMessageType()).c_str(),
 						  feedback->GetSenderSsrc(),
@@ -2185,7 +2082,7 @@ namespace RTC
 				{
 					MS_DEBUG_TAG(
 					  rtcp,
-					  "no Consumer found for received Feedback packet "
+					  "no Consumer found for received feedback packet "
 					  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
 					  feedback->GetSenderSsrc(),
 					  feedback->GetMediaSsrc());
@@ -2201,7 +2098,7 @@ namespace RTC
 						{
 							MS_DEBUG_TAG(
 							  rtcp,
-							  "no Consumer found for received NACK Feedback packet "
+							  "no Consumer found for received NACK feedback packet "
 							  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
 							  feedback->GetSenderSsrc(),
 							  feedback->GetMediaSsrc());
@@ -2240,7 +2137,7 @@ namespace RTC
 					{
 						MS_DEBUG_TAG(
 						  rtcp,
-						  "ignoring unsupported %s Feedback packet "
+						  "ignoring unsupported %s feedback packet "
 						  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
 						  RTC::RTCP::FeedbackRtpPacket::MessageTypeToString(feedback->GetMessageType()).c_str(),
 						  feedback->GetSenderSsrc(),
@@ -2557,7 +2454,7 @@ namespace RTC
 		auto notification = FBS::Transport::CreateTraceNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::Transport::TraceEventType::PROBATION,
-		  DepLibUV::GetTimeMs(),
+		  this->shared->GetTimeMs(),
 		  FBS::Common::TraceDirection::DIRECTION_OUT);
 
 		this->shared->GetChannelNotifier()->Emit(
@@ -2593,7 +2490,7 @@ namespace RTC
 		auto notification = FBS::Transport::CreateTraceNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::Transport::TraceEventType::BWE,
-		  DepLibUV::GetTimeMs(),
+		  this->shared->GetTimeMs(),
 		  FBS::Common::TraceDirection::DIRECTION_OUT,
 		  FBS::Transport::TraceInfo::BweTraceInfo,
 		  traceInfo.Union());
@@ -2676,7 +2573,7 @@ namespace RTC
 #endif
 
 		// Update abs-send-time if present.
-		packet->UpdateAbsSendTime(DepLibUV::GetTimeMs());
+		packet->UpdateAbsSendTime(this->shared->GetTimeMs());
 
 		// Update transport wide sequence number if present.
 		if (
@@ -2704,16 +2601,18 @@ namespace RTC
 			// send callbacks.
 			const std::weak_ptr<RTC::TransportCongestionControlClient> tccClientWeakPtr(this->tccClient);
 
+			auto* shared = this->shared;
+
 #ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
 			std::weak_ptr<RTC::SenderBandwidthEstimator> senderBweWeakPtr(this->senderBwe);
 			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
 
 			sentInfo.wideSeq     = this->transportWideCcSeq;
 			sentInfo.size        = packet->GetLength();
-			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
+			sentInfo.sendingAtMs = this->shared->GetTimeMs();
 
-			auto* cb = new onSendCallback(
-			  [tccClientWeakPtr, packetInfo, senderBweWeakPtr, sentInfo](bool sent)
+			const auto* cb = new onSendCallback(
+			  [tccClientWeakPtr, shared, packetInfo, senderBweWeakPtr, sentInfo](bool sent) mutable
 			  {
 				  if (sent)
 				  {
@@ -2721,14 +2620,14 @@ namespace RTC
 
 					  if (tccClient)
 					  {
-						  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
+						  tccClient->PacketSent(packetInfo, shared->GetTimeMsInt64());
 					  }
 
 					  auto senderBwe = senderBweWeakPtr.lock();
 
 					  if (senderBwe)
 					  {
-						  sentInfo.sentAtMs = DepLibUV::GetTimeMs();
+						  sentInfo.sentAtMs = shared->GetTimeMs();
 						  senderBwe->RtpPacketSent(sentInfo);
 					  }
 				  }
@@ -2737,7 +2636,7 @@ namespace RTC
 			SendRtpPacket(consumer, packet, cb);
 #else
 			const auto* cb = new onSendCallback(
-			  [tccClientWeakPtr, packetInfo](bool sent)
+			  [tccClientWeakPtr, shared, packetInfo](bool sent)
 			  {
 				  if (sent)
 				  {
@@ -2745,7 +2644,7 @@ namespace RTC
 
 					  if (tccClient)
 					  {
-						  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
+						  tccClient->PacketSent(packetInfo, shared->GetTimeMsInt64());
 					  }
 				  }
 			  });
@@ -2766,7 +2665,7 @@ namespace RTC
 		MS_TRACE();
 
 		// Update abs-send-time if present.
-		packet->UpdateAbsSendTime(DepLibUV::GetTimeMs());
+		packet->UpdateAbsSendTime(this->shared->GetTimeMs());
 
 		// Update transport wide sequence number if present.
 		if (
@@ -2789,16 +2688,18 @@ namespace RTC
 
 			const std::weak_ptr<RTC::TransportCongestionControlClient> tccClientWeakPtr(this->tccClient);
 
+			auto* shared = this->shared;
+
 #ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
 			std::weak_ptr<RTC::SenderBandwidthEstimator> senderBweWeakPtr = this->senderBwe;
 			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
 
 			sentInfo.wideSeq     = this->transportWideCcSeq;
 			sentInfo.size        = packet->GetLength();
-			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
+			sentInfo.sendingAtMs = this->shared->GetTimeMs();
 
-			auto* cb = new onSendCallback(
-			  [tccClientWeakPtr, packetInfo, senderBweWeakPtr, sentInfo](bool sent)
+			const auto* cb = new onSendCallback(
+			  [tccClientWeakPtr, shared, packetInfo, senderBweWeakPtr, sentInfo](bool sent) mutable
 			  {
 				  if (sent)
 				  {
@@ -2806,14 +2707,14 @@ namespace RTC
 
 					  if (tccClient)
 					  {
-						  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
+						  tccClient->PacketSent(packetInfo, shared->GetTimeMsInt64());
 					  }
 
 					  auto senderBwe = senderBweWeakPtr.lock();
 
 					  if (senderBwe)
 					  {
-						  sentInfo.sentAtMs = DepLibUV::GetTimeMs();
+						  sentInfo.sentAtMs = shared->GetTimeMs();
 						  senderBwe->RtpPacketSent(sentInfo);
 					  }
 				  }
@@ -2822,7 +2723,7 @@ namespace RTC
 			SendRtpPacket(consumer, packet, cb);
 #else
 			const auto* cb = new onSendCallback(
-			  [tccClientWeakPtr, packetInfo](bool sent)
+			  [tccClientWeakPtr, shared, packetInfo](bool sent)
 			  {
 				  if (sent)
 				  {
@@ -2830,7 +2731,7 @@ namespace RTC
 
 					  if (tccClient)
 					  {
-						  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
+						  tccClient->PacketSent(packetInfo, shared->GetTimeMsInt64());
 					  }
 				  }
 			  });
@@ -2908,6 +2809,8 @@ namespace RTC
 		// Notify the listener.
 		this->listener->OnTransportConsumerProducerClosed(this, consumer);
 
+		MS_DEBUG_DEV("Consumer closed [consumerId:%s]", consumer->id.c_str());
+
 		// Delete it.
 		delete consumer;
 
@@ -2920,16 +2823,14 @@ namespace RTC
 
 	void Transport::OnDataProducerMessageReceived(
 	  RTC::DataProducer* dataProducer,
-	  const uint8_t* msg,
-	  size_t len,
-	  uint32_t ppid,
+	  RTC::SCTP::Message message,
 	  std::vector<uint16_t>& subchannels,
 	  std::optional<uint16_t> requiredSubchannel)
 	{
 		MS_TRACE();
 
 		this->listener->OnTransportDataProducerMessageReceived(
-		  this, dataProducer, msg, len, ppid, subchannels, requiredSubchannel);
+		  this, dataProducer, std::move(message), subchannels, requiredSubchannel);
 	}
 
 	void Transport::OnDataProducerPaused(RTC::DataProducer* dataProducer)
@@ -2947,35 +2848,56 @@ namespace RTC
 	}
 
 	void Transport::OnDataConsumerSendMessage(
-	  RTC::DataConsumer* dataConsumer, const uint8_t* msg, size_t len, uint32_t ppid, onQueuedCallback* cb)
+	  RTC::DataConsumer* dataConsumer, RTC::SCTP::Message message, onQueuedCallback* cb)
 	{
 		MS_TRACE();
 
-		SendMessage(dataConsumer, msg, len, ppid, cb);
+		SendMessage(dataConsumer, std::move(message), cb);
 	}
 
 	void Transport::OnDataConsumerNeedBufferedAmount(
-	  RTC::DataConsumer* /*dataConsumer*/, uint32_t& bufferedAmount)
+	  const RTC::DataConsumer* dataConsumer, uint32_t& bufferedAmount) const
 	{
 		MS_TRACE();
 
-		if (Settings::configuration.useBuiltInSctpStack && this->sctpAssociation)
+		if (this->sctpAssociation)
 		{
-			// TODO: SCTP
-			// TODO: Let's see how to obtain `streamId` argument from the DataConsumer.
-			// bufferedAmount = this->sctpAssociation->GetStreamBufferedAmount(streamId);
-		}
-		// TODO: Remove once we only use built-in SCTP stack.
-		else if (!Settings::configuration.useBuiltInSctpStack && this->oldSctpAssociation)
-		{
-			// NOTE: The underlaying SCTP association uses a common send buffer for all
-			// data consumers, hence the value given by this method indicates the data
-			// buffered for all data consumers in the transport.
-			bufferedAmount = this->oldSctpAssociation->GetSctpBufferedAmount();
+			bufferedAmount = static_cast<uint32_t>(this->sctpAssociation->GetStreamBufferedAmount(
+			  dataConsumer->GetSctpStreamParameters().streamId));
 		}
 		else
 		{
 			bufferedAmount = 0;
+		}
+	}
+
+	void Transport::OnDataConsumerNeedBufferedAmountLowThreshold(
+	  const RTC::DataConsumer* dataConsumer, uint32_t& bufferedAmountLowThreshold) const
+	{
+		if (this->sctpAssociation)
+		{
+			bufferedAmountLowThreshold =
+			  static_cast<uint32_t>(this->sctpAssociation->GetStreamBufferedAmountLowThreshold(
+			    dataConsumer->GetSctpStreamParameters().streamId));
+		}
+		else
+		{
+			bufferedAmountLowThreshold = 0;
+		}
+	}
+
+	void Transport::OnDataConsumerSetBufferedAmountLowThreshold(
+	  const RTC::DataConsumer* dataConsumer, uint32_t bytes) const
+	{
+		MS_TRACE();
+
+		MS_ASSERT(
+		  dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP, "DataConsumer must have type SCTP");
+
+		if (this->sctpAssociation)
+		{
+			this->sctpAssociation->SetStreamBufferedAmountLowThreshold(
+			  dataConsumer->GetSctpStreamParameters().streamId, static_cast<size_t>(bytes));
 		}
 	}
 
@@ -2986,25 +2908,21 @@ namespace RTC
 		// Remove it from the maps.
 		this->mapDataConsumers.erase(dataConsumer->id);
 
+		if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
+		{
+			this->mapSctpStreamIdDataConsumers.erase(dataConsumer->GetSctpStreamParameters().streamId);
+		}
+
+		if (this->sctpAssociation)
+		{
+			this->sctpAssociation->ResetStreams(
+			  std::array<uint16_t, 1>{ dataConsumer->GetSctpStreamParameters().streamId });
+		}
+
 		// Notify the listener.
 		this->listener->OnTransportDataConsumerDataProducerClosed(this, dataConsumer);
 
-		if (Settings::configuration.useBuiltInSctpStack)
-		{
-			if (this->sctpAssociation && dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
-			{
-				// TODO: SCTP
-			}
-		}
-		// TODO: Remove once we only use built-in SCTP stack.
-		else
-		{
-			if (this->oldSctpAssociation && dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
-			{
-				// Tell the SctpAssociation so it can reset the SCTP stream.
-				this->oldSctpAssociation->DataConsumerClosed(dataConsumer);
-			}
-		}
+		MS_DEBUG_DEV("DataConsumer closed [dataConsumerId:%s]", dataConsumer->id.c_str());
 
 		// Delete it.
 		delete dataConsumer;
@@ -3017,15 +2935,15 @@ namespace RTC
 		// Ignore if destroying.
 		// NOTE: This is because when the child class (i.e. WebRtcTransport) is deleted,
 		// its destructor is called first and then the parent Transport's destructor,
-		// and we would end here calling SendSctpData() which is an abstract method.
-		if (this->destroying)
+		// and we would end here calling SendData() which is an abstract method.
+		if (this->isDestroying)
 		{
 			MS_WARN_DEV("ignoring sending data because Transport is being destroying");
 
 			return false;
 		}
 
-		return SendSctpData(data, len);
+		return SendData(data, len);
 	}
 
 	void Transport::OnAssociationConnecting()
@@ -3033,7 +2951,7 @@ namespace RTC
 		MS_TRACE();
 
 		// Notify the Node Transport.
-		auto sctpStateChangeOffset = FBS::Transport::CreateSctpStateChangeNotification(
+		auto sctpStateChangeNotification = FBS::Transport::CreateSctpStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::SctpAssociation::SctpState::CONNECTING);
 
@@ -3041,7 +2959,7 @@ namespace RTC
 		  this->id,
 		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
 		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
-		  sctpStateChangeOffset);
+		  sctpStateChangeNotification);
 	}
 
 	void Transport::OnAssociationConnected()
@@ -3059,8 +2977,26 @@ namespace RTC
 			}
 		}
 
-		// Notify the Node Transport.
-		auto sctpStateChangeOffset = FBS::Transport::CreateSctpStateChangeNotification(
+		// Notify the upper layer.
+
+		// First tell it about the SCTP negotiated capabilities.
+		auto sctpNegotiatedCapabilitiesOffset = FBS::SctpAssociation::CreateSctpNegotiatedCapabilities(
+		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
+		  this->sctpAssociation->GetNegotiatedMaxOutboundStreams(),
+		  this->sctpAssociation->GetNegotiatedMaxInboundStreams());
+
+		auto sctpNegotiatedCapabilitiesNotification =
+		  FBS::Transport::CreateSctpNegotiatedCapabilitiesNotification(
+		    this->shared->GetChannelNotifier()->GetBufferBuilder(), sctpNegotiatedCapabilitiesOffset);
+
+		this->shared->GetChannelNotifier()->Emit(
+		  this->id,
+		  FBS::Notification::Event::TRANSPORT_SCTP_NEGOTIATED_CAPABILITIES,
+		  FBS::Notification::Body::Transport_SctpNegotiatedCapabilitiesNotification,
+		  sctpNegotiatedCapabilitiesNotification);
+
+		// Then announce "connected" SCTP state.
+		auto sctpStateChangeNotification = FBS::Transport::CreateSctpStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::SctpAssociation::SctpState::CONNECTED);
 
@@ -3068,17 +3004,41 @@ namespace RTC
 		  this->id,
 		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
 		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
-		  sctpStateChangeOffset);
+		  sctpStateChangeNotification);
 
-		// TODO: SCTP: REMOVE
-		MS_DUMP("---- SCTP Association connected, dump():");
+// For debugging purposes.
+#if MS_LOG_DEV_LEVEL == 3
+		MS_DUMP("--- SCTP association connected:");
 		this->sctpAssociation->Dump();
+#endif
 	}
 
-	void Transport::OnAssociationFailed(
-	  RTC::SCTP::Types::ErrorKind /*errorKind*/, std::string_view /*errorMessage*/)
+	void Transport::OnAssociationFailed(RTC::SCTP::Types::ErrorKind errorKind, std::string_view errorMessage)
 	{
 		MS_TRACE();
+
+		const auto errorKindStringView = RTC::SCTP::Types::ErrorKindToString(errorKind);
+
+		if (errorKind == RTC::SCTP::Types::ErrorKind::SUCCESS || errorKind == RTC::SCTP::Types::ErrorKind::PEER_REPORTED)
+		{
+			MS_DEBUG_TAG(
+			  sctp,
+			  "SCTP association failed [errorKind:%.*s, message:%.*s]",
+			  static_cast<int>(errorKindStringView.size()),
+			  errorKindStringView.data(),
+			  static_cast<int>(errorMessage.size()),
+			  errorMessage.data());
+		}
+		else
+		{
+			MS_WARN_TAG(
+			  sctp,
+			  "SCTP association failed [errorKind:%.*s, message:%.*s]",
+			  static_cast<int>(errorKindStringView.size()),
+			  errorKindStringView.data(),
+			  static_cast<int>(errorMessage.size()),
+			  errorMessage.data());
+		}
 
 		// Tell all DataConsumers.
 		for (auto& kv : this->mapDataConsumers)
@@ -3092,7 +3052,7 @@ namespace RTC
 		}
 
 		// Notify the Node Transport.
-		auto sctpStateChangeOffset = FBS::Transport::CreateSctpStateChangeNotification(
+		auto sctpStateChangeNotification = FBS::Transport::CreateSctpStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::SctpAssociation::SctpState::FAILED);
 
@@ -3100,13 +3060,35 @@ namespace RTC
 		  this->id,
 		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
 		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
-		  sctpStateChangeOffset);
+		  sctpStateChangeNotification);
 	}
 
-	void Transport::OnAssociationClosed(
-	  RTC::SCTP::Types::ErrorKind /*errorKind*/, std::string_view /*errorMessage*/)
+	void Transport::OnAssociationClosed(RTC::SCTP::Types::ErrorKind errorKind, std::string_view errorMessage)
 	{
 		MS_TRACE();
+
+		const auto errorKindStringView = RTC::SCTP::Types::ErrorKindToString(errorKind);
+
+		if (errorKind == RTC::SCTP::Types::ErrorKind::SUCCESS || errorKind == RTC::SCTP::Types::ErrorKind::PEER_REPORTED)
+		{
+			MS_DEBUG_TAG(
+			  sctp,
+			  "SCTP association closed [errorKind:%.*s, message:%.*s]",
+			  static_cast<int>(errorKindStringView.size()),
+			  errorKindStringView.data(),
+			  static_cast<int>(errorMessage.size()),
+			  errorMessage.data());
+		}
+		else
+		{
+			MS_WARN_TAG(
+			  sctp,
+			  "SCTP association closed [errorKind:%.*s, message:%.*s]",
+			  static_cast<int>(errorKindStringView.size()),
+			  errorKindStringView.data(),
+			  static_cast<int>(errorMessage.size()),
+			  errorMessage.data());
+		}
 
 		// Tell all DataConsumers.
 		for (auto& kv : this->mapDataConsumers)
@@ -3120,7 +3102,7 @@ namespace RTC
 		}
 
 		// Notify the Node Transport.
-		auto sctpStateChangeOffset = FBS::Transport::CreateSctpStateChangeNotification(
+		auto sctpStateChangeNotification = FBS::Transport::CreateSctpStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::SctpAssociation::SctpState::CLOSED);
 
@@ -3128,14 +3110,14 @@ namespace RTC
 		  this->id,
 		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
 		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
-		  sctpStateChangeOffset);
+		  sctpStateChangeNotification);
 	}
 
 	void Transport::OnAssociationRestarted()
 	{
 		MS_TRACE();
 
-		// TODO: SCTP
+		MS_DEBUG_TAG(sctp, "SCTP association restarted");
 	}
 
 	void Transport::OnAssociationError(RTC::SCTP::Types::ErrorKind errorKind, std::string_view errorMessage)
@@ -3146,54 +3128,149 @@ namespace RTC
 
 		MS_WARN_TAG(
 		  sctp,
-		  "SCTP Association error [kind:%.*s, message:%.*s]",
+		  "SCTP association error [errorKind:%.*s, message:%.*s]",
 		  static_cast<int>(errorKindStringView.size()),
 		  errorKindStringView.data(),
 		  static_cast<int>(errorMessage.size()),
 		  errorMessage.data());
 	}
 
-	void Transport::OnAssociationMessageReceived(RTC::SCTP::Message /*message*/)
+	void Transport::OnAssociationMessageReceived(RTC::SCTP::Message message)
 	{
 		MS_TRACE();
 
-		// TODO: SCTP
+		RTC::DataProducer* dataProducer = this->sctpListener.GetDataProducer(message.GetStreamId());
+
+		if (!dataProducer)
+		{
+			MS_WARN_TAG(
+			  sctp,
+			  "no suitable DataProducer for received SCTP message [streamId:%" PRIu16 "]",
+			  message.GetStreamId());
+
+			return;
+		}
+
+		// Pass the SCTP message to the corresponding DataProducer.
+		try
+		{
+			static thread_local std::vector<uint16_t> emptySubchannels;
+
+			dataProducer->ReceiveMessage(
+			  std::move(message), emptySubchannels, /*requiredSubchannel*/ std::nullopt);
+		}
+		catch (std::exception& error)
+		{
+			MS_WARN_TAG(
+			  sctp,
+			  "DataProducer::ReceiveMessage() failed for received SCTP message [streamId:%" PRIu16 "]: %s",
+			  message.GetStreamId(),
+			  error.what());
+		}
 	}
 
 	void Transport::OnAssociationStreamsResetPerformed(std::span<const uint16_t> /*outboundStreamIds*/)
 	{
 		MS_TRACE();
 
-		// TODO: SCTP
+		MS_DEBUG_DEV("SCTP association streams reset performed");
 	}
 
 	void Transport::OnAssociationStreamsResetFailed(
-	  std::span<const uint16_t> /*outboundStreamIds*/, std::string_view /*errorMessage*/)
+	  std::span<const uint16_t> /*outboundStreamIds*/, std::string_view errorMessage)
 	{
 		MS_TRACE();
 
-		// TODO: SCTP
+		MS_WARN_TAG(
+		  sctp,
+		  "SCTP association streams reset failed [message:%.*s]",
+		  static_cast<int>(errorMessage.size()),
+		  errorMessage.data());
 	}
 
-	void Transport::OnAssociationInboundStreamsReset(std::span<const uint16_t> /*inboundStreamIds*/)
+	void Transport::OnAssociationInboundStreamsReset(std::span<const uint16_t> inboundStreamIds)
 	{
 		MS_TRACE();
 
-		// TODO: SCTP
+		// https://datatracker.ietf.org/doc/html/rfc8831#section-6.7
+		//
+		// "Closing of a data channel MUST be signaled by resetting the corresponding
+		// outgoing streams [RFC6525]. This means that if one side decides to close
+		// the data channel, it resets the corresponding outgoing stream. When the
+		// peer sees that an incoming stream was reset, it also resets its
+		// corresponding outgoing stream."
+		if (this->sctpAssociation->IsDataChannel())
+		{
+			std::vector<RTC::DataConsumer*> dataConsumersToClose;
+			std::vector<uint16_t> streamsToReset;
+
+			for (const auto streamId : inboundStreamIds)
+			{
+				// Only reset the outgoing stream if there is a live DataConsumer
+				// using it. If the DataChannel was closed by the app, the DataConsumer
+				// will have already been closed and removed.
+				const auto it = this->mapSctpStreamIdDataConsumers.find(streamId);
+
+				if (it != this->mapSctpStreamIdDataConsumers.end())
+				{
+					auto* dataConsumer = it->second;
+
+					dataConsumersToClose.push_back(dataConsumer);
+					streamsToReset.push_back(streamId);
+				}
+			}
+
+			if (!dataConsumersToClose.empty())
+			{
+				this->sctpAssociation->ResetStreams(streamsToReset);
+
+				for (auto* dataConsumer : dataConsumersToClose)
+				{
+					// Remove it from the maps.
+					this->mapDataConsumers.erase(dataConsumer->id);
+
+					if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
+					{
+						this->mapSctpStreamIdDataConsumers.erase(dataConsumer->GetSctpStreamParameters().streamId);
+					}
+
+					// Notify the listener.
+					this->listener->OnTransportDataConsumerClosed(this, dataConsumer);
+
+					MS_DEBUG_DEV(
+					  "SCTP DataConsumer closed via SCTP inbound stream reset [dataConsumerId:%s, streamId:%" PRIu16
+					  "]",
+					  dataConsumer->id.c_str(),
+					  dataConsumer->GetSctpStreamParameters().streamId);
+
+					// Delete it.
+					delete dataConsumer;
+				}
+			}
+		}
 	}
 
-	void Transport::OnAssociationStreamBufferedAmountLow(uint16_t /*streamId*/)
+	void Transport::OnAssociationStreamBufferedAmountLow(uint16_t streamId)
 	{
 		MS_TRACE();
 
-		// TODO: SCTP
+		const auto* dataConsumer = GetSctpDataConsumerByStreamId(streamId);
+
+		if (!dataConsumer)
+		{
+			return;
+		}
+
+		dataConsumer->SctpBufferedAmountLow(this->sctpAssociation->GetStreamBufferedAmount(streamId));
 	}
 
 	void Transport::OnAssociationTotalBufferedAmountLow()
 	{
 		MS_TRACE();
 
-		// TODO: SCTP
+		// TODO: SCTP: Here we should emit a new event to the upper layer saying
+		// that the transport SCTP total buffered amount is low. However we don't
+		// expose `SctpOptions::totalBufferedAmountLowThreshold` to Transport.
 	}
 
 	bool Transport::OnAssociationIsTransportReadyForSctp()
@@ -3208,178 +3285,7 @@ namespace RTC
 		// and DataConsumers because the peer (e.g. a browser) may have not started
 		// its SCTP stack (e.g. no "m=application" media section in its SDP) so if we
 		// initiate the SCTP connection it would fail after some time.
-		return IsConnected() && (this->mapDataProducers.size() > 0 || this->mapDataConsumers.size() > 0);
-	}
-
-	// TODO: SCTP: Add OnAssociationLifecycleMessageXxxxxx() methods.
-
-	void Transport::OnSctpAssociationConnecting(RTC::SctpAssociation* /*sctpAssociation*/)
-	{
-		MS_TRACE();
-
-		// Notify the Node Transport.
-		auto sctpStateChangeOffset = FBS::Transport::CreateSctpStateChangeNotification(
-		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
-		  FBS::SctpAssociation::SctpState::CONNECTING);
-
-		this->shared->GetChannelNotifier()->Emit(
-		  this->id,
-		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
-		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
-		  sctpStateChangeOffset);
-	}
-
-	void Transport::OnSctpAssociationConnected(RTC::SctpAssociation* /*sctpAssociation*/)
-	{
-		MS_TRACE();
-
-		// Tell all DataConsumers.
-		for (auto& kv : this->mapDataConsumers)
-		{
-			auto* dataConsumer = kv.second;
-
-			if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
-			{
-				dataConsumer->SctpAssociationConnected();
-			}
-		}
-
-		// Notify the Node Transport.
-		auto sctpStateChangeOffset = FBS::Transport::CreateSctpStateChangeNotification(
-		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
-		  FBS::SctpAssociation::SctpState::CONNECTED);
-
-		this->shared->GetChannelNotifier()->Emit(
-		  this->id,
-		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
-		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
-		  sctpStateChangeOffset);
-	}
-
-	void Transport::OnSctpAssociationFailed(RTC::SctpAssociation* /*sctpAssociation*/)
-	{
-		MS_TRACE();
-
-		// Tell all DataConsumers.
-		for (auto& kv : this->mapDataConsumers)
-		{
-			auto* dataConsumer = kv.second;
-
-			if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
-			{
-				dataConsumer->SctpAssociationClosed();
-			}
-		}
-
-		// Notify the Node Transport.
-		auto sctpStateChangeOffset = FBS::Transport::CreateSctpStateChangeNotification(
-		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
-		  FBS::SctpAssociation::SctpState::FAILED);
-
-		this->shared->GetChannelNotifier()->Emit(
-		  this->id,
-		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
-		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
-		  sctpStateChangeOffset);
-	}
-
-	void Transport::OnSctpAssociationClosed(RTC::SctpAssociation* /*sctpAssociation*/)
-	{
-		MS_TRACE();
-
-		// Tell all DataConsumers.
-		for (auto& kv : this->mapDataConsumers)
-		{
-			auto* dataConsumer = kv.second;
-
-			if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
-			{
-				dataConsumer->SctpAssociationClosed();
-			}
-		}
-
-		// Notify the Node Transport.
-		auto sctpStateChangeOffset = FBS::Transport::CreateSctpStateChangeNotification(
-		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
-		  FBS::SctpAssociation::SctpState::CLOSED);
-
-		this->shared->GetChannelNotifier()->Emit(
-		  this->id,
-		  FBS::Notification::Event::TRANSPORT_SCTP_STATE_CHANGE,
-		  FBS::Notification::Body::Transport_SctpStateChangeNotification,
-		  sctpStateChangeOffset);
-	}
-
-	void Transport::OnSctpAssociationSendData(
-	  RTC::SctpAssociation* /*sctpAssociation*/, const uint8_t* data, size_t len)
-	{
-		MS_TRACE();
-
-		// Ignore if destroying.
-		// NOTE: This is because when the child class (i.e. WebRtcTransport) is deleted,
-		// its destructor is called first and then the parent Transport's destructor,
-		// and we would end here calling SendSctpData() which is an abstract method.
-		if (this->destroying)
-		{
-			MS_WARN_DEV("ignoring sending data because Transport is being destroying");
-
-			return;
-		}
-
-		SendSctpData(data, len);
-	}
-
-	void Transport::OnSctpAssociationMessageReceived(
-	  RTC::SctpAssociation* /*sctpAssociation*/,
-	  uint16_t streamId,
-	  const uint8_t* msg,
-	  size_t len,
-	  uint32_t ppid)
-	{
-		MS_TRACE();
-
-		RTC::DataProducer* dataProducer = this->sctpListener.GetDataProducer(streamId);
-
-		if (!dataProducer)
-		{
-			MS_WARN_TAG(
-			  sctp, "no suitable DataProducer for received SCTP message [streamId:%" PRIu16 "]", streamId);
-
-			return;
-		}
-
-		// Pass the SCTP message to the corresponding DataProducer.
-		try
-		{
-			static std::vector<uint16_t> emptySubchannels;
-
-			dataProducer->ReceiveMessage(
-			  msg, len, ppid, emptySubchannels, /*requiredSubchannel*/ std::nullopt);
-		}
-		catch (std::exception& error)
-		{
-			MS_WARN_TAG(
-			  sctp,
-			  "DataProducer::ReceiveMessage() failed for received SCTP message [streamId:%" PRIu16 "]: %s",
-			  streamId,
-			  error.what());
-		}
-	}
-
-	void Transport::OnSctpAssociationBufferedAmount(
-	  RTC::SctpAssociation* /*sctpAssociation*/, uint32_t bufferedAmount)
-	{
-		MS_TRACE();
-
-		for (const auto& kv : this->mapDataConsumers)
-		{
-			auto* dataConsumer = kv.second;
-
-			if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
-			{
-				dataConsumer->SetSctpAssociationBufferedAmount(bufferedAmount);
-			}
-		}
+		return IsConnected() && (!this->mapDataProducers.empty() || !this->mapDataConsumers.empty());
 	}
 
 	void Transport::OnTransportCongestionControlClientBitrates(
@@ -3405,7 +3311,7 @@ namespace RTC
 		MS_TRACE();
 
 		// Update abs-send-time if present.
-		packet->UpdateAbsSendTime(DepLibUV::GetTimeMs());
+		packet->UpdateAbsSendTime(this->shared->GetTimeMs());
 
 		// Update transport wide sequence number if present.
 		if (
@@ -3431,6 +3337,8 @@ namespace RTC
 
 			const std::weak_ptr<RTC::TransportCongestionControlClient> tccClientWeakPtr(this->tccClient);
 
+			auto* shared = this->shared;
+
 #ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
 			std::weak_ptr<RTC::SenderBandwidthEstimator> senderBweWeakPtr = this->senderBwe;
 			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
@@ -3438,10 +3346,10 @@ namespace RTC
 			sentInfo.wideSeq     = this->transportWideCcSeq;
 			sentInfo.size        = packet->GetLength();
 			sentInfo.isProbation = true;
-			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
+			sentInfo.sendingAtMs = this->shared->GetTimeMs();
 
-			auto* cb = new onSendCallback(
-			  [tccClientWeakPtr, packetInfo, senderBweWeakPtr, sentInfo](bool sent)
+			const auto* cb = new onSendCallback(
+			  [tccClientWeakPtr, shared, packetInfo, senderBweWeakPtr, sentInfo](bool sent) mutable
 			  {
 				  if (sent)
 				  {
@@ -3449,14 +3357,14 @@ namespace RTC
 
 					  if (tccClient)
 					  {
-						  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
+						  tccClient->PacketSent(packetInfo, shared->GetTimeMsInt64());
 					  }
 
 					  auto senderBwe = senderBweWeakPtr.lock();
 
 					  if (senderBwe)
 					  {
-						  sentInfo.sentAtMs = DepLibUV::GetTimeMs();
+						  sentInfo.sentAtMs = shared->GetTimeMs();
 						  senderBwe->RtpPacketSent(sentInfo);
 					  }
 				  }
@@ -3465,7 +3373,7 @@ namespace RTC
 			SendRtpPacket(nullptr, packet, cb);
 #else
 			const auto* cb = new onSendCallback(
-			  [tccClientWeakPtr, packetInfo](bool sent)
+			  [tccClientWeakPtr, shared, packetInfo](bool sent)
 			  {
 				  if (sent)
 				  {
@@ -3473,7 +3381,7 @@ namespace RTC
 
 					  if (tccClient)
 					  {
-						  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
+						  tccClient->PacketSent(packetInfo, shared->GetTimeMsInt64());
 					  }
 				  }
 			  });
@@ -3496,7 +3404,7 @@ namespace RTC
 		  packet->GetSequenceNumber(),
 		  this->transportWideCcSeq,
 		  packet->GetLength(),
-		  this->sendProbationTransmission.GetBitrate(DepLibUV::GetTimeMs()));
+		  this->sendProbationTransmission.GetBitrate(this->shared->GetTimeMs()));
 	}
 
 	void Transport::OnTransportCongestionControlServerSendRtcpPacket(
@@ -3536,7 +3444,7 @@ namespace RTC
 		if (timer == this->rtcpTimer)
 		{
 			auto interval        = static_cast<uint64_t>(RTC::RTCP::MaxVideoIntervalMs);
-			const uint64_t nowMs = DepLibUV::GetTimeMs();
+			const uint64_t nowMs = this->shared->GetTimeMs();
 
 			SendRtcp(nowMs);
 

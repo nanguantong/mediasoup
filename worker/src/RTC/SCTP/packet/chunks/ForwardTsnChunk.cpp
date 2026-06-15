@@ -27,7 +27,7 @@ namespace RTC
 
 			if (chunkType != Chunk::ChunkType::FORWARD_TSN)
 			{
-				MS_WARN_DEV("invalid Chunk type");
+				MS_WARN_DEV("invalid chunk type");
 
 				return nullptr;
 			}
@@ -67,7 +67,7 @@ namespace RTC
 			{
 				MS_WARN_TAG(
 				  sctp,
-				  "ForwardTsnChunk Length field must be equal or greater than %zu",
+				  "ForwardTsnChunk length field must be equal or greater than %zu",
 				  ForwardTsnChunk::ForwardTsnChunkHeaderLength);
 
 				return nullptr;
@@ -155,13 +155,13 @@ namespace RTC
 
 			for (uint16_t idx{ 0 }; idx < numSkippedStreams; ++idx)
 			{
-				skippedStreams.emplace_back(GetStreamIdAt(idx), GetStreamSequenceAt(idx));
+				skippedStreams.emplace_back(GetSkippedStreamIdAt(idx), GetStreamSequenceAt(idx));
 			}
 
 			return skippedStreams;
 		}
 
-		void ForwardTsnChunk::AddStream(uint16_t streamId, uint16_t streamSequence)
+		void ForwardTsnChunk::AddSkippedStream(const AnyForwardTsnChunk::SkippedStream& skippedStream)
 		{
 			MS_TRACE();
 
@@ -172,9 +172,9 @@ namespace RTC
 
 			// Add the new stream and stream sequence.
 			Utils::Byte::Set2Bytes(
-			  GetVariableLengthValuePointer(), previousVariableLengthValueLength, streamId);
+			  GetVariableLengthValuePointer(), previousVariableLengthValueLength, skippedStream.streamId);
 			Utils::Byte::Set2Bytes(
-			  GetVariableLengthValuePointer(), previousVariableLengthValueLength + 2, streamSequence);
+			  GetVariableLengthValuePointer(), previousVariableLengthValueLength + 2, skippedStream.ssn);
 		}
 
 		ForwardTsnChunk* ForwardTsnChunk::SoftClone(const uint8_t* buffer) const

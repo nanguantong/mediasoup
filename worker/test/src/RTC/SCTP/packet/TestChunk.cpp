@@ -6,7 +6,7 @@
 #include "RTC/SCTP/packet/errorCauses/ProtocolViolationErrorCause.hpp"
 #include "RTC/SCTP/packet/parameters/ForwardTsnSupportedParameter.hpp"
 #include "RTC/SCTP/packet/parameters/ZeroChecksumAcceptableParameter.hpp"
-#include "RTC/SCTP/sctpCommon.hpp"
+#include "test/include/RTC/SCTP/sctpCommon.hpp"
 #include <catch2/catch_test_macros.hpp>
 
 SCENARIO("SCTP Chunk", "[serializable][sctp][chunk]")

@@ -2,9 +2,9 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "Shared.hpp"
-#include "Logger.hpp"
 #include "handles/BackoffTimerHandle.hpp"
 #include "handles/TimerHandle.hpp"
+#include "Logger.hpp"
 
 Shared::Shared(
   Channel::ChannelMessageRegistrator* channelMessageRegistrator,
@@ -19,7 +19,7 @@ Shared::~Shared()
 	MS_TRACE();
 }
 
-TimerHandleInterface* Shared::CreateTimer(TimerHandleInterface::Listener* listener) const
+TimerHandleInterface* Shared::CreateTimer(TimerHandleInterface::Listener* listener)
 {
 	MS_TRACE();
 
@@ -27,7 +27,7 @@ TimerHandleInterface* Shared::CreateTimer(TimerHandleInterface::Listener* listen
 }
 
 BackoffTimerHandleInterface* Shared::CreateBackoffTimer(
-  const BackoffTimerHandleInterface::BackoffTimerHandleOptions& options) const
+  const BackoffTimerHandleInterface::BackoffTimerHandleOptions& options)
 {
 	MS_TRACE();
 

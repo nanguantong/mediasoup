@@ -5,8 +5,6 @@
 #include "FBS/message.h"
 #include "FBS/request.h"
 #include "FBS/response.h"
-#include <flatbuffers/minireflect.h>
-#include <absl/container/flat_hash_map.h>
 #include <string>
 
 namespace Channel
@@ -21,8 +19,7 @@ namespace Channel
 		using Method = FBS::Request::Method;
 
 	public:
-		thread_local static flatbuffers::FlatBufferBuilder bufferBuilder;
-		static const absl::flat_hash_map<FBS::Request::Method, const char*> Method2String;
+		static thread_local flatbuffers::FlatBufferBuilder bufferBuilder;
 
 	public:
 		ChannelRequest(Channel::ChannelSocket* channel, const FBS::Request::Request* request);
@@ -49,7 +46,9 @@ namespace Channel
 			  FBS::Message::CreateMessage(builder, FBS::Message::Body::Response, response.Union());
 
 			builder.FinishSizePrefixed(message);
-			this->Send(builder.GetBufferPointer(), builder.GetSize());
+
+			Send(builder.GetBufferPointer(), builder.GetSize());
+
 			builder.Clear();
 		}
 

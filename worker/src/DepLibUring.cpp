@@ -2,6 +2,7 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "DepLibUring.hpp"
+#include "DepLibUV.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Settings.hpp"
@@ -11,7 +12,8 @@
 #include <sys/resource.h>
 #include <sys/utsname.h>
 
-/* Static variables. */
+/* Class variables. */
+
 thread_local bool DepLibUring::enabled{ false };
 // liburing instance per thread.
 thread_local DepLibUring::LibUring* DepLibUring::liburing{ nullptr };

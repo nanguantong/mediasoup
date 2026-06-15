@@ -11,14 +11,14 @@ namespace RTC
 	{
 		/**
 		 * The RetransmissionErrorCounter is a simple counter with a limit, and when
-		 * the limit is exceeded, the counter is exhausted and the Association will
+		 * the limit is exceeded, the counter is exhausted and the association will
 		 * be closed. It's incremented on retransmission errors, such as the T3-RTX
 		 * timer expiring, but also missing heartbeats and stream reset requests.
 		 */
 		class RetransmissionErrorCounter
 		{
 		public:
-			RetransmissionErrorCounter(const SctpOptions& sctpOptions);
+			explicit RetransmissionErrorCounter(const SctpOptions& sctpOptions);
 
 			~RetransmissionErrorCounter();
 
@@ -26,14 +26,13 @@ namespace RTC
 			void Dump(int indentation = 0) const;
 
 			/**
-			 * Increments the retransmission timer. If the maximum error count has
-			 * been reached, `false` will be returned.
+			 * Increments the retransmission timer. Returns `false` if the maximum
+			 * error count has been reached, `true` otherwise.
 			 */
 			bool Increment(std::string_view reason);
 
 			/**
 			 * Whether maximum error count has been reached.
-			 * @return [description]
 			 */
 			bool IsExhausted() const
 			{
@@ -54,7 +53,7 @@ namespace RTC
 			}
 
 		private:
-			std::optional<size_t> limit{ 0 };
+			std::optional<uint16_t> limit;
 			size_t counter{ 0 };
 		};
 	} // namespace SCTP

@@ -2,19 +2,22 @@
 #define MS_RTC_SCTP_TRANSMISSION_CONTROL_BLOCK_HPP
 
 #include "common.hpp"
-#include "SharedInterface.hpp"
+#include "handles/BackoffTimerHandleInterface.hpp"
+#include "RTC/SCTP/association/AssociationListenerDeferrer.hpp"
 #include "RTC/SCTP/association/HeartbeatHandler.hpp"
 #include "RTC/SCTP/association/NegotiatedCapabilities.hpp"
 #include "RTC/SCTP/association/PacketSender.hpp"
 #include "RTC/SCTP/association/StreamResetHandler.hpp"
-#include "RTC/SCTP/association/TCBContext.hpp"
+#include "RTC/SCTP/association/TransmissionControlBlockContextInterface.hpp"
 #include "RTC/SCTP/packet/Packet.hpp"
-#include "RTC/SCTP/public/AssociationListener.hpp"
 #include "RTC/SCTP/public/SctpOptions.hpp"
+#include "RTC/SCTP/rx/DataTracker.hpp"
+#include "RTC/SCTP/rx/ReassemblyQueue.hpp"
 #include "RTC/SCTP/tx/RetransmissionErrorCounter.hpp"
 #include "RTC/SCTP/tx/RetransmissionQueue.hpp"
 #include "RTC/SCTP/tx/RetransmissionTimeout.hpp"
-#include "handles/BackoffTimerHandleInterface.hpp"
+#include "RTC/SCTP/tx/SendQueueInterface.hpp"
+#include "SharedInterface.hpp"
 #include <string_view>
 #include <vector>
 
@@ -28,17 +31,17 @@ namespace RTC
 		 *
 		 * @see https://datatracker.ietf.org/doc/html/rfc9260#section-14
 		 */
-		class TransmissionControlBlock : public TCBContext,
+		class TransmissionControlBlock : public TransmissionControlBlockContextInterface,
 		                                 public RetransmissionQueue::Listener,
 		                                 public BackoffTimerHandleInterface::Listener
 		{
 		public:
 			TransmissionControlBlock(
-			  AssociationListener& associationListener,
+			  TransmissionControlBlockContextInterface::Listener* listener,
+			  AssociationListenerDeferrer& associationListenerDeferrer,
 			  const SctpOptions& sctpOptions,
 			  SharedInterface* shared,
-			  // TODO: SCTP: Implement it.
-			  // SendQueue& sendQueue,
+			  SendQueueInterface& sendQueue,
 			  PacketSender& packetSender,
 			  uint32_t localVerificationTag,
 			  uint32_t remoteVerificationTag,
@@ -47,6 +50,7 @@ namespace RTC
 			  uint32_t remoteAdvertisedReceiverWindowCredit,
 			  uint64_t tieTag,
 			  const NegotiatedCapabilities& negotiatedCapabilities,
+			  size_t maxPacketLength,
 			  std::function<bool()> isAssociationEstablished);
 
 			~TransmissionControlBlock() override;
@@ -56,7 +60,7 @@ namespace RTC
 
 			/**
 			 * @remarks
-			 * - Implements TCBContext interface.
+			 * - Implements TransmissionControlBlockContextInterface.
 			 */
 			bool IsAssociationEstablished() const override
 			{
@@ -64,8 +68,8 @@ namespace RTC
 			}
 
 			/**
-			 * The value of the Initiate Tag field we put in our INIT or INIT_ACK
-			 * Chunk. Packets sent by the remote peer must include this value in
+			 * The value of the Initiate Tag field we put in our INIT or INIT-ACK
+			 * chunk. Packets sent by the remote peer must include this value in
 			 * their Verification Tag field.
 			 */
 			uint32_t GetLocalVerificationTag() const
@@ -75,7 +79,7 @@ namespace RTC
 
 			/**
 			 * The value of the Initiate Tag field the peer put in its INIT or
-			 * INIT_ACK Chunk. Packets sent by us to the peer must include this value
+			 * INIT-ACK chunk. Packets sent by us to the peer must include this value
 			 * in their Verification Tag field.
 			 */
 			uint32_t GetRemoteVerificationTag() const
@@ -84,11 +88,11 @@ namespace RTC
 			}
 
 			/**
-			 * The value of the Initial TSN field we put in our INIT or INIT_ACK
-			 * Chunk.
+			 * The value of the Initial TSN field we put in our INIT or INIT-ACK
+			 * chunk.
 			 *
 			 * @remarks
-			 * - Implements TCBContext interface.
+			 * - Implements TransmissionControlBlockContextInterface.
 			 */
 			uint32_t GetLocalInitialTsn() const override
 			{
@@ -97,10 +101,10 @@ namespace RTC
 
 			/**
 			 * The value of the Initial TSN field the peer put in its INIT or
-			 * INIT_ACK Chunk.
+			 * INIT-ACK chunk.
 			 *
 			 * @remarks
-			 * - Implements TCBContext interface.
+			 * - Implements TransmissionControlBlockContextInterface.
 			 */
 			uint32_t GetRemoteInitialTsn() const override
 			{
@@ -109,7 +113,7 @@ namespace RTC
 
 			/**
 			 * The value of the Advertised Receiver Window Credit field we put in our
-			 * INIT or INIT_ACK Chunk.
+			 * INIT or INIT-ACK chunk.
 			 */
 			uint32_t GetRemoteAdvertisedReceiverWindowCredit() const
 			{
@@ -134,7 +138,7 @@ namespace RTC
 
 			/**
 			 * @remarks
-			 * - Implements TCBContext interface.
+			 * - Implements TransmissionControlBlockContextInterface.
 			 */
 			void ObserveRttMs(uint64_t rttMs) override;
 
@@ -145,7 +149,7 @@ namespace RTC
 
 			/**
 			 * @remarks
-			 * - Implements TCBContext interface.
+			 * - Implements TransmissionControlBlockContextInterface.
 			 */
 			uint64_t GetCurrentRtoMs() const override
 			{
@@ -159,7 +163,7 @@ namespace RTC
 
 			/**
 			 * @remarks
-			 * - Implements TCBContext interface.
+			 * - Implements TransmissionControlBlockContextInterface.
 			 */
 			std::unique_ptr<Packet> CreatePacket() const override;
 
@@ -167,21 +171,19 @@ namespace RTC
 
 			/**
 			 * @remarks
-			 * - Implements TCBContext interface.
+			 * - Implements TransmissionControlBlockContextInterface.
 			 */
-			void Send(Packet* packet) override;
+			bool SendPacket(Packet* packet) override;
 
-			// TODO: SCTP: Implement it.
-			// DataTracker& GetDataTracker()
-			// {
-			// 	return this->dataTracker;
-			// }
+			DataTracker& GetDataTracker()
+			{
+				return this->dataTracker;
+			}
 
-			// TODO: SCTP: Implement it.
-			// ReassemblyQueue& GetReassemblyQueue()
-			// {
-			// 	return this->reassemblyQueue;
-			// }
+			ReassemblyQueue& GetReassemblyQueue()
+			{
+				return this->reassemblyQueue;
+			}
 
 			RetransmissionQueue& GetRetransmissionQueue()
 			{
@@ -199,17 +201,17 @@ namespace RTC
 			}
 
 			/**
-			 * Will be set while the Association is in COOKIE_ECHOED state. In this
-			 * state, there can only be a single Packet outstanding, and it must
-			 * contain the COOKIE_ECHO Chunk as the first Chunk in that Packet, until
-			 * the COOKIE_ACK has been received, which will make the socket call
+			 * Will be set while the association is in COOKIE_ECHOED state. In this
+			 * state, there can only be a single packet outstanding, and it must
+			 * contain the COOKIE-ECHO chunk as the first chunk in that packet, until
+			 * the COOKIE-ACK has been received, which will make the socket call
 			 * `ClearRemoteStateCookie()`.
 			 */
 			void SetRemoteStateCookie(std::vector<uint8_t> remoteStateCookie);
 
 			/**
-			 * Called when the COOKIE_ACK Chunk has been received, to allow further
-			 * Packets to be sent.
+			 * Called when the COOKIE-ACK chunk has been received, to allow further
+			 * packets to be sent.
 			 */
 			void ClearRemoteStateCookie();
 
@@ -219,41 +221,64 @@ namespace RTC
 			}
 
 			/**
-			 * Sends a SACK Chunk, if there is a need to.
+			 * Sends a SACK chunk, if there is a need to.
 			 */
 			void MaySendSackChunk();
 
 			/**
-			 * Sends a FORWARD-TSN or I-FORWARD-TSN Chunk if it is needed and allowed
-			 * (rate-limited).
+			 * May add a FORWARD-TSN or I-FORWARD-TSN chunk to the given packet if it
+			 * is needed and allowed (rate-limited).
 			 */
-			void MaybeSendForwardTsnChunk(Packet* packet, uint64_t nowMs);
+			void MayAddForwardTsnChunk(Packet* packet, uint64_t nowMs);
 
 			void MaySendFastRetransmit();
 
-			// TODO: SCTP: Mamy more methods.
+			/**
+			 * Create and fill packets with control and DATA/I-DATA chunks, and sends
+			 * them as much as can be allowed by the congestion control algorithm.
+			 *
+			 * @remarks
+			 * - If `this->remoteStateCookie` is present, then only one packet will be
+			 *   sent, with this chunk as the first chunk.
+			 * - Cannot pass `addCookieAckChunk=true` if `this->remoteStateCookie` is
+			 *   present (will throw).
+			 */
+			void SendBufferedPackets(uint64_t nowMs, bool addCookieAckChunk = false);
 
 			/**
 			 * @remarks
-			 * - Implements TCBContext interface.
+			 * - Implements TransmissionControlBlockContextInterface.
 			 */
 			bool IncrementTxErrorCounter(std::string_view reason) override
 			{
-				return this->txErrorCounter.Increment(reason);
+				const bool withinLimit = this->txErrorCounter.Increment(reason);
+
+				if (!withinLimit)
+				{
+					// NOTE: This closes (and destroys) this TCB synchronously. It's safe to
+					// do so from within a timer handler because the handler sets the
+					// BackoffTimerHandle `stop` flag and doesn't touch any member
+					// afterwards, so the (now destroyed) firing timer won't be accessed.
+					this->listener->OnTransmissionControlBlockTooManyTxErrors();
+				}
+
+				// NOTE: `withinLimit` is a local, so this is safe even if `this` was
+				// destroyed above.
+				return withinLimit;
 			}
 
 			/**
 			 * @remarks
-			 * - Implements TCBContext interface.
+			 * - Implements TransmissionControlBlockContextInterface.
 			 */
 			void ClearTxErrorCounter() override
 			{
-				return this->txErrorCounter.Clear();
+				this->txErrorCounter.Clear();
 			}
 
 			/**
 			 * @remarks
-			 * - Implements TCBContext interface.
+			 * - Implements TransmissionControlBlockContextInterface.
 			 */
 			bool HasTooManyTxErrors() const override
 			{
@@ -273,21 +298,25 @@ namespace RTC
 
 			/* Pure virtual methods inherited from BackoffTimerHandleInterface::Listener. */
 		public:
-			void OnTimer(BackoffTimerHandleInterface* backoffTimer, uint64_t& baseTimeoutMs, bool& stop) override;
+			void OnBackoffTimer(
+			  BackoffTimerHandleInterface* backoffTimer, uint64_t& baseTimeoutMs, bool& stop) override;
 
 		private:
-			AssociationListener& associationListener;
+			TransmissionControlBlockContextInterface::Listener* listener;
+			AssociationListenerDeferrer& associationListenerDeferrer;
 			const SctpOptions sctpOptions;
 			SharedInterface* shared;
 			PacketSender& packetSender;
-			uint32_t localVerificationTag{ 0 };
-			uint32_t remoteVerificationTag{ 0 };
-			uint32_t localInitialTsn{ 0 };
-			uint32_t remoteInitialTsn{ 0 };
-			uint32_t remoteAdvertisedReceiverWindowCredit{ 0 };
+			uint32_t localVerificationTag;
+			uint32_t remoteVerificationTag;
+			uint32_t localInitialTsn;
+			uint32_t remoteInitialTsn;
+			uint32_t remoteAdvertisedReceiverWindowCredit;
 			// Nonce, used to detect reconnections.
-			uint64_t tieTag{ 0 };
+			uint64_t tieTag;
 			NegotiatedCapabilities negotiatedCapabilities;
+			// Max SCTP packet length.
+			const size_t maxPacketLength;
 			std::function<bool()> isAssociationEstablished;
 			// The data retransmission timer.
 			const std::unique_ptr<BackoffTimerHandleInterface> t3RtxTimer;
@@ -296,23 +325,19 @@ namespace RTC
 			const std::unique_ptr<BackoffTimerHandleInterface> delayedAckTimer;
 			RetransmissionTimeout rto;
 			RetransmissionErrorCounter txErrorCounter;
-			// TODO: SCTP: Implement.
-			// DataTracker dataTracker;
-			// TODO: SCTP: Implement.
-			// ReassemblyQueue reassemblyQueue;
-			// TODO: SCTP: Implement.
+			DataTracker dataTracker;
+			ReassemblyQueue reassemblyQueue;
 			RetransmissionQueue retransmissionQueue;
 			StreamResetHandler streamResetHandler;
 			HeartbeatHandler heartbeatHandler;
-			// Rate limiting of FORWARD_TSN. Next can be sent at or after this
+			// Rate limiting of FORWARD-TSN. Next can be sent at or after this
 			// timestamp.
-			// TODO: SCTP: Uncomment.
 			uint64_t limitForwardTsnUntilMs{ 0 };
 			// Only valid when state is State::COOKIE_ECHOED. In this state, the
-			// Association must wait for COOKIE_ACK to continue sending any packets (not
-			// including a COOKIE_ECHO). So if this state cookie is present, the
-			// `SendBufferedChunks()` method will always only send one Packet, with
-			// a CookieEchoChunk containing this cookie as the first Chunk in the Packet.
+			// association must wait for COOKIE-ACK to continue sending any packets (not
+			// including a COOKIE-ECHO). So if this state cookie is present, the
+			// `SendBufferedChunks()` method will always only send one packet, with
+			// a CookieEchoChunk containing this cookie as the first chunk in the packet.
 			std::optional<std::vector<uint8_t>> remoteStateCookie;
 		};
 	} // namespace SCTP

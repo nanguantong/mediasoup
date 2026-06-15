@@ -13,11 +13,11 @@ namespace RTC
 		/* Static. */
 
 		// When cloning a RTP packet, a buffer is allocated for it and its length is
-		// the length of the Packet plus this value (in bytes).
+		// the length of the packet plus this value (in bytes).
 		static constexpr size_t PacketBufferLengthIncrement{ 100 };
-		// Callback to pass to every cloned RTP Packet to deallocate its buffer once
-		// the Packet releases its buffer (for example when the Packet is destroyed).
-		thread_local Serializable::BufferReleasedListener PacketBufferReleasedListener =
+		// Callback to pass to every cloned RTP packet to deallocate its buffer once
+		// the packet releases its buffer (for example when the packet is destroyed).
+		static thread_local Serializable::BufferReleasedListener PacketBufferReleasedListener =
 		  // NOLINTNEXTLINE(misc-unused-parameters, readability-non-const-parameter)
 		  [](const Serializable* packet, uint8_t* buffer)
 		{
@@ -32,7 +32,7 @@ namespace RTC
 			  "[worker.pid:%" PRIu64
 			  "] [RTC::RTP::SharedPacket] memory deallocated [packet buffer:%zu, total allocated memory:%" PRIu64
 			  "]",
-			  Logger::pid,
+			  Logger::Pid,
 			  packet->GetBufferLength(),
 			  SharedPacket::allocatedMemory);
 #endif
@@ -156,7 +156,7 @@ namespace RTC
 			auto* buffer = static_cast<uint8_t*>(::operator new[](bufferLength, std::align_val_t{ 4 }));
 			auto* clonedPacket = packet->Clone(buffer, bufferLength);
 
-			// Set a listener in the Packet to deallocate its buffer once the Packet
+			// Set a listener in the packet to deallocate its buffer once the packet
 			// is destroyed or releases its internal buffer.
 			clonedPacket->SetBufferReleasedListener(std::addressof(PacketBufferReleasedListener));
 
@@ -170,7 +170,7 @@ namespace RTC
 			  "[worker.pid:%" PRIu64
 			  "] [RTC::RTP::SharedPacket] memory allocated [packet buffer:%zu, total allocated memory:%" PRIu64
 			  "]",
-			  Logger::pid,
+			  Logger::Pid,
 			  clonedPacket->GetBufferLength(),
 			  SharedPacket::allocatedMemory);
 #endif

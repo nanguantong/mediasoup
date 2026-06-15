@@ -2,9 +2,9 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/DataProducer.hpp"
-#include "DepLibUV.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
+#include "Settings.hpp"
 #include <vector>
 
 namespace RTC
@@ -108,7 +108,7 @@ namespace RTC
 		return FBS::DataProducer::CreateGetStatsResponseDirect(
 		  builder,
 		  // timestamp.
-		  DepLibUV::GetTimeMs(),
+		  this->shared->GetTimeMs(),
 		  // label.
 		  this->label.c_str(),
 		  // protocol.
@@ -229,7 +229,14 @@ namespace RTC
 					requiredSubchannel = body->requiredSubchannel();
 				}
 
-				ReceiveMessage(data, len, body->ppid(), subchannels, requiredSubchannel);
+				const uint16_t streamId =
+				  this->type == DataProducer::Type::SCTP ? this->sctpStreamParameters.streamId : 0;
+
+				// NOTE: We are creating a copy of the data here, otherwise we cannot
+				// move the message and pass its ownership to the SCTP stack.
+				RTC::SCTP::Message message(streamId, body->ppid(), std::vector<uint8_t>(data, data + len));
+
+				ReceiveMessage(std::move(message), subchannels, requiredSubchannel);
 
 				// Increase receive transmission.
 				this->listener->OnDataProducerReceiveData(this, len);
@@ -245,16 +252,14 @@ namespace RTC
 	}
 
 	void DataProducer::ReceiveMessage(
-	  const uint8_t* msg,
-	  size_t len,
-	  uint32_t ppid,
+	  RTC::SCTP::Message message,
 	  std::vector<uint16_t>& subchannels,
 	  std::optional<uint16_t> requiredSubchannel)
 	{
 		MS_TRACE();
 
 		this->messagesReceived++;
-		this->bytesReceived += len;
+		this->bytesReceived += message.GetPayloadLength();
 
 		// If paused stop here.
 		if (this->paused)
@@ -263,6 +268,6 @@ namespace RTC
 		}
 
 		this->listener->OnDataProducerMessageReceived(
-		  this, msg, len, ppid, subchannels, requiredSubchannel);
+		  this, std::move(message), subchannels, requiredSubchannel);
 	}
 } // namespace RTC

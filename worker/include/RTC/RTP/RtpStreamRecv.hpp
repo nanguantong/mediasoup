@@ -1,11 +1,11 @@
 #ifndef MS_RTC_RTP_RTP_STREAM_RECV_HPP
 #define MS_RTC_RTP_RTP_STREAM_RECV_HPP
 
+#include "handles/TimerHandleInterface.hpp"
 #include "RTC/NackGenerator.hpp"
 #include "RTC/RTCP/XrDelaySinceLastRr.hpp"
 #include "RTC/RTP/RtpStream.hpp"
 #include "RTC/RateCalculator.hpp"
-#include "handles/TimerHandleInterface.hpp"
 #include <vector>
 
 namespace RTC
@@ -30,7 +30,8 @@ namespace RTC
 			class TransmissionCounter
 			{
 			public:
-				TransmissionCounter(uint8_t spatialLayers, uint8_t temporalLayers, size_t windowSize);
+				TransmissionCounter(
+				  SharedInterface* shared, uint8_t spatialLayers, uint8_t temporalLayers, size_t windowSize);
 				void Update(const RTP::Packet* packet);
 				uint32_t GetBitrate(uint64_t nowMs);
 				uint32_t GetBitrate(uint64_t nowMs, uint8_t spatialLayer, uint8_t temporalLayer);

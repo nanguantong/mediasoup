@@ -1,8 +1,8 @@
 #include "RTC/FuzzerRateCalculator.hpp"
 #include "DepLibUV.hpp"
-#include "Utils.hpp"
 #include "RTC/Consts.hpp"
 #include "RTC/RateCalculator.hpp"
+#include "Utils.hpp"
 
 namespace
 {
@@ -23,7 +23,7 @@ void FuzzerRtcRateCalculator::Fuzz(const uint8_t* data, size_t len)
 {
 	// Trick to initialize our stuff just once.
 	// NOLINTNEXTLINE(readability-identifier-naming)
-	thread_local const int unused = init();
+	static thread_local const int unused = init();
 
 	// Avoid [-Wunused-variable].
 	(void)unused;

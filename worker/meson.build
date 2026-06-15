@@ -88,8 +88,6 @@ common_sources = [
   'src/DepLibUV.cpp',
   'src/DepLibWebRTC.cpp',
   'src/DepOpenSSL.cpp',
-  # TODO: Remove once we only use built-in SCTP stack.
-  'src/DepUsrSCTP.cpp',
   'src/Logger.cpp',
   'src/MediaSoupErrors.cpp',
   'src/Settings.cpp',
@@ -121,7 +119,6 @@ common_sources = [
   'src/RTC/DtlsTransport.cpp',
   'src/RTC/KeyFrameRequestManager.cpp',
   'src/RTC/NackGenerator.cpp',
-  'src/RTC/PipeConsumer.cpp',
   'src/RTC/PipeTransport.cpp',
   'src/RTC/PlainTransport.cpp',
   'src/RTC/PortManager.cpp',
@@ -131,16 +128,15 @@ common_sources = [
   'src/RTC/RtcLogger.cpp',
   'src/RTC/RtpListener.cpp',
   'src/RTC/RtpObserver.cpp',
-  # TODO: Remove once we only use built-in SCTP stack.
-  'src/RTC/SctpAssociation.cpp',
   'src/RTC/SctpListener.cpp',
   'src/RTC/SenderBandwidthEstimator.cpp',
   'src/RTC/SeqManager.cpp',
   'src/RTC/Serializable.cpp',
-  'src/RTC/SimpleConsumer.cpp',
-  'src/RTC/SimulcastConsumer.cpp',
+  'src/RTC/PipeProducerStreamManager.cpp',
+  'src/RTC/SimpleProducerStreamManager.cpp',
+  'src/RTC/SimulcastProducerStreamManager.cpp',
   'src/RTC/SrtpSession.cpp',
-  'src/RTC/SvcConsumer.cpp',
+  'src/RTC/SvcProducerStreamManager.cpp',
   'src/RTC/TcpConnection.cpp',
   'src/RTC/TcpServer.cpp',
   'src/RTC/Transport.cpp',
@@ -214,10 +210,16 @@ common_sources = [
   'src/RTC/SCTP/association/StateCookie.cpp',
   'src/RTC/SCTP/association/StreamResetHandler.cpp',
   'src/RTC/SCTP/association/TransmissionControlBlock.cpp',
+  'src/RTC/SCTP/rx/DataTracker.cpp',
+  'src/RTC/SCTP/rx/InterleavedReassemblyStreams.cpp',
+  'src/RTC/SCTP/rx/ReassemblyQueue.cpp',
+  'src/RTC/SCTP/rx/TraditionalReassemblyStreams.cpp',
+  'src/RTC/SCTP/tx/OutstandingData.cpp',
   'src/RTC/SCTP/tx/RetransmissionErrorCounter.cpp',
   'src/RTC/SCTP/tx/RetransmissionQueue.cpp',
   'src/RTC/SCTP/tx/RetransmissionTimeout.cpp',
-  'src/RTC/SCTP/tx/OutstandingData.cpp',
+  'src/RTC/SCTP/tx/RoundRobinSendQueue.cpp',
+  'src/RTC/SCTP/tx/StreamScheduler.cpp',
   'src/RTC/SCTP/packet/Packet.cpp',
   'src/RTC/SCTP/packet/TLV.cpp',
   'src/RTC/SCTP/packet/UserData.cpp',
@@ -274,6 +276,7 @@ common_sources = [
   'src/RTC/SCTP/packet/errorCauses/ProtocolViolationErrorCause.cpp',
   'src/RTC/SCTP/packet/errorCauses/UnknownErrorCause.cpp',
   'src/RTC/SCTP/public/AssociationMetrics.cpp',
+  'src/RTC/SCTP/public/SctpOptions.cpp',
   'src/RTC/SCTP/public/Message.cpp',
 ]
 
@@ -303,14 +306,6 @@ libsrtp3_proj = subproject(
   ],
 )
 
-usrsctp_proj = subproject(
-  'usrsctp',
-  default_options: [
-    'warning_level=0',
-    'sctp_build_programs=false',
-  ],
-)
-
 abseil_cpp_proj = subproject(
   'abseil-cpp',
   default_options: [
@@ -318,6 +313,8 @@ abseil_cpp_proj = subproject(
     'cpp_std=c++17',
   ],
 )
+
+ankerl_unordered_dense_dep = dependency('unordered_dense')
 
 flatbuffers_proj = subproject(
   'flatbuffers',
@@ -331,26 +328,26 @@ subdir('fbs')
 
 # Add current build directory so libwebrtc has access to FBS folder.
 libwebrtc_include_directories = include_directories('include', 'fbs')
+
 subdir('deps/libwebrtc')
 
 dependencies = [
-  abseil_cpp_proj.get_variable('absl_container_dep'),
-  openssl_proj.get_variable('openssl_dep'),
   libuv_proj.get_variable('libuv_dep'),
+  openssl_proj.get_variable('openssl_dep'),
   libsrtp3_proj.get_variable('libsrtp3_dep'),
-  usrsctp_proj.get_variable('usrsctp_dep'),
+  abseil_cpp_proj.get_variable('absl_container_dep'),
+  ankerl_unordered_dense_dep,
   flatbuffers_proj.get_variable('flatbuffers_dep'),
   flatbuffers_generator_dep,
   libwebrtc_dep,
 ]
 
 link_whole = [
-  abseil_cpp_proj.get_variable('absl_container_lib'),
+  libuv_proj.get_variable('libuv'),
   openssl_proj.get_variable('libcrypto_lib'),
   openssl_proj.get_variable('libssl_lib'),
-  libuv_proj.get_variable('libuv'),
   libsrtp3_proj.get_variable('libsrtp3'),
-  usrsctp_proj.get_variable('usrsctp'),
+  abseil_cpp_proj.get_variable('absl_container_lib'),
   flatbuffers_proj.get_variable('flatbuffers_lib'),
   libwebrtc,
 ]
@@ -442,15 +439,27 @@ executable(
   cpp_args: cpp_args + ['-DMS_EXECUTABLE'],
 )
 
+mock_sources = [
+  'mocks/src/MockShared.cpp',
+  'mocks/src/handles/MockBackoffTimerHandle.cpp',
+  'mocks/src/Channel/MockChannelMessageRegistrator.cpp',
+  'mocks/src/RTC/SCTP/association/MockTransmissionControlBlockContext.cpp',
+]
+
 test_sources = [
   'test/src/tests.cpp',
   'test/src/testHelpers.cpp',
+  'test/src/RTC/TestConsumer.cpp',
+  'test/src/RTC/TestPipeProducerStreamManager.cpp',
+  'test/src/RTC/TestSimpleProducerStreamManager.cpp',
+  'test/src/RTC/TestSimulcastProducerStreamManager.cpp',
+  'test/src/RTC/TestSvcProducerStreamManager.cpp',
   'test/src/RTC/TestKeyFrameRequestManager.cpp',
   'test/src/RTC/TestNackGenerator.cpp',
+  'test/src/RTC/TestPortManager.cpp',
   'test/src/RTC/TestRateCalculator.cpp',
   'test/src/RTC/TestRtpEncodingParameters.cpp',
   'test/src/RTC/TestSeqManager.cpp',
-  'test/src/RTC/TestSimpleConsumer.cpp',
   'test/src/RTC/TestTransportCongestionControlServer.cpp',
   'test/src/RTC/TestTransportTuple.cpp',
   'test/src/RTC/TestTrendCalculator.cpp',
@@ -489,12 +498,24 @@ test_sources = [
   'test/src/RTC/RTCP/TestPacket.cpp',
   'test/src/RTC/RTCP/TestXr.cpp',
   'test/src/RTC/SCTP/sctpCommon.cpp',
-  'test/src/RTC/SCTP/association/TestStateCookie.cpp',
+  'test/src/RTC/SCTP/association/TestAssociation.cpp',
+  'test/src/RTC/SCTP/association/TestHeartbeatHandler.cpp',
   'test/src/RTC/SCTP/association/TestNegotiatedCapabilities.cpp',
-  'test/src/RTC/SCTP/common/TestUnwrappedSequenceNumber.cpp',
-  'test/src/RTC/SCTP/tx/TestRetransmissionErrorCounter.cpp',
-  'test/src/RTC/SCTP/tx/TestRetransmissionTimeout.cpp',
+  'test/src/RTC/SCTP/association/TestPacketSender.cpp',
+  'test/src/RTC/SCTP/association/TestStateCookie.cpp',
+  'test/src/RTC/SCTP/association/TestStreamResetHandler.cpp',
+  'test/src/RTC/SCTP/association/TestTransmissionControlBlock.cpp',
+  'test/src/RTC/SCTP/rx/TestDataTracker.cpp',
+  'test/src/RTC/SCTP/rx/TestInterleavedReassemblyStreams.cpp',
+  'test/src/RTC/SCTP/rx/TestReassemblyQueue.cpp',
+  'test/src/RTC/SCTP/rx/TestTraditionalReassemblyStreams.cpp',
   'test/src/RTC/SCTP/tx/TestOutstandingData.cpp',
+  'test/src/RTC/SCTP/tx/TestRetransmissionErrorCounter.cpp',
+  'test/src/RTC/SCTP/tx/TestRetransmissionQueue.cpp',
+  'test/src/RTC/SCTP/tx/TestRetransmissionTimeout.cpp',
+  'test/src/RTC/SCTP/tx/TestRoundRobinSendQueue.cpp',
+  'test/src/RTC/SCTP/tx/TestOutstandingData.cpp',
+  'test/src/RTC/SCTP/tx/TestStreamScheduler.cpp',
   'test/src/RTC/SCTP/packet/TestPacket.cpp',
   'test/src/RTC/SCTP/packet/TestChunk.cpp',
   'test/src/RTC/SCTP/packet/TestParameter.cpp',
@@ -555,8 +576,7 @@ test_sources = [
   'test/src/Utils/TestNumber.cpp',
   'test/src/Utils/TestString.cpp',
   'test/src/Utils/TestTime.cpp',
-  'mocks/src/MockShared.cpp',
-  'mocks/src/Channel/MockChannelMessageRegistrator.cpp',
+  'test/src/Utils/TestUnwrappedSequenceNumber.cpp',
 ]
 
 mediasoup_worker_test = executable(
@@ -565,11 +585,9 @@ mediasoup_worker_test = executable(
   install: true,
   install_tag: 'mediasoup-worker-test',
   dependencies: dependencies,
-  sources: common_sources + test_sources,
+  sources: common_sources + test_sources + mock_sources,
   include_directories: include_directories(
     'include',
-    'test/include',
-    'mocks/include',
   ),
   cpp_args: cpp_args,
 )
@@ -586,11 +604,9 @@ mediasoup_worker_test_asan_address = executable(
   install: true,
   install_tag: 'mediasoup-worker-test-asan-address',
   dependencies: dependencies,
-  sources: common_sources + test_sources,
+  sources: common_sources + test_sources + mock_sources,
   include_directories: include_directories(
     'include',
-    'test/include',
-    'mocks/include',
   ),
   cpp_args: cpp_args + [
     '-g',
@@ -615,11 +631,9 @@ mediasoup_worker_test_asan_undefined = executable(
   install: true,
   install_tag: 'mediasoup-worker-test-asan-undefined',
   dependencies: dependencies,
-  sources: common_sources + test_sources,
+  sources: common_sources + test_sources + mock_sources,
   include_directories: include_directories(
     'include',
-    'test/include',
-    'mocks/include',
   ),
   cpp_args: cpp_args + [
     '-g',
@@ -638,7 +652,7 @@ test(
   workdir: meson.project_source_root(),
 )
 
-fuzzer_sources = common_sources + [
+fuzzer_sources = [
   'fuzzer/src/fuzzer.cpp',
   'fuzzer/src/FuzzerUtils.cpp',
   'fuzzer/src/RTC/FuzzerDtlsTransport.cpp',
@@ -681,8 +695,6 @@ fuzzer_sources = common_sources + [
   'fuzzer/src/RTC/RTCP/FuzzerXr.cpp',
   'fuzzer/src/RTC/SCTP/association/FuzzerStateCookie.cpp',
   'fuzzer/src/RTC/SCTP/packet/FuzzerPacket.cpp',
-  'mocks/src/MockShared.cpp',
-  'mocks/src/Channel/MockChannelMessageRegistrator.cpp',
 ]
 
 executable(
@@ -691,11 +703,10 @@ executable(
   install: true,
   install_tag: 'mediasoup-worker-fuzzer',
   dependencies: dependencies,
-  sources: fuzzer_sources,
+  sources: common_sources + fuzzer_sources + mock_sources,
   include_directories: include_directories(
     'include',
-    'fuzzer/include',
-    'mocks/include',
+    'fuzzer/include'
   ),
   cpp_args: cpp_args + [
     '-g',

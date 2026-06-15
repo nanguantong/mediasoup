@@ -1,9 +1,9 @@
-#include "RTC/RTP/rtpCommon.hpp" // in worker/test/include/
-#include <cstring>               // std::memset
+#include "test/include/RTC/RTP/rtpCommon.hpp" // in worker/test/include/
+#include <cstring>                            // std::memset
 
 namespace rtpCommon
 {
-	// NOTE: Buffers must be 4-byte aligned since RTP Packet parsing casts them
+	// NOTE: Buffers must be 4-byte aligned since RTP packet parsing casts them
 	// to structs (e.g. FixedHeader, HeaderExtension) that require 4-byte
 	// alignment. Without this, accessing multi-byte fields would be undefined
 	// behavior on strict-alignment architectures.

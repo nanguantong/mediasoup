@@ -27,7 +27,7 @@ namespace RTC
 
 			if (chunkType != Chunk::ChunkType::DATA)
 			{
-				MS_WARN_DEV("invalid Chunk type");
+				MS_WARN_DEV("invalid chunk type");
 
 				return nullptr;
 			}
@@ -69,7 +69,7 @@ namespace RTC
 			{
 				MS_WARN_TAG(
 				  sctp,
-				  "DataChunk Length field must be equal or greater than %zu",
+				  "DataChunk length field must be equal or greater than %zu",
 				  DataChunk::DataChunkHeaderLength);
 
 				return nullptr;
@@ -193,6 +193,23 @@ namespace RTC
 			MS_TRACE();
 
 			SetVariableLengthValue(userDataPayload, userDataPayloadLength);
+		}
+
+		void DataChunk::SetUserData(UserData userData)
+		{
+			MS_TRACE();
+
+			SetStreamId(userData.GetStreamId());
+			SetStreamSequenceNumber(userData.GetStreamSequenceNumber());
+			SetPayloadProtocolId(userData.GetPayloadProtocolId());
+
+			SetB(userData.IsBeginning());
+			SetE(userData.IsEnd());
+			SetU(userData.IsUnordered());
+
+			const auto payload = std::move(userData).ReleasePayload();
+
+			SetUserDataPayload(payload.data(), payload.size());
 		}
 
 		DataChunk* DataChunk::SoftClone(const uint8_t* buffer) const

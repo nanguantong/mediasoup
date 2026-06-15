@@ -2,16 +2,16 @@
 #define MS_RTC_SCTP_RETRANSMISSION_QUEUE_HPP
 
 #include "common.hpp"
-#include "RTC/SCTP/common/UnwrappedSequenceNumber.hpp"
+#include "handles/BackoffTimerHandleInterface.hpp"
 #include "RTC/SCTP/packet/Packet.hpp"
 #include "RTC/SCTP/packet/UserData.hpp"
 #include "RTC/SCTP/packet/chunks/ForwardTsnChunk.hpp"
 #include "RTC/SCTP/packet/chunks/IForwardTsnChunk.hpp"
 #include "RTC/SCTP/packet/chunks/SackChunk.hpp"
-#include "RTC/SCTP/public/AssociationListener.hpp"
+#include "RTC/SCTP/public/AssociationListenerInterface.hpp"
 #include "RTC/SCTP/public/SctpOptions.hpp"
 #include "RTC/SCTP/tx/OutstandingData.hpp"
-#include "handles/BackoffTimerHandleInterface.hpp"
+#include "RTC/SCTP/tx/SendQueueInterface.hpp"
 #include <vector>
 
 namespace RTC
@@ -41,9 +41,6 @@ namespace RTC
 				virtual void OnRetransmissionQueueClearRetransmissionCounter() = 0;
 			};
 
-		public:
-			using UnwrappedTsn = UnwrappedSequenceNumber<uint32_t>;
-
 		private:
 			enum class CongestionAlgorithmPhase : uint8_t
 			{
@@ -57,21 +54,19 @@ namespace RTC
 			 * `localInitialTsn` as the first TSN to use for sent fragments. It will
 			 * poll data from `sendQueue`. When SACKs are received, it will estimate
 			 * the RTT and call `listener->OnRetransmissionQueueNewRttMs()`. When an
-			 * outstanding Chunk has been acked, it will call
+			 * outstanding chunk has been acked, it will call
 			 * `listener->OnRetransmissionQueueClearRetransmissionCounter() and will
 			 * also use `t3RtxTimer`, which is the SCTP retransmission timer to manage
 			 * retransmissions.
 			 */
 			RetransmissionQueue(
 			  Listener* listener,
-			  AssociationListener& associationListener,
+			  AssociationListenerInterface& associationListener,
 			  uint32_t localInitialTsn,
 			  uint32_t remoteAdvertisedReceiverWindowCredit,
-			  // TODO: SCTP: Implement
-			  // SendQueue& sendQueue,
+			  SendQueueInterface& sendQueue,
 			  BackoffTimerHandleInterface* t3RtxTimer,
 			  const SctpOptions& sctpOptions,
-			  // TODO: SCTP: I don't like these defaults (true and false), let's be explicit.
 			  bool supportsPartialReliability,
 			  bool useMessageInterleaving);
 
@@ -95,22 +90,35 @@ namespace RTC
 			}
 
 			/**
-			 * Returns a list of Chunks to "fast retransmit" that would fit in
+			 * Returns a list of chunks to "fast retransmit" that would fit in
 			 * `maxLength` (bytes). The current value of `cwnd` is ignored.
 			 */
 			std::vector<std::pair<uint32_t /*tsn*/, UserData>> GetChunksForFastRetransmit(size_t maxLength);
 
 			/**
-			 * Returns a list of Chunks to send that would fit in `maxLength`
+			 * Returns a list of chunks to send that would fit in `maxLength`
 			 * (bytes). This may be further limited by the congestion control windows.
 			 * Note that `ShouldSendForwardTsn()` must be called prior to this method,
-			 * to abandon expired Chunks, as this method will not expire any Chunks.
+			 * to abandon expired chunks, as this method will not expire any chunks.
 			 */
 			std::vector<std::pair<uint32_t /*tsn*/, UserData>> GetChunksToSend(
 			  uint64_t nowMs, size_t maxLength);
 
+#ifdef MS_TEST
 			/**
-			 * Returns the next TSN that will be allocated for sent DATA Chunks.
+			 * Returns the internal state of all queued chunks.
+			 *
+			 * @remarks
+			 * - Used in tests.
+			 */
+			std::vector<std::pair<uint32_t /*tsn*/, OutstandingData::State>> GetChunkStatesForTesting() const
+			{
+				return this->outstandingData.GetChunkStatesForTesting();
+			}
+#endif
+
+			/**
+			 * Returns the next TSN that will be allocated for sent DATA chunks.
 			 */
 			uint32_t GetNextTsn() const
 			{
@@ -119,7 +127,7 @@ namespace RTC
 
 			uint32_t GetLastAssignedTsn() const
 			{
-				return UnwrappedTsn::AddTo(this->outstandingData.GetNextTsn(), -1).Wrap();
+				return Types::UnwrappedTsn::AddTo(this->outstandingData.GetNextTsn(), -1).Wrap();
 			}
 
 			/**
@@ -174,50 +182,37 @@ namespace RTC
 			}
 
 			/**
-			 * Given the current time `nowMs`, it will evaluate if there are Chunks
+			 * Given the current time `nowMs`, it will evaluate if there are chunks
 			 * that have expired and that need to be discarded. It returns true if a
 			 * FORWARD-TSN should be sent.
 			 */
 			bool ShouldSendForwardTsn(uint64_t nowMs);
 
 			/**
-			 * Creates a FORWARD-TSN Chunk and adds it to the given Packet.
+			 * Adds a FORWARD-TSN chunk to the given packet and returns it.
 			 */
-			void CreateForwardTsn(Packet* packet) const
+			const ForwardTsnChunk* AddForwardTsn(Packet* packet) const
 			{
-				this->outstandingData.CreateForwardTsn(packet);
+				return this->outstandingData.AddForwardTsn(packet);
 			}
 
 			/**
-			 * Creates an I-FORWARD-TSN Chunk and adds it to the given Packet.
+			 * Adds an I-FORWARD-TSN chunk to the given packet and returns it.
 			 */
-			void CreateIForwardTsn(Packet* packet) const
+			const IForwardTsnChunk* AddIForwardTsn(Packet* packet) const
 			{
-				this->outstandingData.CreateIForwardTsn(packet);
+				return this->outstandingData.AddIForwardTsn(packet);
 			}
 
 			/**
-			 * @see SendQueue for a longer description of these methods related
-			 * to stream resetting.
+			 * @see SendQueueInterface for a longer description of these methods
+			 * related to stream resetting.
 			 */
 			void PrepareResetStream(uint16_t streamId);
 			bool HasStreamsReadyToBeReset() const;
 			std::vector<uint16_t /*streamId*/> BeginResetStreams();
 			void CommitResetStreams();
 			void RollbackResetStreams();
-
-#ifdef MS_TEST
-			/**
-			 * Returns the internal state of all queued Chunks.
-			 *
-			 * @remarks
-			 * - This is only used in tests.
-			 */
-			std::vector<std::pair<uint32_t /*tsn*/, OutstandingData::State>> GetChunkStatesForTesting() const
-			{
-				return this->outstandingData.GetChunkStatesForTesting();
-			}
-#endif
 
 		private:
 			/**
@@ -234,7 +229,7 @@ namespace RTC
 			}
 
 			/**
-			 * Indicates if the provided SACK Chunk is valid given what has previously
+			 * Indicates if the provided SACK chunk is valid given what has previously
 			 * been received. If it returns false, the SACK is most likely a duplicate
 			 * of something already seen, so this returning false doesn't necessarily
 			 * mean that the SACK is illegal.
@@ -242,37 +237,37 @@ namespace RTC
 			bool IsSackChunkValid(const SackChunk* sackChunk) const;
 
 			/**
-			 * When a SACK Chunk is received, this method will be called which may
+			 * When a SACK chunk is received, this method will be called which may
 			 * call into the `RetransmissionTimeout` to update the RTO.
 			 */
-			void UpdateRttMs(uint64_t nowMs, UnwrappedTsn cumulativeTsnAck);
+			void UpdateRttMs(uint64_t nowMs, Types::UnwrappedTsn cumulativeTsnAck);
 
 			/**
 			 * If the congestion control is in "fast recovery mode", this may be
 			 * exited now.
 			 */
-			void MayExitFastRecovery(UnwrappedTsn cumulativeTsnAck);
+			void MayExitFastRecovery(Types::UnwrappedTsn cumulativeTsnAck);
 
 			/**
-			 * If Chunks have been ACKed, stop the retransmission timer.
+			 * If chunks have been ACKed, stop the retransmission timer.
 			 *
 			 * @remarks
 			 * - This method is NOT defined in dcsctp! See bug report:
 			 *   https://issues.webrtc.org/issues/505751236
 			 */
-			void StopT3RtxTimerOnIncreasedCumulativeTsnAck(UnwrappedTsn cumulativeTsnAck);
+			void StopT3RtxTimerOnIncreasedCumulativeTsnAck(Types::UnwrappedTsn cumulativeTsnAck);
 
 			/**
 			 * Update the congestion control algorithm given as the cumulative ack TSN
-			 * value has increased, as reported in an incoming SACK Chunk.
+			 * value has increased, as reported in an incoming SACK chunk.
 			 */
 			void HandleIncreasedCumulativeTsnAck(size_t unackedPacketBytes, size_t totalBytesAcked);
 
 			/**
 			 * Update the congestion control algorithm, given as packet loss has been
-			 * detected, as reported in an incoming SACK Chunk.
+			 * detected, as reported in an incoming SACK chunk.
 			 */
-			void HandlePacketLoss(UnwrappedTsn highestTsnAcked);
+			void HandlePacketLoss(Types::UnwrappedTsn highestTsnAcked);
 
 			/**
 			 * Update the view of the receiver window size.
@@ -296,7 +291,7 @@ namespace RTC
 
 		private:
 			Listener* listener;
-			AssociationListener& associationListener;
+			AssociationListenerInterface& associationListener;
 			const SctpOptions sctpOptions;
 			// If the peer supports RFC3758 "SCTP Partial Reliability Extension".
 			bool supportsPartialReliability;
@@ -305,7 +300,7 @@ namespace RTC
 			// The retransmission timer.
 			BackoffTimerHandleInterface* t3RtxTimer;
 			// Unwraps TSNs.
-			UnwrappedTsn::Unwrapper tsnUnwrapper;
+			Types::UnwrappedTsn::Unwrapper tsnUnwrapper;
 			// Congestion Window. Number of bytes that may be in-flight (sent, not
 			// acked).
 			size_t cwnd;
@@ -320,15 +315,13 @@ namespace RTC
 			uint64_t rtxBytesCount{ 0 };
 			// If set, fast recovery is enabled until this TSN has been cumulative
 			// acked.
-			std::optional<UnwrappedTsn> fastRecoveryExitTsn{ std::nullopt };
+			std::optional<Types::UnwrappedTsn> fastRecoveryExitTsn{ std::nullopt };
 			// The send queue.
-			// TODO: SCTP: Implement.
-			// SendQueue& sendQueue;
-			// All the outstanding data Chunks that are in-flight and that have not
+			SendQueueInterface& sendQueue;
+			// All the outstanding data chunks that are in-flight and that have not
 			// been cumulative acked. Note that it also contains chunks that have been
 			// acked in gap-ack-blocks.
 			OutstandingData outstandingData;
-			// TODO: SCTP.
 		};
 	} // namespace SCTP
 } // namespace RTC

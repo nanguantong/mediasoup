@@ -2,6 +2,8 @@
 #define MS_RTC_SCTP_TYPES_HPP
 
 #include "common.hpp"
+#include "Utils/UnwrappedSequenceNumber.hpp"
+#include <limits>
 #include <string_view>
 
 namespace RTC
@@ -23,25 +25,25 @@ namespace RTC
 				 */
 				NEW,
 				/**
-				 * The Association is closed.
+				 * The association is closed.
 				 */
 				CLOSED,
 				/**
-				 * The Association has initiated a connection, which is not yet
+				 * The association has initiated a connection, which is not yet
 				 * established.
 				 *
 				 * @remarks
-				 * - For incoming connections and for reconnections when the Association
-				 *   is already connected, the Association will not transition to this
+				 * - For incoming connections and for reconnections when the association
+				 *   is already connected, the association will not transition to this
 				 *   state.
 				 */
 				CONNECTING,
 				/**
-				 * The Association is connected and the connection is established.
+				 * The association is connected and the connection is established.
 				 */
 				CONNECTED,
 				/**
-				 * The Association is shutting down, and the connection is not yet closed.
+				 * The association is shutting down, and the connection is not yet closed.
 				 */
 				SHUTTING_DOWN
 			};
@@ -96,7 +98,7 @@ namespace RTC
 				TOO_MANY_RETRIES,
 				/**
 				 * A command was received that is only possible to execute when the
-				 * Association is connected, which it is not.
+				 * association is connected, which it is not.
 				 */
 				NOT_CONNECTED,
 				/**
@@ -164,7 +166,7 @@ namespace RTC
 
 					case ErrorKind::PROTOCOL_VIOLATION:
 					{
-						return "PROTOCOL_VIOLATION";
+						return "PROTOCOL-VIOLATION";
 					}
 
 					case ErrorKind::RESOURCE_EXHAUSTION:
@@ -290,13 +292,13 @@ namespace RTC
 				ERROR_MESSAGE_TOO_LARGE,
 
 				/**
-				 * The message could not be enqueued as the Association is out of
+				 * The message could not be enqueued as the association is out of
 				 * resources. This mainly indicates that the send queue is full.
 				 */
 				ERROR_RESOURCE_EXHAUSTION,
 
 				/**
-				 * The message could not be sent as the Association is shutting down.
+				 * The message could not be sent as the association is shutting down.
 				 */
 				ERROR_SHUTTING_DOWN
 			};
@@ -329,8 +331,29 @@ namespace RTC
 					{
 						return "ERROR_SHUTTING_DOWN";
 					}
+
+						NO_DEFAULT_GCC();
 				}
 			}
+
+			constexpr uint16_t MaxRetransmitsNoLimit{ std::numeric_limits<uint16_t>::max() };
+
+			constexpr uint64_t ExpiresAtMsInfinite{ std::numeric_limits<uint64_t>::max() };
+
+			/**
+			 * Unwrapped Transmission Sequence Numbers (TSN).
+			 */
+			using UnwrappedTsn = Utils::UnwrappedSequenceNumber<uint32_t>;
+
+			/**
+			 * Unwrapped Stream Sequence Numbers (SSN).
+			 */
+			using UnwrappedSsn = Utils::UnwrappedSequenceNumber<uint16_t>;
+
+			/**
+			 * Unwrapped Message Identifier (MID).
+			 */
+			using UnwrappedMid = Utils::UnwrappedSequenceNumber<uint32_t>;
 		} // namespace Types
 	} // namespace SCTP
 } // namespace RTC

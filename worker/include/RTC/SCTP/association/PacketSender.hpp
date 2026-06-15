@@ -3,7 +3,7 @@
 
 #include "common.hpp"
 #include "RTC/SCTP/packet/Packet.hpp"
-#include "RTC/SCTP/public/AssociationListener.hpp"
+#include "RTC/SCTP/public/AssociationListenerInterface.hpp"
 
 namespace RTC
 {
@@ -23,16 +23,16 @@ namespace RTC
 			};
 
 		public:
-			PacketSender(Listener* listener, AssociationListener& associationListener);
+			PacketSender(Listener* listener, AssociationListenerInterface& associationListener);
 
 			~PacketSender();
 
 		public:
 			/**
-			 * Notifies the parent about a Packet to be sent to the peer and returns a
-			 * boolean indicating whether the Packet was sent or not.
+			 * Notifies the parent about a packet to be sent to the peer and returns a
+			 * boolean indicating whether the packet was sent or not.
 			 *
-			 * This method also writes the Packet checksum field depending on the value
+			 * This method also writes the packet checksum field depending on the value
 			 * of `writeChecksum`.
 			 *
 			 * @remarks
@@ -43,7 +43,7 @@ namespace RTC
 
 		private:
 			Listener* listener;
-			AssociationListener& associationListener;
+			AssociationListenerInterface& associationListener;
 		};
 	} // namespace SCTP
 } // namespace RTC
