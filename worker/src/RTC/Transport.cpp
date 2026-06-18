@@ -2,14 +2,10 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/Transport.hpp"
-#include "Logger.hpp"
-#include "MediaSoupErrors.hpp"
-#include "Utils.hpp"
-#ifdef MS_LIBURING_SUPPORTED
-#include "DepLibUring.hpp"
-#endif
 #include "FBS/sctpAssociation.h"
 #include "FBS/transport.h"
+#include "Logger.hpp"
+#include "MediaSoupErrors.hpp"
 #include "RTC/BweType.hpp"
 #include "RTC/Consts.hpp"
 #include "RTC/Consumer.hpp"
@@ -22,6 +18,7 @@
 #include "RTC/RtpDictionaries.hpp"
 #include "RTC/SCTP/association/Association.hpp"
 #include "RTC/SCTP/public/SctpOptions.hpp"
+#include "Utils.hpp"
 #ifdef MS_RTC_LOGGER_RTP
 #include "RTC/RtcLogger.hpp"
 #endif
@@ -38,7 +35,8 @@ namespace RTC
 	  SharedInterface* shared,
 	  const std::string& id,
 	  RTC::Transport::Listener* listener,
-	  const FBS::Transport::Options* options)
+	  const FBS::Transport::Options* options,
+	  bool requireSctpStateCookieAuthentication)
 	  : id(id),
 	    shared(shared),
 	    listener(listener),
@@ -84,7 +82,8 @@ namespace RTC
 				.maxSendBufferSize           = this->sctpSendBufferSize,
 				.perStreamSendQueueLimit     = this->sctpPerStreamSendQueueLimit,
 				.maxReceiveMessageSize       = this->maxReceiveMessageSize,
-				.maxReceiverWindowBufferSize = this->sctpMaxReceiverWindowBufferSize
+				.maxReceiverWindowBufferSize = this->sctpMaxReceiverWindowBufferSize,
+				.requireAuthenticatedCookie  = requireSctpStateCookieAuthentication
 			};
 
 			this->sctpAssociation = std::make_unique<RTC::SCTP::Association>(
@@ -2272,14 +2271,6 @@ namespace RTC
 
 		std::unique_ptr<RTC::RTCP::CompoundPacket> packet{ new RTC::RTCP::CompoundPacket() };
 
-#ifdef MS_LIBURING_SUPPORTED
-		if (DepLibUring::IsEnabled())
-		{
-			// Activate liburing usage.
-			DepLibUring::SetActive();
-		}
-#endif
-
 		for (auto& kv : this->mapConsumers)
 		{
 			auto* consumer = kv.second;
@@ -2323,14 +2314,6 @@ namespace RTC
 		{
 			SendRtcpCompoundPacket(packet.get());
 		}
-
-#ifdef MS_LIBURING_SUPPORTED
-		if (DepLibUring::IsEnabled())
-		{
-			// Submit all prepared submission entries.
-			DepLibUring::Submit();
-		}
-#endif
 	}
 
 	void Transport::DistributeAvailableOutgoingBitrate()

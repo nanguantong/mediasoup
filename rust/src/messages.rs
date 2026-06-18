@@ -23,7 +23,7 @@ use crate::webrtc_server::{
 use crate::webrtc_transport::{
     WebRtcTransportListen, WebRtcTransportListenInfos, WebRtcTransportOptions,
 };
-use crate::worker::{ChannelMessageHandlers, LibUringDump, WorkerDump, WorkerUpdateSettings};
+use crate::worker::{ChannelMessageHandlers, WorkerDump, WorkerUpdateSettings};
 use mediasoup_sys::fbs::{
     active_speaker_observer, audio_level_observer, consumer, data_consumer, data_producer,
     direct_transport, message, notification, pipe_transport, plain_transport, producer, request,
@@ -136,11 +136,6 @@ impl Request for WorkerDumpRequest {
                     .map(|id| id.parse())
                     .collect::<Result<_, _>>()?,
             },
-            liburing: data.liburing.map(|liburing| LibUringDump {
-                sqe_process_count: liburing.sqe_process_count,
-                sqe_miss_count: liburing.sqe_miss_count,
-                user_data_miss_count: liburing.user_data_miss_count,
-            }),
         })
     }
 }
@@ -1515,7 +1510,7 @@ impl Request for PipeTransportConnectRequest {
 
 #[derive(Debug)]
 pub(crate) struct PlainTransportConnectResponse {
-    pub(crate) tuple: TransportTuple,
+    pub(crate) tuple: Option<TransportTuple>,
     pub(crate) rtcp_tuple: Option<TransportTuple>,
     pub(crate) srtp_parameters: Option<SrtpParameters>,
 }
@@ -1567,7 +1562,9 @@ impl Request for TransportConnectPlainRequest {
         let data = plain_transport::ConnectResponse::try_from(data)?;
 
         Ok(PlainTransportConnectResponse {
-            tuple: TransportTuple::from_fbs(data.tuple.as_ref()),
+            tuple: data
+                .tuple
+                .map(|tuple| TransportTuple::from_fbs(tuple.as_ref())),
             rtcp_tuple: data
                 .rtcp_tuple
                 .map(|tuple| TransportTuple::from_fbs(tuple.as_ref())),

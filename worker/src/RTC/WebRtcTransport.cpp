@@ -38,7 +38,10 @@ namespace RTC
 	  const std::string& id,
 	  RTC::Transport::Listener* listener,
 	  const FBS::WebRtcTransport::WebRtcTransportOptions* options)
-	  : RTC::Transport::Transport(shared, id, listener, options->base())
+	  // SCTP over WebRtcTransport runs within a DTLS session, so State Cookie
+	  // authentication is not needed.
+	  : RTC::Transport::Transport(
+	      shared, id, listener, options->base(), /*requireSctpStateCookieAuthentication*/ false)
 	{
 		MS_TRACE();
 
@@ -284,7 +287,10 @@ namespace RTC
 	  WebRtcTransportListener* webRtcTransportListener,
 	  const std::vector<RTC::ICE::IceCandidate>& iceCandidates,
 	  const FBS::WebRtcTransport::WebRtcTransportOptions* options)
-	  : RTC::Transport::Transport(shared, id, listener, options->base()),
+	  // SCTP over WebRtcTransport runs within a DTLS session, so State Cookie
+	  // authentication is not needed.
+	  : RTC::Transport::Transport(
+	      shared, id, listener, options->base(), /*requireSctpStateCookieAuthentication*/ false),
 	    webRtcTransportListener(webRtcTransportListener),
 	    iceCandidates(iceCandidates)
 	{
@@ -779,7 +785,7 @@ namespace RTC
 		const uint8_t* data = packet->GetBuffer();
 		auto len            = packet->GetLength();
 
-		if (!this->srtpSendSession->EncryptRtp(&data, &len))
+		if (!this->srtpSendSession->EncryptRtp(&data, std::addressof(len)))
 		{
 			if (cb)
 			{
@@ -816,7 +822,7 @@ namespace RTC
 			return;
 		}
 
-		if (!this->srtpSendSession->EncryptRtcp(&data, &len))
+		if (!this->srtpSendSession->EncryptRtcp(&data, std::addressof(len)))
 		{
 			return;
 		}
@@ -849,7 +855,7 @@ namespace RTC
 			return;
 		}
 
-		if (!this->srtpSendSession->EncryptRtcp(&data, &len))
+		if (!this->srtpSendSession->EncryptRtcp(&data, std::addressof(len)))
 		{
 			return;
 		}
@@ -1019,7 +1025,7 @@ namespace RTC
 		}
 
 		// Decrypt the SRTP packet.
-		if (!this->srtpRecvSession->DecryptSrtp(const_cast<uint8_t*>(data), &len))
+		if (!this->srtpRecvSession->DecryptSrtp(const_cast<uint8_t*>(data), std::addressof(len)))
 		{
 			const auto* packet = RTC::RTP::Packet::Parse(data, len, bufferLen);
 
@@ -1088,7 +1094,7 @@ namespace RTC
 		}
 
 		// Decrypt the SRTCP packet.
-		if (!this->srtpRecvSession->DecryptSrtcp(const_cast<uint8_t*>(data), &len))
+		if (!this->srtpRecvSession->DecryptSrtcp(const_cast<uint8_t*>(data), std::addressof(len)))
 		{
 			return;
 		}
