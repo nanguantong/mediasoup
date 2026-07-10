@@ -2,6 +2,19 @@
 
 ### NEXT
 
+- Worker: Enable SVC for VP8 and H264 ([PR #1851](https://github.com/versatica/mediasoup/pull/1851)).
+
+### 0.22.10
+
+- Worker: Fix new consumer regressions ([PR #1849](https://github.com/versatica/mediasoup/pull/1849)).
+- Add `NotFoundError`, thrown when the referenced entity in the Worker doesn't exist ([PR #1852](https://github.com/versatica/mediasoup/pull/1852)).
+
+### 0.22.9
+
+- Worker: Replace `uint64_t` hash with `TupleKey` in `TransportTuple` to avoid hash collisions ([PR #1823](https://github.com/versatica/mediasoup/pull/1823)).
+- Worker: Fix `SeqManager::GetMaxOutput()` ([PR #1840](https://github.com/versatica/mediasoup/pull/1840)).
+- Worker: Handle new STUN "NOMINATION" attribute `0x0030` ([PR #1846](https://github.com/versatica/mediasoup/pull/1846)).
+
 ### 0.22.8
 
 - Worker `Consumer`: Fix crash when using simple producer stream mode ([PR #1835](https://github.com/versatica/mediasoup/pull/1835)). The bug was introduced in version 3.20.6.

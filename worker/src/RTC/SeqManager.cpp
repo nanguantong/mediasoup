@@ -140,9 +140,7 @@ namespace RTC
 			}
 
 			// There are dropped inputs, calculate 'base' for this input.
-			auto droppedCount = std::distance(
-			  this->dropped.begin(),
-			  std::lower_bound(this->dropped.begin(), this->dropped.end(), input, SeqLowerThan()));
+			auto droppedCount = std::distance(this->dropped.begin(), it);
 
 			base = (this->base - droppedCount) & SeqManager::MaxValue;
 		}
@@ -187,7 +185,10 @@ namespace RTC
 	template<typename T, uint8_t N>
 	T SeqManager<T, N>::GetMaxOutput() const
 	{
-		return this->maxOutput;
+		// 'maxOutput' is stored in the offset-less space (as 'base' and comparisons
+		// use it), so apply 'initialOutput' here, just like `Input()` does before
+		// returning the output to the caller.
+		return (this->maxOutput + this->initialOutput) & SeqManager::MaxValue;
 	}
 
 	/*

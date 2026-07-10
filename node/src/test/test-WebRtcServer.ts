@@ -5,7 +5,7 @@ import type { WorkerImpl } from '../Worker';
 import type { WorkerEvents, WebRtcServerEvents } from '../types';
 import type { WebRtcServerImpl } from '../WebRtcServer';
 import type { RouterImpl } from '../Router';
-import { InvalidStateError } from '../errors';
+import { WorkerClosedError, NotFoundError } from '../errors';
 
 type TestContext = {
 	worker?: mediasoup.types.Worker;
@@ -80,7 +80,6 @@ test('worker.createWebRtcServer() succeeds', async () => {
 		tcpServers: [{ ip: '127.0.0.1', port: port2 }],
 		webRtcTransportIds: [],
 		localIceUsernameFragments: [],
-		tupleHashes: [],
 	});
 
 	// API not exposed in the interface.
@@ -149,7 +148,6 @@ test('worker.createWebRtcServer() with portRange succeeds', async () => {
 		tcpServers: [{ ip: '127.0.0.1', port: port2 }],
 		webRtcTransportIds: [],
 		localIceUsernameFragments: [],
-		tupleHashes: [],
 	});
 
 	// API not exposed in the interface.
@@ -205,7 +203,6 @@ test('worker.createWebRtcServer() without specifying port/portRange succeeds', a
 		tcpServers: [{ ip: '127.0.0.1', port: expect.any(Number) }],
 		webRtcTransportIds: [],
 		localIceUsernameFragments: [],
-		tupleHashes: [],
 	});
 
 	// API not exposed in the interface.
@@ -315,7 +312,7 @@ test('worker.createWebRtcServer() with unavailable listenInfos rejects with Erro
 	worker2.close();
 }, 2000);
 
-test('worker.createWebRtcServer() rejects with InvalidStateError if Worker is closed', async () => {
+test('worker.createWebRtcServer() rejects with WorkerClosedError if Worker is closed', async () => {
 	ctx.worker!.close();
 
 	const port = await pickPort({
@@ -328,7 +325,7 @@ test('worker.createWebRtcServer() rejects with InvalidStateError if Worker is cl
 		ctx.worker!.createWebRtcServer({
 			listenInfos: [{ protocol: 'udp', ip: '127.0.0.1', port }],
 		})
-	).rejects.toThrow(InvalidStateError);
+	).rejects.toThrow(WorkerClosedError);
 }, 2000);
 
 test('webRtcServer.close() succeeds', async () => {
@@ -344,6 +341,8 @@ test('webRtcServer.close() succeeds', async () => {
 
 	webRtcServer.observer.once('close', onObserverClose);
 	webRtcServer.close();
+
+	await expect(webRtcServer.dump()).rejects.toThrow(NotFoundError);
 
 	expect(onObserverClose).toHaveBeenCalledTimes(1);
 	expect(webRtcServer.closed).toBe(true);
@@ -369,6 +368,8 @@ test('WebRtcServer emits "workerclose" if Worker is closed', async () => {
 
 	expect(onObserverClose).toHaveBeenCalledTimes(1);
 	expect(webRtcServer.closed).toBe(true);
+
+	await expect(webRtcServer.dump()).rejects.toThrow(WorkerClosedError);
 }, 2000);
 
 test('router.createWebRtcTransport() with webRtcServer succeeds and transport is closed', async () => {
@@ -408,7 +409,6 @@ test('router.createWebRtcTransport() with webRtcServer succeeds and transport is
 	);
 
 	const router = await ctx.worker!.createRouter();
-
 	const onObserverNewTransport = jest.fn();
 
 	router.observer.once('newtransport', onObserverNewTransport);
@@ -471,7 +471,6 @@ test('router.createWebRtcTransport() with webRtcServer succeeds and transport is
 		localIceUsernameFragments: [
 			{ /* localIceUsernameFragment: xxx, */ webRtcTransportId: transport.id },
 		],
-		tupleHashes: [],
 	});
 
 	transport.close();
@@ -492,7 +491,6 @@ test('router.createWebRtcTransport() with webRtcServer succeeds and transport is
 		tcpServers: [{ ip: '127.0.0.1', port: port2 }],
 		webRtcTransportIds: [],
 		localIceUsernameFragments: [],
-		tupleHashes: [],
 	});
 }, 2000);
 
@@ -575,7 +573,6 @@ test('router.createWebRtcTransport() with webRtcServer succeeds and webRtcServer
 		localIceUsernameFragments: [
 			{ /* localIceUsernameFragment: xxx, */ webRtcTransportId: transport.id },
 		],
-		tupleHashes: [],
 	});
 
 	// Let's restart ICE in the transport so it should add a new entry in
@@ -591,7 +588,6 @@ test('router.createWebRtcTransport() with webRtcServer succeeds and webRtcServer
 			{ /* localIceUsernameFragment: xxx, */ webRtcTransportId: transport.id },
 			{ /* localIceUsernameFragment: yyy, */ webRtcTransportId: transport.id },
 		],
-		tupleHashes: [],
 	});
 
 	const onObserverClose = jest.fn();

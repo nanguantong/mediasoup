@@ -104,21 +104,56 @@ Same as `test:node` task but it also opens a browser window with TypeScript cove
 
 ### `npm run release:check`
 
-Runs linters and tests in Node and C++ code.
+Runs linters and tests in Node and C++ code. Also verifies that `CHANGELOG.md` has an entry matching the mediasoup version in `package.json`.
 
-### `npm run release`
+### `npm run release x.y.z`
 
-Publishes a new NPM version of mediasoup. Requirements for it to work:
+Prepares and triggers the release of a new version "x.y.z" of the `mediasoup` NPM package. The actual GitHub release and NPM publish are done by GitHub Actions (`mediasoup-npm-publish.yaml`) once the pushed tag arrives. It:
 
-- "version" field in `package.json` must have been incremented (and not commited to Git).
-- `CHANGELOG.md` file must have been updated with an entry matching the new version.
-- Of course, permissions to publish in NPM registry are required.
+- Performs checks (lint + test + build + publish dry-run + `CHANGELOG.md` entry check). It runs before the version bump, so the CHANGELOG check validates the previous version's entry (still in package.json), which is harmless.
+- Bumps the version to "x.y.z" in `package.json` and `package-lock.json` with `npm version x.y.z --no-git-tag-version`, and sets the top `### NEXT` heading of `CHANGELOG.md` to `### x.y.z`.
+- Commits the bump (with a "release x.y.z [no-ci]" message), creates the "x.y.z" tag, and pushes the branch and the tag.
+
+Requirements for it to work:
+
+- Must be called with a SEMVER version as single argument.
+- Must be in the main branch.
+- Work tree must be clean.
+- Changes for the new version must be under the `### NEXT` heading in `CHANGELOG.md`.
+
+### `npm run release:rust:check`
+
+Runs linters and tests in Rust code (`cargo fmt`, `cargo clippy`, `cargo test` and `cargo doc`). Also verifies that `rust/CHANGELOG.md` has an entry matching the `mediasoup` crate version in `rust/Cargo.toml`. Finally, when that version is not yet published on crates.io (i.e. it has been bumped and is about to be released), it also runs the publish dry-run (`cargo publish --dry-run` for the three crates as a group).
+
+The publish dry-run is skipped when the `mediasoup` crate version is already published, because Cargo would then resolve the dependencies among the three crates against the already-published copies on crates.io and any schema/API change made since the last release would fail verification spuriously even though nothing is being published.
+
+### `npm run release:rust <crate> x.y.z`
+
+Prepares and triggers the release of a new version "x.y.z" of a mediasoup Rust crate (`mediasoup`, `mediasoup-sys` or `mediasoup-types`). The actual GitHub release (if any) and crates.io publish are done by GitHub Actions (`mediasoup-crate-publish.yaml`) once the pushed commit/tag arrives. It:
+
+- Performs checks (lint + test + build + publish dry-run, plus the `rust/CHANGELOG.md` entry check when releasing the `mediasoup` crate). They run before the version bump, so the CHANGELOG check validates the previous version's entry (still in the manifest), which is harmless.
+- Bumps the crate version to "x.y.z" in its `Cargo.toml` (`rust/Cargo.toml`, `worker/Cargo.toml` or `rust/types/Cargo.toml`) and reflects it in the (workspace root) `Cargo.lock`. When releasing `mediasoup-sys` / `mediasoup-types`, it also bumps the matching `version` requirement of that dependency in the `mediasoup` crate's `rust/Cargo.toml` (committed together with the release), so the `mediasoup` crate keeps depending on the just-released version.
+
+Then, depending on the crate:
+
+- For `mediasoup`: it also sets the top `### NEXT` heading of `rust/CHANGELOG.md` to `### x.y.z`, commits the bump (with a `release rust-x.y.z [no-ci]` message), creates the `rust-x.y.z` tag and pushes the branch and the tag. The tag triggers `mediasoup-crate-publish.yaml`, which creates the GitHub release from `rust/CHANGELOG.md` and publishes the crate.
+- For `mediasoup-sys` / `mediasoup-types`: it commits the bump with a `<crate> x.y.z [crate-publish] [no-ci]` message and pushes the branch (no tag, no CHANGELOG change). The `[crate-publish]` marker is what `mediasoup-crate-publish.yaml` detects on the branch push to publish that crate (without a GitHub release).
+
+Since `mediasoup` depends on `mediasoup-sys` and `mediasoup-types`, when several crates need a new version publish the dependencies first (`mediasoup-types` / `mediasoup-sys`) and `mediasoup` last, so each crate's dependencies are already on crates.io. Requirements for it to work:
+
+- Must be called with a crate name and a SEMVER version as the two arguments.
+- Must be in the main branch.
+- Work tree must be clean.
+- `Cargo.lock` must be in sync (run `cargo build` and commit it if needed), otherwise the release aborts before doing anything irreversible.
+- When releasing the `mediasoup` crate, the changes for the new version must be under the `### NEXT` heading in `rust/CHANGELOG.md`.
 
 ## Rust
 
-The only special feature in Rust case is special environment variable "KEEP_BUILD_ARTIFACTS", that when set to "1" will allow incremental recompilation of changed C++ sources during hacking on mediasoup.
+The only special feature in Rust case is special environment variable "MEDIASOUP_LOCAL_DEV", that when set to "true" will allow incremental recompilation of changed C++ sources during hacking on mediasoup.
 
 It is not necessary for normal usage of mediasoup as a dependency.
+
+Other than that and normal `cargo` commands, see `npm run release:rust:check` and `npm run release:rust` above.
 
 ## Python Invoke and `tasks.py` file
 
