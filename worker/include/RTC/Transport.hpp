@@ -210,7 +210,7 @@ namespace RTC
 		  const std::string& dataProducerId, const std::string& method) const final;
 		virtual RTC::DataConsumer* AssertAndGetDataConsumerById(
 		  const std::string& dataConsumerId, const std::string& method) const final;
-		virtual RTC::DataConsumer* AssertAndGetSctpDataConsumerByStreamId(uint16_t streamId) const final;
+		virtual RTC::DataConsumer* GetSctpDataConsumerByStreamId(uint16_t streamId) const final;
 		virtual void CheckNoProducer(const std::string& producerId, const std::string& method) const final;
 		virtual void CheckNoConsumer(const std::string& consumerId, const std::string& method) const final;
 		virtual void CheckNoDataProducer(
@@ -219,6 +219,10 @@ namespace RTC
 		  const std::string& dataConsumerId, const std::string& method) const final;
 		virtual void CheckNoSctpDataConsumer(uint16_t streamId, const std::string& method) const final;
 		virtual bool IsConnected() const = 0;
+		virtual bool IsPipe() const
+		{
+			return false;
+		}
 		virtual void SendRtpPacket(
 		  RTC::Consumer* consumer, RTC::RTP::Packet* packet, const onSendCallback* cb = nullptr) = 0;
 		virtual void HandleRtcpPacket(RTC::RTCP::Packet* packet) final;

@@ -18,6 +18,7 @@
 #include "RTC/RtpDictionaries.hpp"
 #include "RTC/SCTP/association/Association.hpp"
 #include "RTC/SCTP/public/SctpOptions.hpp"
+#include "RTC/SubchannelsCodec.hpp"
 #include "Utils.hpp"
 #ifdef MS_RTC_LOGGER_RTP
 #include "RTC/RtcLogger.hpp"
@@ -1111,7 +1112,13 @@ namespace RTC
 
 				// This may throw.
 				auto* dataConsumer = new RTC::DataConsumer(
-				  this->shared, dataConsumerId, dataProducerId, this, body, this->maxSendMessageSize);
+				  this->shared,
+				  dataConsumerId,
+				  dataProducerId,
+				  this,
+				  body,
+				  this->maxSendMessageSize,
+				  this->IsPipe());
 
 				// Verify the type of the DataConsumer.
 				switch (dataConsumer->GetType())
@@ -1189,19 +1196,8 @@ namespace RTC
 
 				request->Accept(FBS::Response::Body::DataConsumer_DumpResponse, dumpOffset);
 
-				if (IsConnected())
-				{
-					dataConsumer->TransportConnected();
-				}
-
 				if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
 				{
-					if (this->sctpAssociation->GetAssociationState() == RTC::SCTP::Types::AssociationState::CONNECTED)
-					{
-						// Tell to the DataConsumer.
-						dataConsumer->SctpAssociationConnected();
-					}
-
 					// Tell to the SCTP association.
 					this->sctpAssociation->MayConnect();
 				}
@@ -1401,6 +1397,10 @@ namespace RTC
 
 				if (this->sctpAssociation)
 				{
+					// NOTE: This must be called after removing data consumers from the maps,
+					// otherwise if `OnAssociationStreamBufferedAmountLow()` was triggered it
+					// would end up emitting an event associated to an already closed data
+					// consumer.
 					this->sctpAssociation->ResetStreams(
 					  std::array<uint16_t, 1>{ dataConsumer->GetSctpStreamParameters().streamId });
 				}
@@ -1476,14 +1476,6 @@ namespace RTC
 			consumer->TransportConnected();
 		}
 
-		// Tell all DataConsumers.
-		for (auto& kv : this->mapDataConsumers)
-		{
-			auto* dataConsumer = kv.second;
-
-			dataConsumer->TransportConnected();
-		}
-
 		// Tell the SctpAssociation.
 		if (this->sctpAssociation)
 		{
@@ -1524,14 +1516,6 @@ namespace RTC
 			auto* consumer = kv.second;
 
 			consumer->TransportDisconnected();
-		}
-
-		// Tell all DataConsumers.
-		for (auto& kv : this->mapDataConsumers)
-		{
-			auto* dataConsumer = kv.second;
-
-			dataConsumer->TransportDisconnected();
 		}
 
 		// Stop the RTCP timer.
@@ -1764,7 +1748,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		auto it = this->mapProducers.find(producerId);
+		const auto it = this->mapProducers.find(producerId);
 
 		if (it == this->mapProducers.end())
 		{
@@ -1779,7 +1763,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		auto it = this->mapConsumers.find(consumerId);
+		const auto it = this->mapConsumers.find(consumerId);
 
 		if (it == this->mapConsumers.end())
 		{
@@ -1793,7 +1777,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		auto mapSsrcConsumerIt = this->mapSsrcConsumer.find(ssrc);
+		const auto mapSsrcConsumerIt = this->mapSsrcConsumer.find(ssrc);
 
 		if (mapSsrcConsumerIt == this->mapSsrcConsumer.end())
 		{
@@ -1809,7 +1793,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		auto mapRtxSsrcConsumerIt = this->mapRtxSsrcConsumer.find(ssrc);
+		const auto mapRtxSsrcConsumerIt = this->mapRtxSsrcConsumer.find(ssrc);
 
 		if (mapRtxSsrcConsumerIt == this->mapRtxSsrcConsumer.end())
 		{
@@ -1826,7 +1810,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		auto it = this->mapDataProducers.find(dataProducerId);
+		const auto it = this->mapDataProducers.find(dataProducerId);
 
 		if (it == this->mapDataProducers.end())
 		{
@@ -1841,7 +1825,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		auto it = this->mapDataConsumers.find(dataConsumerId);
+		const auto it = this->mapDataConsumers.find(dataConsumerId);
 
 		if (it == this->mapDataConsumers.end())
 		{
@@ -1851,15 +1835,15 @@ namespace RTC
 		return it->second;
 	}
 
-	RTC::DataConsumer* Transport::AssertAndGetSctpDataConsumerByStreamId(uint16_t streamId) const
+	RTC::DataConsumer* Transport::GetSctpDataConsumerByStreamId(uint16_t streamId) const
 	{
 		MS_TRACE();
 
-		auto it = this->mapSctpStreamIdDataConsumers.find(streamId);
+		const auto it = this->mapSctpStreamIdDataConsumers.find(streamId);
 
 		if (it == this->mapSctpStreamIdDataConsumers.end())
 		{
-			MS_THROW_NOT_FOUND_ERROR("SCTP DataConsumer with streamId %" PRIu16 " not found", streamId);
+			return nullptr;
 		}
 
 		return it->second;
@@ -2938,6 +2922,10 @@ namespace RTC
 			this->mapSctpStreamIdDataConsumers.erase(dataConsumer->GetSctpStreamParameters().streamId);
 		}
 
+		// NOTE: This must be called after removing the data consumer from the maps,
+		// otherwise if `OnAssociationStreamBufferedAmountLow()` was triggered it
+		// would end up emitting an event associated to an already closed data
+		// consumer.
 		if (this->sctpAssociation)
 		{
 			this->sctpAssociation->ResetStreams(
@@ -2991,17 +2979,6 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		// Tell all DataConsumers.
-		for (auto& kv : this->mapDataConsumers)
-		{
-			auto* dataConsumer = kv.second;
-
-			if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
-			{
-				dataConsumer->SctpAssociationConnected();
-			}
-		}
-
 		// Notify the upper layer.
 
 		// First tell it about the SCTP negotiated capabilities.
@@ -3033,7 +3010,7 @@ namespace RTC
 
 // For debugging purposes.
 #if MS_LOG_DEV_LEVEL == 3
-		MS_DUMP("--- SCTP association connected:");
+		MS_DUMP("SCTP association connected:");
 		this->sctpAssociation->Dump();
 #endif
 	}
@@ -3179,10 +3156,17 @@ namespace RTC
 		// Pass the SCTP message to the corresponding DataProducer.
 		try
 		{
-			static thread_local std::vector<uint16_t> emptySubchannels;
+			std::vector<uint16_t> subchannels;
+			std::optional<uint16_t> requiredSubchannel;
 
-			dataProducer->ReceiveMessage(
-			  std::move(message), emptySubchannels, /*requiredSubchannel*/ std::nullopt);
+			// When this is a pipe transport, the subchannels and required subchannel
+			// may be encoded at the beginning of the message payload.
+			if (this->IsPipe())
+			{
+				RTC::SubchannelsCodec::DecodeSubchannels(message, subchannels, requiredSubchannel);
+			}
+
+			dataProducer->ReceiveMessage(std::move(message), subchannels, requiredSubchannel);
 		}
 		catch (std::exception& error)
 		{
@@ -3247,8 +3231,6 @@ namespace RTC
 
 			if (!dataConsumersToClose.empty())
 			{
-				this->sctpAssociation->ResetStreams(streamsToReset);
-
 				for (auto* dataConsumer : dataConsumersToClose)
 				{
 					// Remove it from the maps.
@@ -3271,6 +3253,12 @@ namespace RTC
 					// Delete it.
 					delete dataConsumer;
 				}
+
+				// NOTE: This must be called after removing data consumers from the maps,
+				// otherwise if `OnAssociationStreamBufferedAmountLow()` was triggered it
+				// would end up emitting an event associated to an already closed data
+				// consumer.
+				this->sctpAssociation->ResetStreams(streamsToReset);
 			}
 		}
 	}
@@ -3279,7 +3267,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		const auto* dataConsumer = AssertAndGetSctpDataConsumerByStreamId(streamId);
+		const auto* dataConsumer = GetSctpDataConsumerByStreamId(streamId);
 
 		if (!dataConsumer)
 		{
