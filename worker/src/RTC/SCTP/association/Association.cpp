@@ -54,6 +54,7 @@ namespace RTC
 		      this->associationListenerDeferrer,
 		      sctpOptions.mtu,
 		      sctpOptions.defaultStreamPriority,
+		      sctpOptions.defaultStreamBufferedAmountLowThreshold,
 		      sctpOptions.totalBufferedAmountLowThreshold),
 		    t1InitTimer(this->shared->CreateBackoffTimer(
 		      BackoffTimerHandleInterface::BackoffTimerHandleOptions{
@@ -344,6 +345,8 @@ namespace RTC
 
 		std::optional<AssociationMetrics> Association::MakeMetrics() const
 		{
+			MS_TRACE();
+
 			if (!this->tcb)
 			{
 				return std::nullopt;

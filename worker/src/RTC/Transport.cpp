@@ -49,19 +49,9 @@ namespace RTC
 	{
 		MS_TRACE();
 
+		this->direct                = options->direct();
 		this->maxSendMessageSize    = options->maxSendMessageSize();
 		this->maxReceiveMessageSize = options->maxReceiveMessageSize();
-
-		if (options->direct())
-		{
-			this->direct = true;
-		}
-		else
-		{
-			this->sctpSendBufferSize              = options->sctpSendBufferSize();
-			this->sctpPerStreamSendQueueLimit     = options->sctpPerStreamSendQueueLimit();
-			this->sctpMaxReceiverWindowBufferSize = options->sctpMaxReceiverWindowBufferSize();
-		}
 
 		if (
 		  auto initialAvailableOutgoingBitrate = options->initialAvailableOutgoingBitrate();
@@ -80,11 +70,13 @@ namespace RTC
 			const RTC::SCTP::SctpOptions sctpOptions = {
 				.mtu                         = RTC::Consts::MaxSafeMtuSizeForSctp,
 				.maxSendMessageSize          = this->maxSendMessageSize,
-				.maxSendBufferSize           = this->sctpSendBufferSize,
-				.perStreamSendQueueLimit     = this->sctpPerStreamSendQueueLimit,
+				.maxSendBufferSize           = options->sctpSendBufferSize(),
+				.perStreamSendQueueLimit     = options->sctpPerStreamSendQueueLimit(),
 				.maxReceiveMessageSize       = this->maxReceiveMessageSize,
-				.maxReceiverWindowBufferSize = this->sctpMaxReceiverWindowBufferSize,
-				.requireAuthenticatedCookie  = requireSctpStateCookieAuthentication
+				.maxReceiverWindowBufferSize = options->sctpMaxReceiverWindowBufferSize(),
+				.defaultStreamBufferedAmountLowThreshold =
+				  options->sctpDefaultStreamBufferedAmountLowThreshold(),
+				.requireAuthenticatedCookie = requireSctpStateCookieAuthentication
 			};
 
 			this->sctpAssociation = std::make_unique<RTC::SCTP::Association>(
@@ -2834,12 +2826,13 @@ namespace RTC
 	  RTC::DataProducer* dataProducer,
 	  RTC::SCTP::Message message,
 	  std::vector<uint16_t>& subchannels,
-	  std::optional<uint16_t> requiredSubchannel)
+	  std::optional<uint16_t> requiredSubchannel,
+	  std::optional<uint16_t> ignoredSubchannel)
 	{
 		MS_TRACE();
 
 		this->listener->OnTransportDataProducerMessageReceived(
-		  this, dataProducer, std::move(message), subchannels, requiredSubchannel);
+		  this, dataProducer, std::move(message), subchannels, requiredSubchannel, ignoredSubchannel);
 	}
 
 	void Transport::OnDataProducerPaused(RTC::DataProducer* dataProducer)
@@ -2883,6 +2876,8 @@ namespace RTC
 	void Transport::OnDataConsumerNeedBufferedAmountLowThreshold(
 	  const RTC::DataConsumer* dataConsumer, uint32_t& bufferedAmountLowThreshold) const
 	{
+		MS_TRACE();
+
 		if (this->sctpAssociation)
 		{
 			bufferedAmountLowThreshold =
@@ -3158,15 +3153,18 @@ namespace RTC
 		{
 			std::vector<uint16_t> subchannels;
 			std::optional<uint16_t> requiredSubchannel;
+			std::optional<uint16_t> ignoredSubchannel;
 
-			// When this is a pipe transport, the subchannels and required subchannel
-			// may be encoded at the beginning of the message payload.
+			// When this is a pipe transport, the subchannels, required subchannel and
+			// ignored subchannel may be encoded at the beginning of the message payload.
 			if (this->IsPipe())
 			{
-				RTC::SubchannelsCodec::DecodeSubchannels(message, subchannels, requiredSubchannel);
+				RTC::SubchannelsCodec::DecodeSubchannels(
+				  message, subchannels, requiredSubchannel, ignoredSubchannel);
 			}
 
-			dataProducer->ReceiveMessage(std::move(message), subchannels, requiredSubchannel);
+			dataProducer->ReceiveMessage(
+			  std::move(message), subchannels, requiredSubchannel, ignoredSubchannel);
 		}
 		catch (std::exception& error)
 		{

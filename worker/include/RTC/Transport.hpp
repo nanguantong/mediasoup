@@ -108,7 +108,8 @@ namespace RTC
 			  RTC::DataProducer* dataProducer,
 			  RTC::SCTP::Message message,
 			  std::vector<uint16_t>& subchannels,
-			  std::optional<uint16_t> requiredSubchannel) = 0;
+			  std::optional<uint16_t> requiredSubchannel,
+			  std::optional<uint16_t> ignoredSubchannel) = 0;
 			virtual void OnTransportNewDataConsumer(
 			  RTC::Transport* transport,
 			  RTC::DataConsumer* dataConsumer,
@@ -285,7 +286,8 @@ namespace RTC
 		  RTC::DataProducer* dataProducer,
 		  RTC::SCTP::Message message,
 		  std::vector<uint16_t>& subchannels,
-		  std::optional<uint16_t> requiredSubchannel) override;
+		  std::optional<uint16_t> requiredSubchannel,
+		  std::optional<uint16_t> ignoredSubchannel) override;
 		void OnDataProducerPaused(RTC::DataProducer* dataProducer) override;
 		void OnDataProducerResumed(RTC::DataProducer* dataProducer) override;
 
@@ -394,11 +396,6 @@ namespace RTC
 		// For SCTP capable transports and for direct transport.
 		size_t maxSendMessageSize{ 0u };
 		size_t maxReceiveMessageSize{ 0u };
-		// For SCTP capable transports.
-		size_t sctpSendBufferSize{ 0u };
-		size_t sctpPerStreamSendQueueLimit{ 0u };
-		size_t sctpMaxReceiverWindowBufferSize{ 0u };
-
 		struct TraceEventTypes traceEventTypes;
 	};
 } // namespace RTC

@@ -2,8 +2,30 @@
 
 ### NEXT
 
+### 0.25.0
+
+- `DirectDataProducer.send()`: Add `ignored_subchannel` optional argument ([PR #1877](https://github.com/versatica/mediasoup/pull/1877)).
+
+### 0.24.3
+
+- `DataProducerOptions`: make `new_pipe_transport()` public ([PR #1876](https://github.com/versatica/mediasoup/pull/1876)).
+
+### 0.24.2
+
+- Handle subchannels in pipe `DataConsumers` ([PR #1875](https://github.com/versatica/mediasoup/pull/1875)).
+
+### 0.24.1
+
+- Worker: Fix, use `thread_local` buffer on `MS_ABORT()` ([PR#1873](https://github.com/versatica/mediasoup/pull/1873)).
+
+### 0.24.0
+
 - Bump up Meson from 1.9.1 to 1.11.2 ([PR #1861](https://github.com/versatica/mediasoup/pull/1861)).
 - Worker: Update libsrtp to 3.0.0-beta-2fc078db ([PR #1860](https://github.com/versatica/mediasoup/pull/1860)).
+- Worker: Use constant-time memory comparison in MAC/credential verification (SCTP State Cookie MAC and STUN "MESSAGE-INTEGRITY") ([PR #1867](https://github.com/versatica/mediasoup/pull/1867), credits to @alanturing881).
+- Worker: Fix OOB write in `RTP::Packet::UpdateDependencyDescriptor()` ([PR #1868](https://github.com/versatica/mediasoup/pull/1868), credits to @alanturing881).
+- Worker: Fix integer overflow in SCTP `MissingMandatoryParameterErrorCause` ([PR #1869](https://github.com/versatica/mediasoup/pull/1869), credits to @alanturing881).
+- SCTP: Add default per stream buffered amount low threshold option ([PR #1871](https://github.com/versatica/mediasoup/pull/1871)).
 
 ### 0.23.0
 
