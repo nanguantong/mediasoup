@@ -2,6 +2,30 @@
 
 ### NEXT
 
+### 3.26.0
+
+- **Breaking change:** Simulcast and SVC: Limit temporal layer to the preferred one ([PR #1892](https://github.com/versatica/mediasoup/pull/1892)).
+
+### 3.25.0
+
+- Worker: Fix undefined behavior in `RtpStreamRecv::UpdateScore()` when no packets were received ([PR #1886](https://github.com/versatica/mediasoup/pull/1886)).
+- SCTP: Fix `SackChunk::GetValidatedGapAckBlocks()` returning a bogus gap-ack-block ([PR #1891](https://github.com/versatica/mediasoup/pull/1891)).
+- Do not make generated RTCP Sender Reports depend on RTP packet arrival time ([issue #1881](https://github.com/versatica/mediasoup/issues/1881)):
+  - `RemoteClockOffsetEstimator` class ([PR #1882](https://github.com/versatica/mediasoup/pull/1882)).
+  - Prepare `RtpStream` classes for capture time based RTCP Sender Reports ([PR #1883](https://github.com/versatica/mediasoup/pull/1883), [PR #1888](https://github.com/versatica/mediasoup/pull/1888)).
+  - `RemoteCaptureTimeEstimator` class ([PR #1884](https://github.com/versatica/mediasoup/pull/1884)).
+  - Estimate the capture instant of each received RTP packet ([PR #1885](https://github.com/versatica/mediasoup/pull/1885)).
+  - Generate RTCP Sender Reports based on the capture instant of the media rather than on the packet arrival time ([PR #1887](https://github.com/versatica/mediasoup/pull/1887)).
+  - `SimulcastProducerStreamManager`: Apply new capture time logic and fix 'abs-capture-time' rewriting ([PR #1889](https://github.com/versatica/mediasoup/pull/1889)).
+
+### 3.24.2
+
+- Worker: Verify `DataConsumer` subchannels before cloning the message ([PR #1880](https://github.com/versatica/mediasoup/pull/1880)).
+
+### 3.24.1
+
+- Worker: Don't check `ignoredSubchannel` in piped `DataConsumers` ([PR #1879](https://github.com/versatica/mediasoup/pull/1879)).
+
 ### 3.24.0
 
 - `DataProducer.send()`: Add `ignoredSubchannel` optional argument ([PR #1877](https://github.com/versatica/mediasoup/pull/1877)).
