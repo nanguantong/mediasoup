@@ -2,6 +2,14 @@
 
 ### NEXT
 
+- Worker: New `RateCalculator` ([PR #1899](https://github.com/versatica/mediasoup/pull/1899)).
+- Worker: Fix transport-cc arrival time precision by working in microseconds ([PR #1914](https://github.com/versatica/mediasoup/pull/1914)).
+- Worker: Use real receive time of packets ([PR #1917](https://github.com/versatica/mediasoup/pull/1917)).
+- Worker: Use `int64_t` for time everywhere ([PR #1918](https://github.com/versatica/mediasoup/pull/1918)).
+- Worker: Use `int64_t` for bitrate everywhere ([PR #1919](https://github.com/versatica/mediasoup/pull/1919)).
+- Improve worker build system ([PR #1920](https://github.com/versatica/mediasoup/pull/1920)).
+- Improve worker build system (part 2) ([PR #1923](https://github.com/versatica/mediasoup/pull/1923)).
+
 ### 3.26.0
 
 - **Breaking change:** Simulcast and SVC: Limit temporal layer to the preferred one ([PR #1892](https://github.com/versatica/mediasoup/pull/1892)).

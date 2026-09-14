@@ -12,13 +12,13 @@ namespace RTC
 	{
 		/* Static. */
 
-		static constexpr uint64_t InactivityCheckInterval{ 1500u };        // In ms.
-		static constexpr uint64_t InactivityCheckIntervalWithDtx{ 5000u }; // In ms.
+		static constexpr int64_t InactivityCheckIntervalMs{ 1500 };
+		static constexpr int64_t InactivityCheckIntervalWithDtxMs{ 5000 };
 
 		/* TransmissionCounter methods. */
 
 		RtpStreamRecv::TransmissionCounter::TransmissionCounter(
-		  SharedInterface* shared, uint8_t spatialLayers, uint8_t temporalLayers, size_t windowSize)
+		  SharedInterface* shared, uint8_t spatialLayers, uint8_t temporalLayers, int64_t windowSizeMs)
 		{
 			MS_TRACE();
 
@@ -27,9 +27,9 @@ namespace RTC
 
 			for (auto& spatialLayerCounter : this->spatialLayerCounters)
 			{
-				for (uint8_t tIdx{ 0u }; tIdx < temporalLayers; ++tIdx)
+				for (uint8_t tIdx{ 0 }; tIdx < temporalLayers; ++tIdx)
 				{
-					spatialLayerCounter.emplace_back(shared, /*ignorePaddingOnlyPackets*/ true, windowSize);
+					spatialLayerCounter.emplace_back(shared, /*ignorePaddingOnlyPackets*/ true, windowSizeMs);
 				}
 			}
 		}
@@ -54,11 +54,11 @@ namespace RTC
 			counter.Update(packet);
 		}
 
-		uint32_t RtpStreamRecv::TransmissionCounter::GetBitrate(uint64_t nowMs)
+		int64_t RtpStreamRecv::TransmissionCounter::GetBitrate(int64_t nowMs)
 		{
 			MS_TRACE();
 
-			uint32_t rate{ 0u };
+			int64_t rate{ 0 };
 
 			for (auto& spatialLayerCounter : this->spatialLayerCounters)
 			{
@@ -71,8 +71,8 @@ namespace RTC
 			return rate;
 		}
 
-		uint32_t RtpStreamRecv::TransmissionCounter::GetBitrate(
-		  uint64_t nowMs, uint8_t spatialLayer, uint8_t temporalLayer)
+		int64_t RtpStreamRecv::TransmissionCounter::GetBitrate(
+		  int64_t nowMs, uint8_t spatialLayer, uint8_t temporalLayer)
 		{
 			MS_TRACE();
 
@@ -83,17 +83,17 @@ namespace RTC
 			// Return 0 if specified layers are not being received.
 			auto& counter = this->spatialLayerCounters[spatialLayer][temporalLayer];
 
-			if (counter.GetBitrate(nowMs) == 0)
+			if (counter.GetBitrate(nowMs) <= 0)
 			{
-				return 0u;
+				return 0;
 			}
 
-			uint32_t rate{ 0u };
+			int64_t rate{ 0 };
 
 			// Iterate all temporal layers of spatial layers previous to the given one.
-			for (uint8_t sIdx{ 0u }; sIdx < spatialLayer; ++sIdx)
+			for (uint8_t sIdx{ 0 }; sIdx < spatialLayer; ++sIdx)
 			{
-				for (size_t tIdx{ 0u }; tIdx < this->spatialLayerCounters[sIdx].size(); ++tIdx)
+				for (size_t tIdx{ 0 }; tIdx < this->spatialLayerCounters[sIdx].size(); ++tIdx)
 				{
 					auto& temporalLayerCounter = this->spatialLayerCounters[sIdx][tIdx];
 
@@ -102,7 +102,7 @@ namespace RTC
 			}
 
 			// Add the given spatial layer with up to the given temporal layer.
-			for (uint8_t tIdx{ 0u }; tIdx <= temporalLayer; ++tIdx)
+			for (uint8_t tIdx{ 0 }; tIdx <= temporalLayer; ++tIdx)
 			{
 				auto& temporalLayerCounter = this->spatialLayerCounters[spatialLayer][tIdx];
 
@@ -112,16 +112,15 @@ namespace RTC
 			return rate;
 		}
 
-		uint32_t RtpStreamRecv::TransmissionCounter::GetSpatialLayerBitrate(
-		  uint64_t nowMs, uint8_t spatialLayer)
+		int64_t RtpStreamRecv::TransmissionCounter::GetSpatialLayerBitrate(int64_t nowMs, uint8_t spatialLayer)
 		{
 			MS_TRACE();
 
 			MS_ASSERT(spatialLayer < this->spatialLayerCounters.size(), "spatialLayer too high");
 
-			uint32_t rate{ 0u };
+			int64_t rate{ 0 };
 
-			for (size_t tIdx{ 0u }; tIdx < this->spatialLayerCounters[spatialLayer].size(); ++tIdx)
+			for (size_t tIdx{ 0 }; tIdx < this->spatialLayerCounters[spatialLayer].size(); ++tIdx)
 			{
 				auto& temporalLayerCounter = this->spatialLayerCounters[spatialLayer][tIdx];
 
@@ -131,8 +130,8 @@ namespace RTC
 			return rate;
 		}
 
-		uint32_t RtpStreamRecv::TransmissionCounter::GetLayerBitrate(
-		  uint64_t nowMs, uint8_t spatialLayer, uint8_t temporalLayer)
+		int64_t RtpStreamRecv::TransmissionCounter::GetLayerBitrate(
+		  int64_t nowMs, uint8_t spatialLayer, uint8_t temporalLayer)
 		{
 			MS_TRACE();
 
@@ -149,7 +148,7 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			size_t packetCount{ 0u };
+			size_t packetCount{ 0 };
 
 			for (const auto& spatialLayerCounter : this->spatialLayerCounters)
 			{
@@ -166,7 +165,7 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			size_t bytes{ 0u };
+			size_t bytes{ 0 };
 
 			for (const auto& spatialLayerCounter : this->spatialLayerCounters)
 			{
@@ -185,7 +184,7 @@ namespace RTC
 		  RTP::RtpStreamRecv::Listener* listener,
 		  SharedInterface* shared,
 		  RTP::RtpStream::Params& params,
-		  uint32_t sendNackDelayMs,
+		  int64_t sendNackDelayMs,
 		  bool useRtpInactivityCheck)
 		  : RTP::RtpStream::RtpStream(listener, shared, params, 10),
 		    sendNackDelayMs(sendNackDelayMs),
@@ -207,10 +206,11 @@ namespace RTC
 			{
 				// Run the RTP inactivity periodic timer (use a different timeout if DTX is
 				// enabled).
-				this->inactivityCheckPeriodicTimer = this->shared->CreateTimer(this);
+				this->inactivityCheckPeriodicTimer =
+				  this->shared->CreateTimer(this, "rtp-stream-recv-inactivity-check");
 
 				this->inactivityCheckPeriodicTimer->Start(
-				  this->params.useDtx ? InactivityCheckIntervalWithDtx : InactivityCheckInterval);
+				  this->params.useDtx ? InactivityCheckIntervalWithDtxMs : InactivityCheckIntervalMs);
 			}
 		}
 
@@ -228,7 +228,7 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			const uint64_t nowMs = this->shared->GetTimeMs();
+			const int64_t nowMs = this->shared->GetTimeMs();
 
 			auto baseStats = RTP::RtpStream::FillBufferStats(builder);
 
@@ -244,7 +244,7 @@ namespace RTC
 
 						bitrateByLayer.emplace_back(
 						  FBS::RtpStream::CreateBitrateByLayerDirect(
-						    builder, layer.c_str(), GetBitrate(nowMs, sIdx, tIdx)));
+						    builder, layer.c_str(), static_cast<uint64_t>(GetBitrate(nowMs, sIdx, tIdx))));
 					}
 				}
 			}
@@ -254,13 +254,13 @@ namespace RTC
 			  baseStats,
 			  this->transmissionCounter.GetPacketCount(),
 			  this->transmissionCounter.GetBytes(),
-			  this->transmissionCounter.GetBitrate(nowMs),
+			  static_cast<uint64_t>(this->transmissionCounter.GetBitrate(nowMs)),
 			  &bitrateByLayer);
 
 			return FBS::RtpStream::CreateStats(builder, FBS::RtpStream::StatsData::RecvStats, stats.Union());
 		}
 
-		bool RtpStreamRecv::ReceivePacket(RTP::Packet* packet)
+		bool RtpStreamRecv::ReceivePacket(RTP::Packet* packet, int64_t receivedAtUs)
 		{
 			MS_TRACE();
 
@@ -297,7 +297,7 @@ namespace RTC
 			}
 
 			// Calculate jitter.
-			CalculateJitter(packet->GetTimestamp());
+			CalculateJitter(packet->GetTimestamp(), receivedAtUs);
 
 			// Store the capture instant if the packet carries it.
 			{
@@ -318,16 +318,16 @@ namespace RTC
 					// of the sender, which is the one this stream is estimated against:
 					//
 					//   capture NTP clock = sender NTP clock + capture clock offset
-					const auto captureMs = static_cast<int64_t>(Utils::Time::Ntp2TimeMs(ntp)) -
-					                       Utils::Time::Q32x32ToTimeMs(estimatedCaptureClockOffset);
+					const auto captureAtUs =
+					  Utils::Time::Ntp2TimeUs(ntp) - Utils::Time::Q32x32ToTimeUs(estimatedCaptureClockOffset);
 
 					// NOTE: A capture instant that is not positive means a capture clock offset
 					// that cannot be true, so there is nothing to store.
-					if (captureMs > 0)
+					if (captureAtUs > 0)
 					{
 						this->lastAbsCaptureTime = AbsCaptureTime{
 							.ts    = packet->GetTimestamp(),
-							.ntpMs = static_cast<uint64_t>(captureMs),
+							.ntpUs = captureAtUs,
 						};
 					}
 				}
@@ -490,7 +490,7 @@ namespace RTC
 			const uint8_t worstRemoteFractionLost =
 			  this->params.useInBandFec ? static_cast<RTP::RtpStreamRecv::Listener*>(this->listener)
 			                                ->OnRtpStreamNeedWorstRemoteFractionLost(this)
-			                            : 0;
+				                          : 0;
 
 			if (worstRemoteFractionLost > 0)
 			{
@@ -562,13 +562,12 @@ namespace RTC
 			if (this->lastSenderReportTiming.has_value())
 			{
 				const auto& senderReportTiming = this->lastSenderReportTiming.value();
-				// Get delay in milliseconds.
-				auto delayMs =
-				  static_cast<uint32_t>(this->shared->GetTimeMs() - senderReportTiming.receivedMs);
+				// Get delay in microseconds.
+				const int64_t delayUs = this->shared->GetTimeUs() - senderReportTiming.receivedAtUs;
 				// Express delay in units of 1/65536 seconds.
-				uint32_t dlsr = (delayMs / 1000) << 16;
+				auto dlsr = static_cast<uint32_t>((delayUs / 1000000) << 16);
 
-				dlsr |= uint32_t{ (delayMs % 1000) * 65536 / 1000 };
+				dlsr |= static_cast<uint32_t>(((delayUs % 1000000) * 65536) / 1000000);
 
 				report->SetDelaySinceLastSenderReport(dlsr);
 				report->SetLastSenderReport(senderReportTiming.compactNtp);
@@ -594,7 +593,7 @@ namespace RTC
 			return nullptr;
 		}
 
-		void RtpStreamRecv::ReceiveRtcpSenderReport(RTC::RTCP::SenderReport* report)
+		void RtpStreamRecv::ReceiveRtcpSenderReport(RTC::RTCP::SenderReport* report, int64_t receivedAtUs)
 		{
 			MS_TRACE();
 
@@ -609,8 +608,8 @@ namespace RTC
 				compactNtp += report->GetNtpFrac() >> 16;
 
 				this->lastSenderReportTiming = SenderReportTiming{
-					.compactNtp = compactNtp,
-					.receivedMs = this->shared->GetTimeMs(),
+					.compactNtp   = compactNtp,
+					.receivedAtUs = receivedAtUs,
 				};
 
 				Utils::Time::Ntp ntp{}; // NOLINT(cppcoreguidelines-pro-type-member-init)
@@ -619,7 +618,7 @@ namespace RTC
 				ntp.fractions = report->GetNtpFrac();
 
 				this->lastSenderReportMapping = RTP::RtpStream::SenderReportMapping{
-					.ntpMs = Utils::Time::Ntp2TimeMs(ntp),
+					.ntpUs = Utils::Time::Ntp2TimeUs(ntp),
 					.ts    = report->GetRtpTs(),
 				};
 			}
@@ -628,27 +627,28 @@ namespace RTC
 			UpdateScore();
 		}
 
-		void RtpStreamRecv::ReceiveRtxRtcpSenderReport(RTC::RTCP::SenderReport* report)
+		void RtpStreamRecv::ReceiveRtxRtcpSenderReport(RTC::RTCP::SenderReport* report, int64_t receivedAtUs)
 		{
 			MS_TRACE();
 
 			if (HasRtx())
 			{
-				this->rtxStream->ReceiveRtcpSenderReport(report);
+				this->rtxStream->ReceiveRtcpSenderReport(report, receivedAtUs);
 			}
 		}
 
-		void RtpStreamRecv::ReceiveRtcpXrDelaySinceLastRr(RTC::RTCP::DelaySinceLastRr::SsrcInfo* ssrcInfo)
+		void RtpStreamRecv::ReceiveRtcpXrDelaySinceLastRr(
+		  RTC::RTCP::DelaySinceLastRr::SsrcInfo* ssrcInfo, int64_t receivedAtUs)
 		{
 			MS_TRACE();
 
 			/* Calculate RTT. */
 
-			// Get the NTP representation of the current timestamp.
-			const uint64_t nowMs = this->shared->GetTimeMs();
-			auto ntp             = Utils::Time::TimeMs2Ntp(nowMs + this->shared->GetNtpOffsetMs());
+			// Get the NTP representation of the time at which the report arrived, which
+			// is what the round trip is measured against.
+			auto ntp = Utils::Time::TimeUs2Ntp(receivedAtUs + this->shared->GetNtpOffsetUs());
 
-			// Get the compact NTP representation of the current timestamp.
+			// Get the compact NTP representation of the arrival time.
 			uint32_t compactNtp = (ntp.seconds & 0x0000FFFF) << 16;
 
 			compactNtp |= (ntp.fractions & 0xFFFF0000) >> 16;
@@ -657,30 +657,29 @@ namespace RTC
 			const uint32_t dlrr   = ssrcInfo->GetDelaySinceLastReceiverReport();
 
 			// RTT in 1/2^16 second fractions.
-			uint32_t rtt{ 0 };
+			uint32_t rttCompactNtp{ 0 };
 
 			// If no Receiver Extended Report was received by the remote endpoint yet,
 			// ignore lastRr and dlrr values in the Sender Extended Report.
 			if (lastRr && dlrr && (compactNtp > dlrr + lastRr))
 			{
-				rtt = compactNtp - dlrr - lastRr;
+				rttCompactNtp = compactNtp - dlrr - lastRr;
 			}
 
-			// RTT in milliseconds.
-			this->rtt = static_cast<float>(rtt >> 16) * 1000;
-			this->rtt += (static_cast<float>(rtt & 0x0000FFFF) / 65536) * 1000;
+			this->rttMs = static_cast<float>(rttCompactNtp >> 16) * 1000;
+			this->rttMs += (static_cast<float>(rttCompactNtp & 0x0000FFFF) / 65536) * 1000;
 
 			// Avoid negative RTT value since it doesn't make sense.
-			this->rtt = std::max(this->rtt, 0.0f);
+			this->rttMs = std::max(this->rttMs, 0.0f);
 
 			// Tell it to the NackGenerator.
 			if (this->params.useNack)
 			{
-				this->nackGenerator->UpdateRtt(static_cast<uint32_t>(this->rtt));
+				this->nackGenerator->UpdateRttMs(static_cast<int64_t>(this->rttMs));
 			}
 		}
 
-		std::optional<uint64_t> RtpStreamRecv::GetRemoteCaptureMsFromAbsCaptureTime(uint32_t ts) const
+		std::optional<int64_t> RtpStreamRecv::GetRemoteCaptureAtUsFromAbsCaptureTime(uint32_t ts) const
 		{
 			MS_TRACE();
 
@@ -691,11 +690,14 @@ namespace RTC
 
 			const auto& absCaptureTime = this->lastAbsCaptureTime.value();
 
-			return InterpolateRemoteCaptureMs(
-			  absCaptureTime.ntpMs, absCaptureTime.ts, ts, RtpStreamRecv::MaxAbsCaptureTimeInterpolationMs);
+			return InterpolateRemoteCaptureAtUs(
+			  absCaptureTime.ntpUs,
+			  absCaptureTime.ts,
+			  ts,
+			  RtpStreamRecv::MaxAbsCaptureTimeInterpolationMs * 1000);
 		}
 
-		std::optional<uint64_t> RtpStreamRecv::GetRemoteCaptureMsFromSenderReport(uint32_t ts) const
+		std::optional<int64_t> RtpStreamRecv::GetRemoteCaptureAtUsFromSenderReport(uint32_t ts) const
 		{
 			MS_TRACE();
 
@@ -706,15 +708,15 @@ namespace RTC
 
 			const auto& senderReportMapping = this->lastSenderReportMapping.value();
 
-			return InterpolateRemoteCaptureMs(
-			  senderReportMapping.ntpMs,
+			return InterpolateRemoteCaptureAtUs(
+			  senderReportMapping.ntpUs,
 			  senderReportMapping.ts,
 			  ts,
-			  RtpStreamRecv::MaxSenderReportInterpolationMs);
+			  RtpStreamRecv::MaxSenderReportInterpolationMs * 1000);
 		}
 
-		std::optional<uint64_t> RtpStreamRecv::InterpolateRemoteCaptureMs(
-		  uint64_t referenceNtpMs, uint32_t referenceTs, uint32_t ts, uint64_t maxDistanceMs) const
+		std::optional<int64_t> RtpStreamRecv::InterpolateRemoteCaptureAtUs(
+		  int64_t referenceNtpUs, uint32_t referenceTs, uint32_t ts, int64_t maxDistanceUs) const
 		{
 			MS_TRACE();
 
@@ -727,29 +729,29 @@ namespace RTC
 
 			// Distance in RTP timestamp units, taking wrap around into account.
 			const auto distanceTs    = static_cast<int64_t>(static_cast<int32_t>(ts - referenceTs));
-			const int64_t distanceMs = (distanceTs * 1000) / static_cast<int64_t>(clockRate);
-			// NOTE: The negation is safe since `distanceMs` comes from a 32 bits
+			const int64_t distanceUs = (distanceTs * 1000000) / static_cast<int64_t>(clockRate);
+			// NOTE: The negation is safe since `distanceUs` comes from a 32 bits
 			// distance scaled down by the clock rate.
-			const auto absDistanceMs = static_cast<uint64_t>(distanceMs < 0 ? -distanceMs : distanceMs);
+			const int64_t absDistanceUs = distanceUs < 0 ? -distanceUs : distanceUs;
 
-			if (absDistanceMs > maxDistanceMs)
+			if (absDistanceUs > maxDistanceUs)
 			{
 				return std::nullopt;
 			}
 
-			const int64_t captureMs = static_cast<int64_t>(referenceNtpMs) + distanceMs;
+			const int64_t captureAtUs = referenceNtpUs + distanceUs;
 
 			// The reference does not map into a valid capture instant, so the remote
 			// endpoint is reporting nonsense.
-			if (captureMs < 0)
+			if (captureAtUs < 0)
 			{
 				MS_WARN_2TAGS(
-				  rtp, rtcp, "invalid interpolated capture instant [distanceMs:%" PRIi64 "]", distanceMs);
+				  rtp, rtcp, "invalid interpolated capture instant [distanceUs:%" PRIi64 "]", distanceUs);
 
 				return std::nullopt;
 			}
 
-			return static_cast<uint64_t>(captureMs);
+			return captureAtUs;
 		}
 
 		void RtpStreamRecv::RequestKeyFrame()
@@ -821,19 +823,28 @@ namespace RTC
 			}
 		}
 
-		void RtpStreamRecv::CalculateJitter(uint32_t rtpTimestamp)
+		void RtpStreamRecv::CalculateJitter(uint32_t rtpTimestamp, int64_t receivedAtUs)
 		{
 			MS_TRACE();
 
-			if (GetClockRate() == 0u)
+			if (GetClockRate() == 0)
 			{
 				return;
 			}
 
+			// The arrival time expressed in the clock rate of the stream, which is
+			// the R of RFC 3550 section 6.4.1.
+			//
+			// NOTE: The seconds and the sub-second parts are converted separately
+			// because a single multiplication of the whole time by the clock rate
+			// would overflow on a long lived host.
+			const auto arrivalTs =
+			  static_cast<uint32_t>((receivedAtUs / 1000000) * GetClockRate()) +
+			  static_cast<uint32_t>(((receivedAtUs % 1000000) * GetClockRate()) / 1000000);
+
 			// NOTE: Based on https://github.com/versatica/mediasoup/issues/1018.
-			auto transit =
-			  static_cast<int>((this->shared->GetTimeMs() * GetClockRate() / 1000) - rtpTimestamp);
-			int d = transit - this->transit;
+			auto transit = static_cast<int>(arrivalTs - rtpTimestamp);
+			int d        = transit - this->transit;
 
 			// First transit calculation, save and return.
 			if (this->transit == 0)

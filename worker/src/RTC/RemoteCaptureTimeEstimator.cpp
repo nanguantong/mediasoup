@@ -31,29 +31,29 @@ namespace RTC
 		  rtcp,
 		  "capture instant source set to %s",
 		  this->source == RemoteCaptureTimeEstimator::Source::ABS_CAPTURE_TIME ? "abs-capture-time"
-		                                                                       : "Sender Report");
+			                                                                     : "Sender Report");
 	}
 
 	void RemoteCaptureTimeEstimator::SenderReportReceived(const RTC::RTP::RtpStreamRecv* rtpStream)
 	{
 		MS_TRACE();
 
-		const auto senderReportMapping    = rtpStream->GetSenderReportMapping();
-		const auto senderReportReceivedMs = rtpStream->GetSenderReportReceivedMs();
+		const auto senderReportMapping      = rtpStream->GetSenderReportMapping();
+		const auto senderReportReceivedAtUs = rtpStream->GetSenderReportReceivedAtUs();
 
 		// Both are stored together, so either both are set or none of them is.
-		if (!senderReportMapping.has_value() || !senderReportReceivedMs.has_value())
+		if (!senderReportMapping.has_value() || !senderReportReceivedAtUs.has_value())
 		{
 			return;
 		}
 
 		this->clockOffsetEstimator.AddSenderReport(
-		  senderReportMapping.value().ntpMs,
-		  senderReportReceivedMs.value(),
-		  static_cast<uint32_t>(rtpStream->GetRtt()));
+		  senderReportMapping.value().ntpUs,
+		  senderReportReceivedAtUs.value(),
+		  static_cast<int64_t>(rtpStream->GetRttMs()));
 	}
 
-	std::optional<uint64_t> RemoteCaptureTimeEstimator::GetLocalCaptureMs(
+	std::optional<int64_t> RemoteCaptureTimeEstimator::GetLocalCaptureAtUs(
 	  const RTC::RTP::RtpStreamRecv* rtpStream, uint32_t ts) const
 	{
 		MS_TRACE();
@@ -63,15 +63,15 @@ namespace RTC
 			return std::nullopt;
 		}
 
-		const auto remoteCaptureMs = this->source == RemoteCaptureTimeEstimator::Source::ABS_CAPTURE_TIME
-		                               ? rtpStream->GetRemoteCaptureMsFromAbsCaptureTime(ts)
-		                               : rtpStream->GetRemoteCaptureMsFromSenderReport(ts);
+		const auto remoteCaptureAtUs = this->source == RemoteCaptureTimeEstimator::Source::ABS_CAPTURE_TIME
+		                                 ? rtpStream->GetRemoteCaptureAtUsFromAbsCaptureTime(ts)
+		                                 : rtpStream->GetRemoteCaptureAtUsFromSenderReport(ts);
 
-		if (!remoteCaptureMs.has_value())
+		if (!remoteCaptureAtUs.has_value())
 		{
 			return std::nullopt;
 		}
 
-		return this->clockOffsetEstimator.RemoteMsToLocalMs(remoteCaptureMs.value());
+		return this->clockOffsetEstimator.RemoteUsToLocalUs(remoteCaptureAtUs.value());
 	}
 } // namespace RTC

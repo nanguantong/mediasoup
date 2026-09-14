@@ -527,10 +527,10 @@ namespace RTC
 
 			/**
 			 * @remarks
-			 * - Contrary to `ReadAbsSendTime()` method, given `ms` is internally
-			 *   converted to ABS Send Time.
+			 * - `sentAtUs` is converted internally to the 3 bytes ABS Send Time format,
+			 *   unlike `ReadAbsSendTime()`, which exposes the raw extension value.
 			 */
-			bool UpdateAbsSendTime(uint64_t ms) const;
+			bool UpdateAbsSendTime(int64_t sentAtUs) const;
 
 			bool ReadTransportWideCc01(uint16_t& wideSeqNumber) const;
 
@@ -819,7 +819,7 @@ namespace RTC
 			{
 				if (!this->payloadDescriptorHandler)
 				{
-					return 0u;
+					return 0;
 				}
 
 				return this->payloadDescriptorHandler->GetSpatialLayer();
@@ -832,26 +832,26 @@ namespace RTC
 			{
 				if (!this->payloadDescriptorHandler)
 				{
-					return 0u;
+					return 0;
 				}
 
 				return this->payloadDescriptorHandler->GetTemporalLayer();
 			}
 
 			/**
-			 * Capture time (in ms) of the packet.
+			 * Capture time (in us) of the packet.
 			 */
-			std::optional<uint64_t> GetCaptureMs() const
+			std::optional<int64_t> GetCaptureAtUs() const
 			{
-				return this->captureMs;
+				return this->captureAtUs;
 			}
 
 			/**
-			 * Set the capture time (in ms) of the packet.
+			 * Set the capture time (in us) of the packet.
 			 */
-			void SetCaptureMs(uint64_t captureMs)
+			void SetCaptureAtUs(int64_t captureAtUs)
 			{
-				this->captureMs = captureMs;
+				this->captureAtUs = captureAtUs;
 			}
 
 		private:
@@ -967,7 +967,7 @@ namespace RTC
 			// each entry is the offset (in bytes) from the beginning of the header
 			// extension value to the beginning of the extension.
 			std::array<ssize_t, 14> oneByteExtensions{ -1, -1, -1, -1, -1, -1, -1,
-				                                         -1, -1, -1, -1, -1, -1, -1 };
+			                                           -1, -1, -1, -1, -1, -1, -1 };
 			// Ordered map of Two Bytes Extensions. Key is the id 1 of the extension,
 			// each entry is the offset (in bytes) from the beginning of the header
 			// extension value to the beginning of the extension.
@@ -977,7 +977,7 @@ namespace RTC
 			// Codec related.
 			std::shared_ptr<Codecs::PayloadDescriptorHandler> payloadDescriptorHandler;
 			// Capture time of the packet.
-			std::optional<uint64_t> captureMs;
+			std::optional<int64_t> captureAtUs;
 		};
 	} // namespace RTP
 } // namespace RTC

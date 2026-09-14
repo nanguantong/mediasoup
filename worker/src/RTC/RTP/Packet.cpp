@@ -348,8 +348,7 @@ namespace RTC
 					{
 						MS_DUMP_CLEAN(
 						  indentation + 1,
-						  "  absCaptureTime: id:%" PRIu8 ", absCaptureTimestamp:%" PRIu64
-						  ", estimatedCaptureClockOffset:%" PRId64,
+						  "  absCaptureTime: id:%" PRIu8 ", timestamp:%" PRIu64 ", clock offset:%" PRId64,
 						  this->headerExtensionIds.absCaptureTime,
 						  absCaptureTimestamp,
 						  estimatedCaptureClockOffset);
@@ -364,7 +363,7 @@ namespace RTC
 					{
 						MS_DUMP_CLEAN(
 						  indentation + 1,
-						  "  playoutDelay: id:%" PRIu8 ", minDelay:%" PRIu16 ", maxDelay:%" PRIu16,
+						  "  playoutDelay: id:%" PRIu8 ", min delay:%" PRIu16 ", max delay:%" PRIu16,
 						  this->headerExtensionIds.playoutDelay,
 						  minDelay,
 						  maxDelay);
@@ -378,7 +377,7 @@ namespace RTC
 					{
 						MS_DUMP_CLEAN(
 						  indentation + 1,
-						  "  mediasoupPacketId: id:%" PRIu8 ", mediasoupPacketId:%" PRIu32,
+						  "  mediasoupPacketId: id:%" PRIu8 ", value:%" PRIu32,
 						  this->headerExtensionIds.mediasoupPacketId,
 						  mediasoupPacketId);
 					}
@@ -391,9 +390,9 @@ namespace RTC
 			MS_DUMP_CLEAN(indentation, "  padding length: %" PRIu8, GetPaddingLength());
 			MS_DUMP_CLEAN(indentation, "  padded to 4 bytes: %s", IsPaddedTo4Bytes() ? "yes" : "no");
 
-			if (GetCaptureMs())
+			if (GetCaptureAtUs())
 			{
-				MS_DUMP_CLEAN(indentation, "  capture time (ms):%" PRIu64, GetCaptureMs().value());
+				MS_DUMP_CLEAN(indentation, "  capture time (us): %" PRIi64, GetCaptureAtUs().value());
 			}
 
 			if (this->payloadDescriptorHandler)
@@ -428,7 +427,7 @@ namespace RTC
 			clonedPacket->headerExtensionIds = this->headerExtensionIds;
 
 			// Clone capture time.
-			clonedPacket->captureMs = this->captureMs;
+			clonedPacket->captureAtUs = this->captureAtUs;
 
 			// Assign the payload descriptor handler.
 			clonedPacket->payloadDescriptorHandler = this->payloadDescriptorHandler;
@@ -486,7 +485,7 @@ namespace RTC
 			  rid.empty() ? nullptr : rid.c_str(),
 			  rrid.empty() ? nullptr : rrid.c_str(),
 			  wideSequenceNumberSet ? flatbuffers::Optional<uint16_t>(wideSequenceNumber)
-			                        : flatbuffers::nullopt);
+				                      : flatbuffers::nullopt);
 		}
 
 		void Packet::SetPayloadType(uint8_t payloadType)
@@ -963,7 +962,7 @@ namespace RTC
 			return true;
 		}
 
-		bool Packet::UpdateAbsSendTime(uint64_t ms) const
+		bool Packet::UpdateAbsSendTime(int64_t sentAtUs) const
 		{
 			MS_TRACE();
 
@@ -975,7 +974,7 @@ namespace RTC
 				return false;
 			}
 
-			auto absSendTime = Utils::Time::TimeMsToAbsSendTime(ms);
+			auto absSendTime = Utils::Time::TimeUsToAbsSendTime(sentAtUs);
 
 			Utils::Byte::Set3Bytes(extenValue, 0, absSendTime);
 

@@ -16,11 +16,11 @@ namespace RTC
 			/**
 			 * Maximum retransmission buffer size for video (ms).
 			 */
-			static constexpr uint32_t MaxRetransmissionDelayForVideoMs{ 2000 };
+			static constexpr int64_t MaxRetransmissionDelayForVideoMs{ 2000 };
 			/**
 			 * Maximum retransmission buffer size for audio (ms).
 			 */
-			static constexpr uint32_t MaxRetransmissionDelayForAudioMs{ 1000 };
+			static constexpr int64_t MaxRetransmissionDelayForAudioMs{ 1000 };
 			/**
 			 * How old the last packet sent may be for a Sender Report to still be generated
 			 * (ms).
@@ -30,7 +30,7 @@ namespace RTC
 			 *   with a 120 ms ptime and screen sharing at 1 fps, so that it only triggers on
 			 *   a stream that has really stopped sending.
 			 */
-			static constexpr uint32_t MaxSenderReportReferenceAgeMs{ 2000 };
+			static constexpr int64_t MaxSenderReportReferenceAgeMs{ 2000 };
 
 		public:
 			enum class ReceivePacketResult : uint8_t
@@ -63,7 +63,7 @@ namespace RTC
 				/**
 				 * Local time at which the Receiver Reference Time arrived.
 				 */
-				uint64_t receivedMs;
+				int64_t receivedAtUs;
 			};
 
 		public:
@@ -87,13 +87,14 @@ namespace RTC
 
 			void ReceiveKeyFrameRequest(RTC::RTCP::FeedbackPs::MessageType messageType);
 
-			void ReceiveRtcpReceiverReport(RTC::RTCP::ReceiverReport* report);
+			void ReceiveRtcpReceiverReport(RTC::RTCP::ReceiverReport* report, int64_t receivedAtUs);
 
-			void ReceiveRtcpXrReceiverReferenceTime(RTC::RTCP::ReceiverReferenceTime* report);
+			void ReceiveRtcpXrReceiverReferenceTime(
+			  RTC::RTCP::ReceiverReferenceTime* report, int64_t receivedAtUs);
 
-			RTC::RTCP::SenderReport* GetRtcpSenderReport(uint64_t nowMs);
+			RTC::RTCP::SenderReport* GetRtcpSenderReport(int64_t nowUs);
 
-			RTC::RTCP::DelaySinceLastRr::SsrcInfo* GetRtcpXrDelaySinceLastRrSsrcInfo(uint64_t nowMs);
+			RTC::RTCP::DelaySinceLastRr::SsrcInfo* GetRtcpXrDelaySinceLastRrSsrcInfo(int64_t nowUs);
 
 			RTC::RTCP::SdesChunk* GetRtcpSdesChunk();
 
@@ -101,16 +102,16 @@ namespace RTC
 
 			void Resume() override;
 
-			uint32_t GetBitrate(uint64_t nowMs) override
+			int64_t GetBitrate(int64_t nowMs) override
 			{
 				return this->transmissionCounter.GetBitrate(nowMs);
 			}
 
-			uint32_t GetBitrate(uint64_t nowMs, uint8_t spatialLayer, uint8_t temporalLayer) override;
+			int64_t GetBitrate(int64_t nowMs, uint8_t spatialLayer, uint8_t temporalLayer) override;
 
-			uint32_t GetSpatialLayerBitrate(uint64_t nowMs, uint8_t spatialLayer) override;
+			int64_t GetSpatialLayerBitrate(int64_t nowMs, uint8_t spatialLayer) override;
 
-			uint32_t GetLayerBitrate(uint64_t nowMs, uint8_t spatialLayer, uint8_t temporalLayer) override;
+			int64_t GetLayerBitrate(int64_t nowMs, uint8_t spatialLayer, uint8_t temporalLayer) override;
 
 		private:
 			void FillRetransmissionContainer(uint16_t seq, uint16_t bitmask);
@@ -125,9 +126,9 @@ namespace RTC
 			// Packets lost at last interval for score calculation.
 			int32_t lostPriorScore{ 0 };
 			// Packets sent at last interval for score calculation.
-			uint32_t sentPriorScore{ 0u };
+			uint32_t sentPriorScore{ 0 };
 			std::string mid;
-			uint16_t rtxSeq{ 0u };
+			uint16_t rtxSeq{ 0 };
 			RTC::RtpDataCounter transmissionCounter;
 			RTP::RetransmissionBuffer* retransmissionBuffer{ nullptr };
 			// Timing data of the most recent Receiver Reference Time received.

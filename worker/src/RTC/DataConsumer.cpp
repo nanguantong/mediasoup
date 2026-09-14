@@ -129,7 +129,7 @@ namespace RTC
 		  this->id.c_str(),
 		  this->dataProducerId.c_str(),
 		  this->type == DataConsumer::Type::SCTP ? FBS::DataConsumer::Type::SCTP
-		                                         : FBS::DataConsumer::Type::DIRECT,
+			                                       : FBS::DataConsumer::Type::DIRECT,
 		  sctpStreamParameters,
 		  this->label.c_str(),
 		  this->protocol.c_str(),
@@ -152,7 +152,7 @@ namespace RTC
 		return FBS::DataConsumer::CreateGetStatsResponseDirect(
 		  builder,
 		  // timestamp.
-		  this->shared->GetTimeMs(),
+		  static_cast<uint64_t>(this->shared->GetTimeMs()),
 		  // label.
 		  this->label.c_str(),
 		  // protocol.
@@ -293,8 +293,8 @@ namespace RTC
 
 						  this->listener->OnDataConsumerNeedBufferedAmount(this, bufferedAmount);
 
-						  auto responseOffset = FBS::DataConsumer::CreateGetBufferedAmountResponse(
-						    request->GetBufferBuilder(), bufferedAmount);
+						  auto responseOffset =
+						    FBS::DataConsumer::CreateSendResponse(request->GetBufferBuilder(), bufferedAmount);
 
 						  request->Accept(FBS::Response::Body::DataConsumer_SendResponse, responseOffset);
 					  }
