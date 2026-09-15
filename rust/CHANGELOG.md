@@ -2,6 +2,8 @@
 
 ### NEXT
 
+### 0.28.0
+
 - Worker: New `RateCalculator` ([PR #1899](https://github.com/versatica/mediasoup/pull/1899)).
 - Worker: Fix transport-cc arrival time precision by working in microseconds ([PR #1914](https://github.com/versatica/mediasoup/pull/1914)).
 - Worker: Use real receive time of packets ([PR #1917](https://github.com/versatica/mediasoup/pull/1917)).
@@ -9,6 +11,7 @@
 - Worker: Use `int64_t` for bitrate everywhere ([PR #1919](https://github.com/versatica/mediasoup/pull/1919)).
 - Improve worker build system ([PR #1920](https://github.com/versatica/mediasoup/pull/1920)).
 - Improve worker build system (part 2) ([PR #1923](https://github.com/versatica/mediasoup/pull/1923)).
+- Fix SVC target layers not re-evaluated when a spatial layer stops ([PR #1924](https://github.com/versatica/mediasoup/pull/1924)).
 
 ### 0.27.0
 

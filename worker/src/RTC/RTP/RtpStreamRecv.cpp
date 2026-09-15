@@ -3,6 +3,9 @@
 
 #include "RTC/RTP/RtpStreamRecv.hpp"
 #include "Logger.hpp"
+#include "RTC/RTCP/FeedbackPsFir.hpp"
+#include "RTC/RTCP/FeedbackPsPli.hpp"
+#include "RTC/RTCP/FeedbackRtpNack.hpp"
 #include "RTC/RTP/Codecs/Tools.hpp"
 #include "Utils.hpp"
 
@@ -14,6 +17,11 @@ namespace RTC
 
 		static constexpr int64_t InactivityCheckIntervalMs{ 1500 };
 		static constexpr int64_t InactivityCheckIntervalWithDtxMs{ 5000 };
+		// How often the spatial layers of a stream are checked for traffic.
+		// NOTE: A layer that stops doesn't report zero bitrate until the window of
+		// its counter has fully elapsed, so this interval just adds to that
+		// unavoidable detection delay.
+		static constexpr int64_t SpatialLayersActivityCheckIntervalMs{ 1500 };
 
 		/* TransmissionCounter methods. */
 
@@ -212,6 +220,20 @@ namespace RTC
 				this->inactivityCheckPeriodicTimer->Start(
 				  this->params.useDtx ? InactivityCheckIntervalWithDtxMs : InactivityCheckIntervalMs);
 			}
+
+			// A stream with more than a spatial layer carries all of them within the
+			// same SSRC, so the inactivity check above cannot tell that just one of
+			// them stopped. Watch their traffic separately.
+			if (GetSpatialLayers() > 1)
+			{
+				this->spatialLayersActivity.assign(GetSpatialLayers(), false);
+
+				this->spatialLayersActivityCheckPeriodicTimer =
+				  this->shared->CreateTimer(this, "rtp-stream-recv-spatial-layers-activity-check");
+
+				this->spatialLayersActivityCheckPeriodicTimer->Start(
+				  SpatialLayersActivityCheckIntervalMs, SpatialLayersActivityCheckIntervalMs);
+			}
 		}
 
 		RtpStreamRecv::~RtpStreamRecv()
@@ -221,6 +243,10 @@ namespace RTC
 			// Close the RTP inactivity check periodic timer.
 			delete this->inactivityCheckPeriodicTimer;
 			this->inactivityCheckPeriodicTimer = nullptr;
+
+			// Close the spatial layers activity check periodic timer.
+			delete this->spatialLayersActivityCheckPeriodicTimer;
+			this->spatialLayersActivityCheckPeriodicTimer = nullptr;
 		}
 
 		flatbuffers::Offset<FBS::RtpStream::Stats> RtpStreamRecv::FillBufferStats(
@@ -1013,6 +1039,34 @@ namespace RTC
 				}
 
 				ResetScore(0, /*notify*/ true);
+			}
+			else if (timer == this->spatialLayersActivityCheckPeriodicTimer)
+			{
+				const int64_t nowMs = this->shared->GetTimeMs();
+
+				for (uint8_t spatialLayer{ 0 }; spatialLayer < GetSpatialLayers(); ++spatialLayer)
+				{
+					const bool isActive =
+					  this->transmissionCounter.GetSpatialLayerBitrate(nowMs, spatialLayer) > 0;
+
+					if (isActive == this->spatialLayersActivity[spatialLayer])
+					{
+						continue;
+					}
+
+					this->spatialLayersActivity[spatialLayer] = isActive;
+
+					MS_DEBUG_2TAGS(
+					  rtp,
+					  svc,
+					  "spatial layer activity changed [ssrc:%" PRIu32 ", spatialLayer:%" PRIu8 ", isActive:%s]",
+					  GetSsrc(),
+					  spatialLayer,
+					  isActive ? "true" : "false");
+
+					static_cast<RTP::RtpStreamRecv::Listener*>(this->listener)
+					  ->OnRtpStreamSpatialLayerActivityChanged(this, spatialLayer, isActive);
+				}
 			}
 		}
 

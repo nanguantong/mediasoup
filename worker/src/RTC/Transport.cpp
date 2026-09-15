@@ -11,6 +11,7 @@
 #include "RTC/Consumer.hpp"
 #include "RTC/RTCP/FeedbackPs.hpp"
 #include "RTC/RTCP/FeedbackPsAfb.hpp"
+#include "RTC/RTCP/FeedbackPsFir.hpp"
 #include "RTC/RTCP/FeedbackPsRemb.hpp"
 #include "RTC/RTCP/FeedbackRtpNack.hpp"
 #include "RTC/RTCP/FeedbackRtpTransport.hpp"
@@ -2615,6 +2616,15 @@ namespace RTC
 		}
 
 		this->listener->OnTransportProducerRtcpSenderReport(this, producer, rtpStream, first);
+	}
+
+	void Transport::OnProducerSpatialLayerActivityChanged(
+	  RTC::Producer* producer, RTC::RTP::RtpStreamRecv* rtpStream, uint8_t spatialLayer, bool isActive)
+	{
+		MS_TRACE();
+
+		this->listener->OnTransportProducerSpatialLayerActivityChanged(
+		  this, producer, rtpStream, spatialLayer, isActive);
 	}
 
 	void Transport::OnProducerRtpPacketReceived(RTC::Producer* producer, RTC::RTP::Packet* packet)
