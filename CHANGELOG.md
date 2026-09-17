@@ -2,6 +2,11 @@
 
 ### NEXT
 
+### 3.27.1
+
+- Worker: Fix endless regeneration of FlatBuffers generated headers ([PR #1926](https://github.com/versatica/mediasoup/pull/1926)).
+- SCTP: Fix unbounded SCTP reassembly queue growth during deferred reset processing ([PR #1927](https://github.com/versatica/mediasoup/pull/1927)).
+
 ### 3.27.0
 
 - Worker: New `RateCalculator` ([PR #1899](https://github.com/versatica/mediasoup/pull/1899)).
