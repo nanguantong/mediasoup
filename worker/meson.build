@@ -44,6 +44,12 @@ if get_option('ms_rtc_logger_rtp')
   ]
 endif
 
+if get_option('ms_rtc_logger_send_burst')
+  cpp_args += [
+    '-DMS_RTC_LOGGER_SEND_BURST',
+  ]
+endif
+
 if get_option('ms_dump_rtp_payload_descriptor')
   cpp_args += [
     '-DMS_DUMP_RTP_PAYLOAD_DESCRIPTOR',
@@ -132,7 +138,8 @@ common_sources = [
   'src/RTC/RemoteCaptureTimeEstimator.cpp',
   'src/RTC/RemoteClockOffsetEstimator.cpp',
   'src/RTC/Router.cpp',
-  'src/RTC/RtcLogger.cpp',
+  'src/RTC/RtcLogger/RtpPacket.cpp',
+  'src/RTC/RtcLogger/SendBurst.cpp',
   'src/RTC/RtpListener.cpp',
   'src/RTC/RtpObserver.cpp',
   'src/RTC/SctpListener.cpp',
@@ -165,6 +172,7 @@ common_sources = [
   'src/RTC/SctpDictionaries/SctpStreamParameters.cpp',
   'src/RTC/BWE/AimdRateControl.cpp',
   'src/RTC/BWE/AlrDetector.cpp',
+  'src/RTC/BWE/BitrateProber.cpp',
   'src/RTC/BWE/BweTypes.cpp',
   'src/RTC/BWE/DelayBasedBwe.cpp',
   'src/RTC/BWE/FeedbackAdapter.cpp',
@@ -172,6 +180,8 @@ common_sources = [
   'src/RTC/BWE/IntervalBudget.cpp',
   'src/RTC/BWE/LinkCapacityEstimator.cpp',
   'src/RTC/BWE/LossBasedController.cpp',
+  'src/RTC/BWE/ProbeBitrateEstimator.cpp',
+  'src/RTC/BWE/ProbeController.cpp',
   'src/RTC/BWE/RobustThroughputEstimator.cpp',
   'src/RTC/BWE/SendPacketHistory.cpp',
   'src/RTC/BWE/TargetRateController.cpp',
@@ -477,12 +487,15 @@ test_sources = [
   'test/src/RTC/BWE/helpers/LinkSimulator.cpp',
   'test/src/RTC/BWE/TestAimdRateControl.cpp',
   'test/src/RTC/BWE/TestAlrDetector.cpp',
+  'test/src/RTC/BWE/TestBitrateProber.cpp',
   'test/src/RTC/BWE/TestDelayBasedBwe.cpp',
   'test/src/RTC/BWE/TestFeedbackAdapter.cpp',
   'test/src/RTC/BWE/TestInterArrivalDelta.cpp',
   'test/src/RTC/BWE/TestIntervalBudget.cpp',
   'test/src/RTC/BWE/TestLinkCapacityEstimator.cpp',
   'test/src/RTC/BWE/TestLossBasedController.cpp',
+  'test/src/RTC/BWE/TestProbeBitrateEstimator.cpp',
+  'test/src/RTC/BWE/TestProbeController.cpp',
   'test/src/RTC/BWE/TestRobustThroughputEstimator.cpp',
   'test/src/RTC/BWE/TestSendPacketHistory.cpp',
   'test/src/RTC/BWE/TestTargetRateController.cpp',

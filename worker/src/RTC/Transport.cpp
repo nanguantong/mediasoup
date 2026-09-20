@@ -23,28 +23,30 @@
 #include "RTC/SubchannelsCodec.hpp"
 #include "Utils.hpp"
 #ifdef MS_RTC_LOGGER_RTP
-#include "RTC/RtcLogger.hpp"
+#include "RTC/RtcLogger/RtpPacket.hpp"
 #endif
 #ifndef MS_USE_BUILTIN_BWE
 #include <libwebrtc/modules/rtp_rtcp/include/rtp_rtcp_defines.h> // webrtc::RtpPacketSendInfo
 #endif
 #include <array>
-#include <limits> // std::numeric_limits
-#include <map>    // std::multimap
+#include <map> // std::multimap
 
 namespace RTC
 {
 	/* Static. */
 
+	// Highest bitrate the API may ask for (bps), which anything higher is brought
+	// down to. A limit above what the bandwidth estimation deals in is not a
+	// limit, and it also keeps `Types::BitrateInfinite` out of the estimators,
+	// which reserve it to mean that there is no limit at all.
+	static constexpr uint64_t AbsoluteMaxBitrate{ static_cast<uint64_t>(RTC::Consts::BweMaxBitrate) };
 	// Bitrate the outgoing target is never taken below (bps), whatever the API
 	// asks for.
 	static constexpr int64_t AbsoluteMinOutgoingBitrate{ 30000 };
-	// Highest bitrate the API may ask for (bps). The highest value an int64_t can
-	// hold is what the bandwidth estimators reserve to mean that there is no
-	// limit at all, so it cannot also mean a limit.
-	static constexpr uint64_t AbsoluteMaxBitrate{
-		static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - 1
-	};
+#ifdef MS_RTC_LOGGER_SEND_BURST
+	// How often the distribution of send bursts is printed.
+	static constexpr int64_t SendBurstLogIntervalMs{ 5000 };
+#endif
 
 	/* Instance methods. */
 
@@ -65,6 +67,13 @@ namespace RTC
 	{
 		MS_TRACE();
 
+#ifdef MS_RTC_LOGGER_SEND_BURST
+		this->sendBurstLogger.transportId = this->id;
+		this->sendBurstLoggerTimer        = this->shared->CreateTimer(this, "transport-send-burst");
+
+		this->sendBurstLoggerTimer->Start(SendBurstLogIntervalMs, SendBurstLogIntervalMs);
+#endif
+
 		this->direct                = options->direct();
 		this->maxSendMessageSize    = options->maxSendMessageSize();
 		this->maxReceiveMessageSize = options->maxReceiveMessageSize();
@@ -73,14 +82,9 @@ namespace RTC
 		  auto initialAvailableOutgoingBitrate = options->initialAvailableOutgoingBitrate();
 		  initialAvailableOutgoingBitrate.has_value())
 		{
-			if (initialAvailableOutgoingBitrate.value() > AbsoluteMaxBitrate)
-			{
-				MS_THROW_TYPE_ERROR(
-				  "wrong initialAvailableOutgoingBitrate (must be <= %" PRIu64 ")", AbsoluteMaxBitrate);
-			}
-
-			this->initialAvailableOutgoingBitrate =
-			  static_cast<int64_t>(initialAvailableOutgoingBitrate.value());
+			// NOTE: The API gives an unsigned 64 bits bitrate, so it is clamped here.
+			this->initialAvailableOutgoingBitrate = static_cast<int64_t>(
+			  std::min<uint64_t>(initialAvailableOutgoingBitrate.value(), AbsoluteMaxBitrate));
 		}
 
 		if (options->enableSctp())
@@ -166,6 +170,11 @@ namespace RTC
 		// Delete the RTCP timer.
 		delete this->rtcpTimer;
 		this->rtcpTimer = nullptr;
+
+#ifdef MS_RTC_LOGGER_SEND_BURST
+		delete this->sendBurstLoggerTimer;
+		this->sendBurstLoggerTimer = nullptr;
+#endif
 	}
 
 	void Transport::CloseProducersAndConsumers()
@@ -552,12 +561,9 @@ namespace RTC
 			{
 				const auto* body = request->data->body_as<FBS::Transport::SetMaxIncomingBitrateRequest>();
 
-				if (body->maxIncomingBitrate() > AbsoluteMaxBitrate)
-				{
-					MS_THROW_TYPE_ERROR("bitrate must be <= %" PRIu64 " or 0 (unlimited)", AbsoluteMaxBitrate);
-				}
-
-				this->maxIncomingBitrate = static_cast<int64_t>(body->maxIncomingBitrate());
+				// NOTE: The API gives an unsigned 64 bits bitrate, so it is clamped here.
+				this->maxIncomingBitrate =
+				  static_cast<int64_t>(std::min<uint64_t>(body->maxIncomingBitrate(), AbsoluteMaxBitrate));
 
 				MS_DEBUG_TAG(bwe, "maximum incoming bitrate set to %" PRIi64, this->maxIncomingBitrate);
 
@@ -579,12 +585,9 @@ namespace RTC
 			{
 				const auto* body = request->data->body_as<FBS::Transport::SetMaxOutgoingBitrateRequest>();
 
-				if (body->maxOutgoingBitrate() > AbsoluteMaxBitrate)
-				{
-					MS_THROW_TYPE_ERROR("bitrate must be <= %" PRIu64 " or 0 (unlimited)", AbsoluteMaxBitrate);
-				}
-
-				const auto bitrate = static_cast<int64_t>(body->maxOutgoingBitrate());
+				// NOTE: The API gives an unsigned 64 bits bitrate, so it is clamped here.
+				const auto bitrate =
+				  static_cast<int64_t>(std::min<uint64_t>(body->maxOutgoingBitrate(), AbsoluteMaxBitrate));
 
 				if (bitrate > 0 && bitrate < AbsoluteMinOutgoingBitrate)
 				{
@@ -628,12 +631,9 @@ namespace RTC
 			{
 				const auto* body = request->data->body_as<FBS::Transport::SetMinOutgoingBitrateRequest>();
 
-				if (body->minOutgoingBitrate() > AbsoluteMaxBitrate)
-				{
-					MS_THROW_TYPE_ERROR("bitrate must be <= %" PRIu64 " or 0 (unlimited)", AbsoluteMaxBitrate);
-				}
-
-				const auto bitrate = static_cast<int64_t>(body->minOutgoingBitrate());
+				// NOTE: The API gives an unsigned 64 bits bitrate, so it is clamped here.
+				const auto bitrate =
+				  static_cast<int64_t>(std::min<uint64_t>(body->minOutgoingBitrate(), AbsoluteMaxBitrate));
 
 				if (bitrate > 0 && bitrate < AbsoluteMinOutgoingBitrate)
 				{
@@ -1066,7 +1066,6 @@ namespace RTC
 
 							MS_THROW_TYPE_ERROR(
 							  "cannot create a DataProducer of type 'sctp', SCTP not enabled in this Transport");
-							;
 						}
 
 						break;
@@ -1080,7 +1079,6 @@ namespace RTC
 
 							MS_THROW_TYPE_ERROR(
 							  "cannot create a DataProducer of type 'direct', not a direct Transport");
-							;
 						}
 
 						break;
@@ -1175,7 +1173,6 @@ namespace RTC
 
 							MS_THROW_TYPE_ERROR(
 							  "cannot create a DataConsumer of type 'sctp', SCTP not enabled in this Transport");
-							;
 						}
 
 						try
@@ -1202,7 +1199,6 @@ namespace RTC
 
 							MS_THROW_TYPE_ERROR(
 							  "cannot create a DataConsumer of type 'direct', not a direct Transport");
-							;
 						}
 
 						break;
@@ -1716,24 +1712,19 @@ namespace RTC
 	}
 
 	void Transport::SendSctpMessage(
-	  RTC::DataConsumer* dataConsumer, RTC::SCTP::Message message, onQueuedCallback* cb)
+	  RTC::DataConsumer* dataConsumer, RTC::SCTP::Message message, onMessageQueuedCallback cb)
 	{
 		MS_TRACE();
 
 		// NOTE: The `message` must already have its `streamId` pointing to the same
 		// as in the `dataConsumer` if its type is "sctp", or 0 otherwise.
 
+		// NOTE: The thrown error is the answer here, so `cb` is deliberately not
+		// invoked: whoever built it already replies to the channel request from
+		// within it, and the caught error replies again, which would abort.
 		if (!this->sctpAssociation)
 		{
 			MS_THROW_ERROR("SCTP not enabled");
-
-			if (cb)
-			{
-				(*cb)(false, false);
-				delete cb;
-			}
-
-			return;
 		}
 
 		const auto& sctpStreamParameters = dataConsumer->GetSctpStreamParameters();
@@ -1757,7 +1748,7 @@ namespace RTC
 			{
 				if (cb)
 				{
-					(*cb)(true, /*sctpSendBufferFull*/ false);
+					cb(true, /*isSendBufferFull*/ false);
 				}
 
 				break;
@@ -1775,7 +1766,7 @@ namespace RTC
 
 				if (cb)
 				{
-					(*cb)(false, /*sctpSendBufferFull*/ true);
+					cb(false, /*isSendBufferFull*/ true);
 				}
 
 				dataConsumer->SctpSendBufferFull();
@@ -1795,14 +1786,12 @@ namespace RTC
 
 				if (cb)
 				{
-					(*cb)(false, /*sctpSendBufferFull*/ false);
+					cb(false, /*isSendBufferFull*/ false);
 				}
 
 				break;
 			}
 		}
-
-		delete cb;
 	}
 
 	RTC::Producer* Transport::AssertAndGetProducerById(
@@ -2722,6 +2711,14 @@ namespace RTC
 		packet->logger.Sent();
 #endif
 
+#ifdef MS_RTC_LOGGER_SEND_BURST
+		this->sendBurstLogger.Sent(
+		  this->shared->GetLoopTimeMs(),
+		  packet->GetLength(),
+		  /*isRetransmission*/ false,
+		  /*isProbation*/ false);
+#endif
+
 		// Update abs-send-time if present.
 		packet->UpdateAbsSendTime(this->shared->GetTimeUs());
 
@@ -2758,7 +2755,9 @@ namespace RTC
 
 			auto* shared = this->shared;
 
-			const auto* cb = new onSendCallback(
+			SendRtpPacket(
+			  consumer,
+			  packet,
 			  [tccClientWeakPtr, shared, packetInfo](bool sent)
 			  {
 				  if (sent)
@@ -2771,8 +2770,6 @@ namespace RTC
 					  }
 				  }
 			  });
-
-			SendRtpPacket(consumer, packet, cb);
 		}
 		else
 		{
@@ -2786,6 +2783,14 @@ namespace RTC
 	void Transport::OnConsumerRetransmitRtpPacket(RTC::Consumer* consumer, RTC::RTP::Packet* packet)
 	{
 		MS_TRACE();
+
+#ifdef MS_RTC_LOGGER_SEND_BURST
+		this->sendBurstLogger.Sent(
+		  this->shared->GetLoopTimeMs(),
+		  packet->GetLength(),
+		  /*isRetransmission*/ true,
+		  /*isProbation*/ false);
+#endif
 
 		// Update abs-send-time if present.
 		packet->UpdateAbsSendTime(this->shared->GetTimeUs());
@@ -2818,7 +2823,9 @@ namespace RTC
 
 			auto* shared = this->shared;
 
-			const auto* cb = new onSendCallback(
+			SendRtpPacket(
+			  consumer,
+			  packet,
 			  [tccClientWeakPtr, shared, packetInfo](bool sent)
 			  {
 				  if (sent)
@@ -2831,8 +2838,6 @@ namespace RTC
 					  }
 				  }
 			  });
-
-			SendRtpPacket(consumer, packet, cb);
 		}
 		else
 		{
@@ -2953,11 +2958,11 @@ namespace RTC
 	}
 
 	void Transport::OnDataConsumerSendMessage(
-	  RTC::DataConsumer* dataConsumer, RTC::SCTP::Message message, onQueuedCallback* cb)
+	  RTC::DataConsumer* dataConsumer, RTC::SCTP::Message message, onMessageQueuedCallback cb)
 	{
 		MS_TRACE();
 
-		SendMessage(dataConsumer, std::move(message), cb);
+		SendMessage(dataConsumer, std::move(message), std::move(cb));
 	}
 
 	void Transport::OnDataConsumerNeedBufferedAmount(
@@ -3425,6 +3430,14 @@ namespace RTC
 	{
 		MS_TRACE();
 
+#ifdef MS_RTC_LOGGER_SEND_BURST
+		this->sendBurstLogger.Sent(
+		  this->shared->GetLoopTimeMs(),
+		  packet->GetLength(),
+		  /*isRetransmission*/ false,
+		  /*isProbation*/ true);
+#endif
+
 		// Update abs-send-time if present.
 		packet->UpdateAbsSendTime(this->shared->GetTimeUs());
 
@@ -3454,7 +3467,9 @@ namespace RTC
 
 			auto* shared = this->shared;
 
-			const auto* cb = new onSendCallback(
+			SendRtpPacket(
+			  nullptr,
+			  packet,
 			  [tccClientWeakPtr, shared, packetInfo](bool sent)
 			  {
 				  if (sent)
@@ -3467,8 +3482,6 @@ namespace RTC
 					  }
 				  }
 			  });
-
-			SendRtpPacket(nullptr, packet, cb);
 		}
 		else
 		{
@@ -3519,5 +3532,11 @@ namespace RTC
 
 			this->rtcpTimer->Start(intervalMs);
 		}
+#ifdef MS_RTC_LOGGER_SEND_BURST
+		else if (timer == this->sendBurstLoggerTimer)
+		{
+			this->sendBurstLogger.Log();
+		}
+#endif
 	}
 } // namespace RTC

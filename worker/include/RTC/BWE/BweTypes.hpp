@@ -96,6 +96,67 @@ namespace RTC
 			};
 
 			/**
+			 * The burst of packets a probe is sent as, and what makes its result
+			 * trustworthy.
+			 *
+			 * A probe is only worth believing once enough of what was sent has come
+			 * back, so the burst carries how many packets and how many bytes it was
+			 * meant to be. Whoever measures it compares those against what actually
+			 * arrived, and discards the cluster if too little of it did.
+			 */
+			struct ProbeCluster
+			{
+				/**
+				 * Identifies the burst, so that the packets of one probe are not mixed
+				 * with those of another.
+				 */
+				int64_t id{ 0 };
+				/**
+				 * Packets the burst was meant to be made of.
+				 */
+				int64_t minProbes{ 0 };
+				/**
+				 * Bytes the burst was meant to carry.
+				 */
+				int64_t minBytes{ 0 };
+			};
+
+			/**
+			 * A burst that has been asked for but not sent yet.
+			 *
+			 * It's what whoever decides to probe hands over to whoever emits the
+			 * packets: at what bitrate, for how long and in how many packets. What
+			 * travels with each of those packets afterwards is a `ProbeCluster`.
+			 */
+			struct ProbeClusterConfig
+			{
+				/**
+				 * Identifies the burst, and is what each of its packets carries.
+				 */
+				int64_t id{ 0 };
+				/**
+				 * Instant at which the burst was asked for.
+				 */
+				int64_t atUs{ 0 };
+				/**
+				 * Bitrate the burst is meant to be sent at (bps).
+				 */
+				int64_t targetBitrate{ 0 };
+				/**
+				 * How long the burst is meant to last.
+				 */
+				int64_t targetDurationUs{ 0 };
+				/**
+				 * Time between two consecutive bursts of packets within the probe.
+				 */
+				int64_t minProbeDeltaUs{ 2 * 1000 };
+				/**
+				 * Packets the burst is meant to be made of.
+				 */
+				int64_t targetProbeCount{ 0 };
+			};
+
+			/**
 			 * A packet that was sent and is being tracked until its feedback arrives.
 			 */
 			struct SentPacket
@@ -134,6 +195,11 @@ namespace RTC
 				 * Whether it's an audio packet. False for video, padding and RTX.
 				 */
 				bool audio{ false };
+				/**
+				 * The probe cluster the packet belongs to, or no value if it isn't a
+				 * probe.
+				 */
+				std::optional<ProbeCluster> probeCluster;
 			};
 
 			/**

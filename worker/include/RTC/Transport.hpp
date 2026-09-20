@@ -6,6 +6,7 @@
 #include "Channel/ChannelRequest.hpp"
 #include "Channel/ChannelSocket.hpp"
 #include "FBS/transport.h"
+#include "handles/SendCallbacks.hpp"
 #include "handles/TimerHandleInterface.hpp"
 #include "RTC/Consumer.hpp"
 #include "RTC/DataConsumer.hpp"
@@ -28,6 +29,9 @@
 #include "RTC/TransportCongestionControlServer.hpp"
 #endif
 #include "SharedInterface.hpp"
+#ifdef MS_RTC_LOGGER_SEND_BURST
+#include "RTC/RtcLogger/SendBurst.hpp"
+#endif
 #include <ankerl/unordered_dense.h>
 #include <string>
 #include <vector>
@@ -47,10 +51,6 @@ namespace RTC
 	                  public Channel::ChannelSocket::NotificationHandler,
 	                  public TimerHandleInterface::Listener
 	{
-	protected:
-		using onSendCallback   = const std::function<void(bool sent)>;
-		using onQueuedCallback = const std::function<void(bool queued, bool sctpSendBufferFull)>;
-
 	public:
 		class Listener
 		{
@@ -202,7 +202,9 @@ namespace RTC
 		virtual void ReceiveRtcpPacket(RTC::RTCP::Packet* packet, int64_t receivedAtUs) final;
 		virtual void ReceiveSctpData(const uint8_t* data, size_t len, int64_t receivedAtUs) final;
 		virtual void SendSctpMessage(
-		  RTC::DataConsumer* dataConsumer, RTC::SCTP::Message message, onQueuedCallback* cb = nullptr) final;
+		  RTC::DataConsumer* dataConsumer,
+		  RTC::SCTP::Message message,
+		  onMessageQueuedCallback cb = {}) final;
 
 	private:
 		virtual RTC::Producer* AssertAndGetProducerById(
@@ -229,13 +231,13 @@ namespace RTC
 			return false;
 		}
 		virtual void SendRtpPacket(
-		  RTC::Consumer* consumer, RTC::RTP::Packet* packet, const onSendCallback* cb = nullptr) = 0;
+		  RTC::Consumer* consumer, RTC::RTP::Packet* packet, onSendCallback cb = {}) = 0;
 		virtual void HandleRtcpPacket(RTC::RTCP::Packet* packet, int64_t receivedAtUs) final;
 		virtual void SendRtcp(int64_t nowUs) final;
 		virtual void SendRtcpPacket(RTC::RTCP::Packet* packet)                 = 0;
 		virtual void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) = 0;
 		virtual void SendMessage(
-		  RTC::DataConsumer* dataConsumer, RTC::SCTP::Message message, onQueuedCallback* cb = nullptr) = 0;
+		  RTC::DataConsumer* dataConsumer, RTC::SCTP::Message message, onMessageQueuedCallback cb = {}) = 0;
 		virtual bool SendData(const uint8_t* data, size_t len) = 0;
 		virtual void RecvStreamClosed(uint32_t ssrc)           = 0;
 		virtual void SendStreamClosed(uint32_t ssrc)           = 0;
@@ -308,7 +310,7 @@ namespace RTC
 		/* Pure virtual methods inherited from RTC::DataConsumer::Listener. */
 	public:
 		void OnDataConsumerSendMessage(
-		  RTC::DataConsumer* dataConsumer, RTC::SCTP::Message message, onQueuedCallback* cb) override;
+		  RTC::DataConsumer* dataConsumer, RTC::SCTP::Message message, onMessageQueuedCallback cb) override;
 		void OnDataConsumerNeedBufferedAmount(
 		  const RTC::DataConsumer* dataConsumer, uint32_t& bufferedAmount) const override;
 		void OnDataConsumerNeedBufferedAmountLowThreshold(
@@ -412,6 +414,13 @@ namespace RTC
 		size_t maxSendMessageSize{ 0 };
 		size_t maxReceiveMessageSize{ 0 };
 		struct TraceEventTypes traceEventTypes;
+
+#ifdef MS_RTC_LOGGER_SEND_BURST
+	private:
+		RTC::RtcLogger::SendBurst sendBurstLogger;
+		// Allocated by this.
+		TimerHandleInterface* sendBurstLoggerTimer{ nullptr };
+#endif
 	};
 } // namespace RTC
 
