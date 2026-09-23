@@ -23,6 +23,11 @@ if host_machine.system() == 'windows'
     '-D_SCL_SECURE_NO_WARNINGS',
     # Introduced in VS 2017 15.8, allow overaligned types in aligned_storage.
     '-D_ENABLE_EXTENDED_ALIGNED_STORAGE',
+    # Don't warn about flexible array members (a C99 feature that C++ lacks and
+    # every compiler offers as an extension). They are how RTP and RTCP headers
+    # give a name to the bytes that follow them, so their length is part of the
+    # parsing arithmetic and cannot be declared.
+    '/wd4200',
   ]
 endif
 
@@ -173,6 +178,7 @@ common_sources = [
   'src/RTC/BWE/AimdRateControl.cpp',
   'src/RTC/BWE/AlrDetector.cpp',
   'src/RTC/BWE/BitrateProber.cpp',
+  'src/RTC/BWE/BitrateUtils.cpp',
   'src/RTC/BWE/BweTypes.cpp',
   'src/RTC/BWE/DelayBasedBwe.cpp',
   'src/RTC/BWE/FeedbackAdapter.cpp',
@@ -182,11 +188,11 @@ common_sources = [
   'src/RTC/BWE/LossBasedController.cpp',
   'src/RTC/BWE/ProbeBitrateEstimator.cpp',
   'src/RTC/BWE/ProbeController.cpp',
+  'src/RTC/BWE/ProbePacketGenerator.cpp',
   'src/RTC/BWE/RobustThroughputEstimator.cpp',
   'src/RTC/BWE/SendPacketHistory.cpp',
   'src/RTC/BWE/TargetRateController.cpp',
   'src/RTC/BWE/TrendlineEstimator.cpp',
-  'src/RTC/BWE/Utils.cpp',
   'src/RTC/ICE/IceCandidate.cpp',
   'src/RTC/ICE/IceServer.cpp',
   'src/RTC/ICE/StunPacket.cpp',
@@ -488,6 +494,7 @@ test_sources = [
   'test/src/RTC/BWE/TestAimdRateControl.cpp',
   'test/src/RTC/BWE/TestAlrDetector.cpp',
   'test/src/RTC/BWE/TestBitrateProber.cpp',
+  'test/src/RTC/BWE/TestBitrateUtils.cpp',
   'test/src/RTC/BWE/TestDelayBasedBwe.cpp',
   'test/src/RTC/BWE/TestFeedbackAdapter.cpp',
   'test/src/RTC/BWE/TestInterArrivalDelta.cpp',
@@ -496,11 +503,11 @@ test_sources = [
   'test/src/RTC/BWE/TestLossBasedController.cpp',
   'test/src/RTC/BWE/TestProbeBitrateEstimator.cpp',
   'test/src/RTC/BWE/TestProbeController.cpp',
+  'test/src/RTC/BWE/TestProbePacketGenerator.cpp',
   'test/src/RTC/BWE/TestRobustThroughputEstimator.cpp',
   'test/src/RTC/BWE/TestSendPacketHistory.cpp',
   'test/src/RTC/BWE/TestTargetRateController.cpp',
   'test/src/RTC/BWE/TestTrendlineEstimator.cpp',
-  'test/src/RTC/BWE/TestUtils.cpp',
   'test/src/RTC/ICE/iceCommon.cpp',
   'test/src/RTC/ICE/TestStunPacket.cpp',
   'test/src/RTC/RTP/rtpCommon.cpp',

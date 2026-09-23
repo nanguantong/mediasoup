@@ -16,7 +16,6 @@
 #include "RTC/RTCP/FeedbackRtpNack.hpp"
 #include "RTC/RTCP/FeedbackRtpTransport.hpp"
 #include "RTC/RTCP/XrDelaySinceLastRr.hpp"
-#include "RTC/RTP/ProbationGenerator.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "RTC/SCTP/association/Association.hpp"
 #include "RTC/SCTP/public/SctpOptions.hpp"
@@ -909,10 +908,10 @@ namespace RTC
 
 				if (preferredLayers.spatial > -1 && preferredLayers.temporal > -1)
 				{
-					const flatbuffers::Optional<int16_t> preferredTemporalLayer{ preferredLayers.temporal };
-
 					preferredLayersOffset = FBS::Consumer::CreateConsumerLayers(
-					  request->GetBufferBuilder(), preferredLayers.spatial, preferredTemporalLayer);
+					  request->GetBufferBuilder(),
+					  static_cast<uint8_t>(preferredLayers.spatial),
+					  static_cast<uint8_t>(preferredLayers.temporal));
 				}
 
 				auto scoreOffset    = consumer->FillBufferScore(request->GetBufferBuilder());
@@ -1735,7 +1734,7 @@ namespace RTC
 			                        : std::optional<int64_t>(sctpStreamParameters.maxPacketLifeTime),
 			.maxRetransmissions = sctpStreamParameters.ordered
 			                        ? std::nullopt
-			                        : std::optional<uint64_t>(sctpStreamParameters.maxRetransmits),
+			                        : std::optional<uint16_t>(sctpStreamParameters.maxRetransmits),
 			// NOTE: We don't set `lifecyleId` in production.
 		};
 
@@ -1973,7 +1972,7 @@ namespace RTC
 					if (!consumer)
 					{
 						// Special case for the RTP probator.
-						if (report->GetSsrc() == RTC::RTP::ProbationGenerator::Ssrc)
+						if (report->GetSsrc() == RTC::Consts::BweProbeRtpSsrc)
 						{
 							continue;
 						}
@@ -2032,7 +2031,7 @@ namespace RTC
 					{
 						auto* consumer = GetConsumerByMediaSsrc(feedback->GetMediaSsrc());
 
-						if (feedback->GetMediaSsrc() == RTC::RTP::ProbationGenerator::Ssrc)
+						if (feedback->GetMediaSsrc() == RTC::Consts::BweProbeRtpSsrc)
 						{
 							break;
 						}
@@ -2071,7 +2070,7 @@ namespace RTC
 							auto& item     = *it;
 							auto* consumer = GetConsumerByMediaSsrc(item->GetSsrc());
 
-							if (item->GetSsrc() == RTC::RTP::ProbationGenerator::Ssrc)
+							if (item->GetSsrc() == RTC::Consts::BweProbeRtpSsrc)
 							{
 								continue;
 							}
@@ -2162,7 +2161,7 @@ namespace RTC
 				// probation SSRC or any Consumer RTX SSRC, ignore it.
 				if (
 				  !consumer && feedback->GetMessageType() != RTC::RTCP::FeedbackRtp::MessageType::TCC &&
-				  (feedback->GetMediaSsrc() != RTC::RTP::ProbationGenerator::Ssrc ||
+				  (feedback->GetMediaSsrc() != RTC::Consts::BweProbeRtpSsrc ||
 					 !GetConsumerByRtxSsrc(feedback->GetMediaSsrc())))
 				{
 					MS_DEBUG_TAG(
@@ -3528,7 +3527,7 @@ namespace RTC
 			 * [1.0, 1.5] times the calculated interval to avoid unintended
 			 * synchronization of all participants.
 			 */
-			intervalMs *= static_cast<float>(Utils::Crypto::GetRandomUInt<uint16_t>(10, 15)) / 10;
+			intervalMs = (intervalMs * Utils::Crypto::GetRandomUInt<uint16_t>(10, 15)) / 10;
 
 			this->rtcpTimer->Start(intervalMs);
 		}

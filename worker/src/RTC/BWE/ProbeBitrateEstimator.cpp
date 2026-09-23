@@ -3,7 +3,7 @@
 
 #include "RTC/BWE/ProbeBitrateEstimator.hpp"
 #include "Logger.hpp"
-#include "RTC/BWE/Utils.hpp"
+#include "RTC/BWE/BitrateUtils.hpp"
 #include <cmath> // std::llround()
 
 namespace RTC
@@ -162,9 +162,18 @@ namespace RTC
 
 			// Arriving clearly slower than it was sent means the burst found the real
 			// capacity of the link, so aim slightly below it.
-			if (receiveBitrate < Utils::ApplyBitrateFactor(sendBitrate, MinRatioForUnsaturatedLink))
+			if (receiveBitrate < BitrateUtils::ApplyBitrateFactor(sendBitrate, MinRatioForUnsaturatedLink))
 			{
-				bitrate = Utils::ApplyBitrateFactor(receiveBitrate, TargetUtilizationFraction);
+				// NOTE: Nine tenths of a rate never come out above the rate itself, so
+				// being below that fraction means being below the rate.
+				MS_ASSERT(
+				  sendBitrate > receiveBitrate,
+				  "burst received faster than it was sent [sendBitrate:%" PRIi64 ", receiveBitrate:%" PRIi64
+				  "]",
+				  sendBitrate,
+				  receiveBitrate);
+
+				bitrate = BitrateUtils::ApplyBitrateFactor(receiveBitrate, TargetUtilizationFraction);
 			}
 
 			MS_DEBUG_DEV(
