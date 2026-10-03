@@ -3,6 +3,8 @@
 #include "RTC/RTP/HeaderExtensionIds.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RtpDictionaries.hpp"
+#include "Utils.hpp"
+#include "test/include/RTC/BWE/helpers/RemoteBitrateEstimatorAbsSendTimeTestHelper.hpp"
 #include "test/include/RTC/RTP/rtpCommon.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <cstdlib> // std::abs()
@@ -42,7 +44,8 @@ SCENARIO("BWE RemoteBitrateEstimatorAbsSendTime", "[bwe][remotebitrateestimatora
 	//
 	// NOTE: Every scenario reuses `rtpCommon::FactoryBuffer`, so the returned
 	// packet is only valid until the next call.
-	auto buildPacket = [](size_t payloadSize, int64_t sendTimeUs) -> std::unique_ptr<RTC::RTP::Packet>
+	const auto buildPacket =
+	  [](size_t payloadSize, int64_t sendTimeUs) -> std::unique_ptr<RTC::RTP::Packet>
 	{
 		std::unique_ptr<RTC::RTP::Packet> packet(
 		  RTC::RTP::Packet::Factory(rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)));
@@ -64,26 +67,25 @@ SCENARIO("BWE RemoteBitrateEstimatorAbsSendTime", "[bwe][remotebitrateestimatora
 		headerExtensionIds.absSendTime = absSendTimeId;
 
 		packet->AssignExtensionIds(headerExtensionIds);
-
 		packet->SetPayloadLength(payloadSize);
 
-		REQUIRE(packet->UpdateAbsSendTime(sendTimeUs));
+		REQUIRE(packet->UpdateAbsSendTime(Utils::Time::TimeUsToAbsSendTime(sendTimeUs)));
 
 		return packet;
 	};
 
 	// Feeds a packet that says it left at `sendTimeUs` and arrived at
 	// `arrivalTimeUs`, which is also taken as the current instant.
-	auto feedPacket = [&buildPacket](
-	                    RTC::BWE::RemoteBitrateEstimatorAbsSendTime& remoteBitrateEstimator,
-	                    size_t payloadSize,
-	                    int64_t sendTimeUs,
-	                    int64_t arrivalTimeUs,
-	                    int64_t nowUs) -> void
+	const auto feedPacket = [&buildPacket](
+	                          RTC::BWE::RemoteBitrateEstimatorAbsSendTime& remoteBitrateEstimator,
+	                          size_t payloadSize,
+	                          int64_t sendTimeUs,
+	                          int64_t arrivalTimeUs,
+	                          int64_t nowUs) -> void
 	{
 		const auto packet = buildPacket(payloadSize, sendTimeUs);
 
-		remoteBitrateEstimator.IncomingPacket(packet.get(), arrivalTimeUs, nowUs);
+		remoteBitrateEstimator.ReceiveRtpPacket(packet.get(), arrivalTimeUs, nowUs);
 	};
 
 	SECTION("a burst faster than the one before it raises the estimation")
@@ -303,5 +305,110 @@ SCENARIO("BWE RemoteBitrateEstimatorAbsSendTime", "[bwe][remotebitrateestimatora
 		nowUs += 1000 * 1000;
 
 		feedPacket(remoteBitrateEstimator, 1000, nowUs, nowUs, nowUs);
+	}
+
+	SECTION("initial behavior")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.InitialBehaviorTestHelper(674840);
+	}
+
+	SECTION("a rate increase with reordered packets")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.RateIncreaseReorderingTestHelper(674840);
+	}
+
+	SECTION("a rate increase measured in rtp timestamps")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.RateIncreaseRtpTimestampsTestHelper(1237);
+	}
+
+	SECTION("a capacity drop with one stream")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.CapacityDropTestHelper(1, false, 633, 0);
+	}
+
+	SECTION("a capacity drop with the receiver clock moved forward")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.CapacityDropTestHelper(1, false, 267, 30000);
+	}
+
+	SECTION("a capacity drop with the receiver clock moved back")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.CapacityDropTestHelper(1, false, 267, -30000);
+	}
+
+	SECTION("a capacity drop with one stream whose timestamps wrap")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.CapacityDropTestHelper(1, true, 633, 0);
+	}
+
+	SECTION("a capacity drop with two streams whose timestamps wrap")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.CapacityDropTestHelper(2, true, 700, 0);
+	}
+
+	SECTION("a capacity drop with three streams whose timestamps wrap")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.CapacityDropTestHelper(3, true, 633, 0);
+	}
+
+	SECTION("a capacity drop with thirteen streams whose timestamps wrap")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.CapacityDropTestHelper(13, true, 667, 0);
+	}
+
+	SECTION("a capacity drop with nineteen streams whose timestamps wrap")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.CapacityDropTestHelper(19, true, 667, 0);
+	}
+
+	SECTION("a capacity drop with thirty streams whose timestamps wrap")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.CapacityDropTestHelper(30, true, 667, 0);
+	}
+
+	SECTION("packets sent very close together are taken as one group")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.TestTimestampGroupingTestHelper();
+	}
+
+	SECTION("a sender rejoining after a short silence, which wraps abs-send-time")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.TestWrappingHelper(35);
+	}
+
+	SECTION("a sender rejoining after a silence that leaves abs-send-time unchanged")
+	{
+		bweHelpers::RemoteBitrateEstimatorAbsSendTimeTestHelper helper;
+
+		helper.TestWrappingHelper(10 * 64);
 	}
 }

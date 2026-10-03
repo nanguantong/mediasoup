@@ -956,7 +956,7 @@ namespace RTC
 			return true;
 		}
 
-		bool Packet::UpdateAbsSendTime(int64_t sentAtUs) const
+		bool Packet::UpdateAbsSendTime(uint32_t absSendTime) const
 		{
 			MS_TRACE();
 
@@ -967,8 +967,6 @@ namespace RTC
 			{
 				return false;
 			}
-
-			auto absSendTime = Utils::Time::TimeUsToAbsSendTime(sentAtUs);
 
 			Utils::Byte::Set3Bytes(extenValue, 0, absSendTime);
 
@@ -1191,6 +1189,25 @@ namespace RTC
 			{
 				estimatedCaptureClockOffset = 0;
 			}
+
+			return true;
+		}
+
+		bool Packet::UpdateAbsCaptureTime(uint64_t absCaptureTimestamp) const
+		{
+			MS_TRACE();
+
+			uint8_t extenLen;
+			uint8_t* extenValue = GetExtensionValue(this->headerExtensionIds.absCaptureTime, extenLen);
+
+			// Extension value can be 8 or 16 bytes depending on whether it contains
+			// estimated capture clock offset or not.
+			if (!extenValue || (extenLen != 8u && extenLen != 16u))
+			{
+				return false;
+			}
+
+			Utils::Byte::Set8Bytes(extenValue, 0, absCaptureTimestamp);
 
 			return true;
 		}

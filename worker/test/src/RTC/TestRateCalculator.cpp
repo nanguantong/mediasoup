@@ -14,7 +14,7 @@ SCENARIO("RateCalculator", "[rate-calculator]")
 		std::optional<int64_t> rate;
 	};
 
-	auto validate =
+	const auto validate =
 	  [](RTC::RateCalculator& rate, int64_t timeBaseMs, const std::vector<TestRateCalculatorData>& input)
 	{
 		for (const auto& item : input)
@@ -206,6 +206,29 @@ SCENARIO("RateCalculator", "[rate-calculator]")
 		rate.Update(1000, nowMs + 10502);
 
 		REQUIRE(rate.GetRate(nowMs + 10502) == 4000000);
+	}
+
+	// NOTE: This pins that data given with an instant that precedes the whole
+	// window is not lost. It is taken as if it had been given at the instant the
+	// newest item starts at, so it counts towards both the rate and the total.
+	SECTION("a sample older than the whole window still counts")
+	{
+		// window: 1000ms, items: 1000 (granularity: 1ms)
+		RTC::RateCalculator rate(1000, 8000, 1000);
+
+		rate.Update(1000, nowMs);
+		rate.Update(1000, nowMs + 500);
+
+		// 1000 * 8000 / 501, without the sample that starts the period.
+		REQUIRE(rate.GetRate(nowMs + 500) == 15968);
+		REQUIRE(rate.GetBytes() == 2000);
+
+		// Five seconds before the window, which spans one.
+		rate.Update(1000, nowMs - 5000);
+
+		REQUIRE(rate.GetBytes() == 3000);
+		// 2000 * 8000 / 501.
+		REQUIRE(rate.GetRate(nowMs + 500) == 31936);
 	}
 
 	// NOTE: This is what the margin exists for: the samples come a whole window
