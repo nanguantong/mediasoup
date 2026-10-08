@@ -21,7 +21,9 @@ use event_listener_primitives::{Bag, BagOnce, HandlerId};
 use log::{debug, error};
 use mediasoup_sys::fbs::{notification, plain_transport, response, sctp_association, transport};
 use mediasoup_types::data_structures::{AppData, ListenInfo, SctpState, TransportTuple};
-use mediasoup_types::sctp_parameters::{SctpNegotiatedCapabilities, SctpParameters};
+use mediasoup_types::sctp_parameters::{
+    SctpNegotiatedCapabilities, SctpParameters, SctpZeroChecksum,
+};
 use mediasoup_types::srtp_parameters::{SrtpCryptoSuite, SrtpParameters};
 use nohash_hasher::IntMap;
 use parking_lot::Mutex;
@@ -83,6 +85,9 @@ pub struct PlainTransportOptions {
     /// via DataConsumer::set_buffered_amount_low_threshold().
     /// Default 1024.
     pub sctp_default_stream_buffered_amount_low_threshold: u32,
+    /// SCTP Zero Checksum (RFC 9653) alternate error detection method to announce.
+    /// Default `SctpZeroChecksum::None`.
+    pub sctp_zero_checksum: SctpZeroChecksum,
     /// Enable SRTP. For this to work, connect() must be called with remote SRTP parameters.
     /// Default false.
     pub enable_srtp: bool,
@@ -109,6 +114,7 @@ impl PlainTransportOptions {
             sctp_per_stream_send_queue_limit: 2_000_000,
             sctp_max_receiver_window_buffer_size: 5_242_880,
             sctp_default_stream_buffered_amount_low_threshold: 1024,
+            sctp_zero_checksum: SctpZeroChecksum::None,
             enable_srtp: false,
             srtp_crypto_suite: SrtpCryptoSuite::default(),
             app_data: AppData::default(),
@@ -265,10 +271,6 @@ pub struct PlainTransportStat {
     pub max_incoming_bitrate: Option<u64>,
     pub max_outgoing_bitrate: Option<u64>,
     pub min_outgoing_bitrate: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rtp_packet_loss_received: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rtp_packet_loss_sent: Option<f64>,
     // PlainTransport specific.
     pub rtcp_mux: bool,
     pub comedia: bool,
@@ -304,8 +306,6 @@ impl<'a> TryFromFbs<'a> for PlainTransportStat {
             max_incoming_bitrate: stats.base.max_incoming_bitrate,
             max_outgoing_bitrate: stats.base.max_outgoing_bitrate,
             min_outgoing_bitrate: stats.base.min_outgoing_bitrate,
-            rtp_packet_loss_received: stats.base.rtp_packet_loss_received,
-            rtp_packet_loss_sent: stats.base.rtp_packet_loss_sent,
             // PlainTransport specific.
             rtcp_mux: stats.rtcp_mux,
             comedia: stats.comedia,
@@ -453,7 +453,7 @@ impl<'a> TryFromFbs<'a> for Notification {
 struct Inner {
     id: TransportId,
     next_mid_for_consumers: AtomicUsize,
-    used_sctp_stream_ids: Mutex<IntMap<u16, bool>>,
+    used_sctp_stream_ids: Mutex<Vec<bool>>,
     next_sctp_stream_id: Mutex<u16>,
     cname_for_producers: Mutex<Option<String>>,
     executor: Arc<Executor<'static>>,
@@ -731,7 +731,7 @@ impl TransportImpl for PlainTransport {
             .map(|caps| caps.negotiated_max_outbound_streams)
     }
 
-    fn used_sctp_stream_ids(&self) -> &Mutex<IntMap<u16, bool>> {
+    fn used_sctp_stream_ids(&self) -> &Mutex<Vec<bool>> {
         &self.inner.used_sctp_stream_ids
     }
 
@@ -799,15 +799,8 @@ impl PlainTransport {
         };
 
         let next_mid_for_consumers = AtomicUsize::default();
-        let used_sctp_stream_ids = Mutex::new({
-            let mut used_sctp_stream_ids = IntMap::default();
-
-            for i in 0..=65535 {
-                used_sctp_stream_ids.insert(i, false);
-            }
-
-            used_sctp_stream_ids
-        });
+        // NOTE: 65535 is the maximum number of streams in a SCTP association.
+        let used_sctp_stream_ids = Mutex::new(vec![false; 65535]);
         let next_sctp_stream_id = Mutex::new(0);
         let cname_for_producers = Mutex::new(None);
         let sctp_negotiated_capabilities = Mutex::new(None);

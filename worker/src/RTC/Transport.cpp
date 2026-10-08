@@ -18,6 +18,7 @@
 #include "RTC/RTCP/XrDelaySinceLastRr.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "RTC/SCTP/association/Association.hpp"
+#include "RTC/SCTP/packet/parameters/ZeroChecksumAcceptableParameter.hpp"
 #include "RTC/SCTP/public/SctpOptions.hpp"
 #include "RTC/SubchannelsCodec.hpp"
 #include "Utils.hpp"
@@ -93,6 +94,32 @@ namespace RTC
 				MS_THROW_TYPE_ERROR("cannot enable SCTP in a direct Transport");
 			}
 
+			RTC::SCTP::ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod
+			  zeroChecksumAlternateErrorDetectionMethod{
+				  RTC::SCTP::ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod::NONE
+			  };
+
+			switch (options->sctpZeroChecksum())
+			{
+				case FBS::Transport::SctpZeroChecksum::SCTP_OVER_DTLS:
+				{
+					zeroChecksumAlternateErrorDetectionMethod =
+					  RTC::SCTP::ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod::SCTP_OVER_DTLS;
+
+					break;
+				}
+
+				case FBS::Transport::SctpZeroChecksum::TRUSTED_NETWORK:
+				{
+					zeroChecksumAlternateErrorDetectionMethod =
+					  RTC::SCTP::ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod::TRUSTED_NETWORK;
+
+					break;
+				}
+
+				default:;
+			}
+
 			const RTC::SCTP::SctpOptions sctpOptions = {
 				.mtu                         = RTC::Consts::MaxSafeMtuSizeForSctp,
 				.maxSendMessageSize          = this->maxSendMessageSize,
@@ -102,7 +129,8 @@ namespace RTC
 				.maxReceiverWindowBufferSize = options->sctpMaxReceiverWindowBufferSize(),
 				.defaultStreamBufferedAmountLowThreshold =
 				  options->sctpDefaultStreamBufferedAmountLowThreshold(),
-				.requireAuthenticatedCookie = requireSctpStateCookieAuthentication
+				.zeroChecksumAlternateErrorDetectionMethod = zeroChecksumAlternateErrorDetectionMethod,
+				.requireAuthenticatedCookie                = requireSctpStateCookieAuthentication
 			};
 
 			this->sctpAssociation = std::make_unique<RTC::SCTP::Association>(
@@ -469,11 +497,9 @@ namespace RTC
 		}
 
 #ifdef MS_USE_BUILTIN_BWE
-		// TODO: Take these from the built-in downlink and uplink BWE.
+		// TODO: Take these from the built-in sender and receiver congestion control.
 		const flatbuffers::Optional<uint64_t> availableOutgoingBitrate{ flatbuffers::nullopt };
 		const flatbuffers::Optional<uint64_t> availableIncomingBitrate{ flatbuffers::nullopt };
-		const flatbuffers::Optional<double> rtpPacketLossReceived{ flatbuffers::nullopt };
-		const flatbuffers::Optional<double> rtpPacketLossSent{ flatbuffers::nullopt };
 #else
 		const auto availableOutgoingBitrate =
 		  this->tccClient ? flatbuffers::Optional<uint64_t>(
@@ -482,12 +508,6 @@ namespace RTC
 		const auto availableIncomingBitrate =
 		  this->tccServer ? flatbuffers::Optional<uint64_t>(
 		                      static_cast<uint64_t>(this->tccServer->GetAvailableBitrate()))
-			                : flatbuffers::nullopt;
-		const auto rtpPacketLossReceived =
-		  this->tccServer ? flatbuffers::Optional<double>(this->tccServer->GetPacketLoss())
-			                : flatbuffers::nullopt;
-		const auto rtpPacketLossSent =
-		  this->tccClient ? flatbuffers::Optional<double>(this->tccClient->GetPacketLoss())
 			                : flatbuffers::nullopt;
 #endif
 
@@ -543,11 +563,7 @@ namespace RTC
 		  // minOutgoingBitrate.
 		  this->minOutgoingBitrate > 0
 		    ? flatbuffers::Optional<uint64_t>(static_cast<uint64_t>(this->minOutgoingBitrate))
-				: flatbuffers::nullopt,
-		  // rtpPacketLossReceived.
-		  rtpPacketLossReceived,
-		  // rtpPacketLossSent.
-		  rtpPacketLossSent);
+				: flatbuffers::nullopt);
 	}
 
 	void Transport::HandleRequest(Channel::ChannelRequest* request)
@@ -1355,6 +1371,8 @@ namespace RTC
 
 					// Tell the child class to clear associated SSRCs.
 					SendStreamClosed(ssrc);
+
+					// TODO: Tell the built-in sender congestion controller to forget this SSRC.
 				}
 
 				for (auto ssrc : consumer->GetRtxSsrcs())
@@ -1363,6 +1381,8 @@ namespace RTC
 
 					// Tell the child class to clear associated SSRCs.
 					SendStreamClosed(ssrc);
+
+					// TODO: Tell the built-in sender congestion controller to forget this SSRC.
 				}
 
 				// Notify the listener.
@@ -1757,8 +1777,9 @@ namespace RTC
 			{
 				const auto sendStatusStringView = RTC::SCTP::Types::sendMessageStatusToString(sendStatus);
 
-				MS_WARN_TAG(
+				MS_WARN_2TAGS(
 				  sctp,
+				  message,
 				  "failed to send SCTP message [sendStatus:%.*s]",
 				  static_cast<int>(sendStatusStringView.size()),
 				  sendStatusStringView.data());
@@ -1777,8 +1798,9 @@ namespace RTC
 			{
 				const auto sendStatusStringView = RTC::SCTP::Types::sendMessageStatusToString(sendStatus);
 
-				MS_WARN_TAG(
+				MS_WARN_2TAGS(
 				  sctp,
+				  message,
 				  "failed to send SCTP message [sendStatus:%.*s]",
 				  static_cast<int>(sendStatusStringView.size()),
 				  sendStatusStringView.data());
@@ -1995,7 +2017,8 @@ namespace RTC
 				}
 
 #ifdef MS_USE_BUILTIN_BWE
-				// TODO: Feed the Receiver Report to the built-in downlink BWE.
+				// TODO: Add up what every Consumer returns from ReceiveRtcpReceiverReport()
+				// above and hand the total to the built-in sender congestion controller.
 #else
 				if (this->tccClient && !this->mapConsumers.empty())
 				{
@@ -2900,6 +2923,8 @@ namespace RTC
 
 			// Tell the child class to clear associated SSRCs.
 			SendStreamClosed(ssrc);
+
+			// TODO: Tell the built-in sender congestion controller to forget this SSRC.
 		}
 
 		for (auto ssrc : consumer->GetRtxSsrcs())
@@ -2908,6 +2933,8 @@ namespace RTC
 
 			// Tell the child class to clear associated SSRCs.
 			SendStreamClosed(ssrc);
+
+			// TODO: Tell the built-in sender congestion controller to forget this SSRC.
 		}
 
 		// Notify the listener.
@@ -3247,8 +3274,9 @@ namespace RTC
 
 		if (!dataProducer)
 		{
-			MS_WARN_TAG(
+			MS_WARN_2TAGS(
 			  sctp,
+			  message,
 			  "no suitable DataProducer for received SCTP message [streamId:%" PRIu16 "]",
 			  message.GetStreamId());
 
@@ -3275,8 +3303,9 @@ namespace RTC
 		}
 		catch (std::exception& error)
 		{
-			MS_WARN_TAG(
+			MS_WARN_2TAGS(
 			  sctp,
+			  message,
 			  "DataProducer::ReceiveMessage() failed for received SCTP message [streamId:%" PRIu16 "]: %s",
 			  message.GetStreamId(),
 			  error.what());

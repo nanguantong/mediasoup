@@ -2,6 +2,15 @@
 
 ### NEXT
 
+- Worker: Add more logs with "message" log tag ([PR #1966](https://github.com/versatica/mediasoup/pull/1966)).
+- SCTP: Fix deferred stream reset with an empty stream list not deferring incoming data ([PR #1967](https://github.com/versatica/mediasoup/pull/1967)).
+- Worker: Space in time RTP retransmissions triggered by NACKs ([PR #1965](https://github.com/versatica/mediasoup/pull/1965)).
+- Remove `rtpPacketLossReceived` and `rtpPacketLossSent` transport custom stats ([PR #1968](https://github.com/versatica/mediasoup/pull/1968)).
+- Store used SCTP stream ids in a Vec instead of an IntMap ([PR #1975](https://github.com/versatica/mediasoup/pull/1975)).
+- `RtpStreamSend`: Don't count the sender's uplink loss as loss of the consumer link ([PR #1974](https://github.com/versatica/mediasoup/pull/1974)).
+  - **Breaking change:** `consumer.getStats()` now reports `fractionLost` and `packetsLost` of its send streams counting only the loss of the downlink to the consuming peer.
+- SCTP: Add `sctpZeroChecksum` option to enable SCTP Zero Checksum (RFC 9653) ([PR #1977](https://github.com/versatica/mediasoup/pull/1977)).
+
 ### 0.29.0
 
 - Worker: Fix MSVC compiler warnings ([PR #1937](https://github.com/versatica/mediasoup/pull/1937)).

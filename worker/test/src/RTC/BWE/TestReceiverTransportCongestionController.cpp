@@ -1,5 +1,5 @@
 #include "common.hpp"
-#include "RTC/BWE/ReceiverTransportCongestionControl.hpp"
+#include "RTC/BWE/ReceiverTransportCongestionController.hpp"
 #include "RTC/RTCP/FeedbackPsRemb.hpp"
 #include "RTC/RTP/HeaderExtensionIds.hpp"
 #include "RTC/RTP/Packet.hpp"
@@ -11,14 +11,14 @@
 #include <string_view>
 #include <vector>
 
-SCENARIO("BWE ReceiverTransportCongestionControl", "[bwe][receivertransportcongestioncontrol]")
+SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportcongestioncontroller]")
 {
-	class TestReceiverTransportCongestionControlListener
-	  : public RTC::BWE::ReceiverTransportCongestionControl::Listener
+	class TestReceiverTransportCongestionControllerListener
+	  : public RTC::BWE::ReceiverTransportCongestionController::Listener
 	{
 	public:
-		void OnReceiverTransportCongestionControlSendRtcpPacket(
-		  RTC::BWE::ReceiverTransportCongestionControl* /*receiverTransportCongestionControl*/,
+		void OnReceiverTransportCongestionControllerSendRtcpPacket(
+		  RTC::BWE::ReceiverTransportCongestionController* /*receiverTransportCongestionControl*/,
 		  RTC::RTCP::Packet* packet) override
 		{
 			this->rtcpTypes.push_back(packet->GetType());
@@ -125,9 +125,9 @@ SCENARIO("BWE ReceiverTransportCongestionControl", "[bwe][receivertransportconge
 
 	SECTION("with transport-cc the arrival times reach the listener and nothing is estimated")
 	{
-		TestReceiverTransportCongestionControlListener listener;
+		TestReceiverTransportCongestionControllerListener listener;
 
-		RTC::BWE::ReceiverTransportCongestionControl receiverTransportCongestionControl(
+		RTC::BWE::ReceiverTransportCongestionController receiverTransportCongestionControl(
 		  std::addressof(listener),
 		  std::addressof(shared),
 		  { .congestionControlType = RTC::BWE::Types::CongestionControlType::TRANSPORT_CC });
@@ -157,19 +157,19 @@ SCENARIO("BWE ReceiverTransportCongestionControl", "[bwe][receivertransportconge
 		REQUIRE(listener.rtcpTypes.at(0) == RTC::RTCP::Type::RTPFB);
 
 		// The estimating is the remote sender's job in this mode.
-		REQUIRE_FALSE(receiverTransportCongestionControl.GetAvailableBitrate().has_value());
+		REQUIRE(receiverTransportCongestionControl.GetAvailableBitrate().has_value() == false);
 	}
 
 	SECTION("with REMB the estimation of the incoming link reaches the listener")
 	{
-		TestReceiverTransportCongestionControlListener listener;
+		TestReceiverTransportCongestionControllerListener listener;
 
-		RTC::BWE::ReceiverTransportCongestionControl receiverTransportCongestionControl(
+		RTC::BWE::ReceiverTransportCongestionController receiverTransportCongestionControl(
 		  std::addressof(listener),
 		  std::addressof(shared),
 		  { .congestionControlType = RTC::BWE::Types::CongestionControlType::REMB });
 
-		REQUIRE_FALSE(receiverTransportCongestionControl.GetAvailableBitrate().has_value());
+		REQUIRE(receiverTransportCongestionControl.GetAvailableBitrate().has_value() == false);
 
 		// A burst of packets spaced evenly, which is what the estimation is drawn
 		// from at the beginning of a call.
@@ -193,9 +193,9 @@ SCENARIO("BWE ReceiverTransportCongestionControl", "[bwe][receivertransportconge
 
 	SECTION("a stream that is removed stops being announced")
 	{
-		TestReceiverTransportCongestionControlListener listener;
+		TestReceiverTransportCongestionControllerListener listener;
 
-		RTC::BWE::ReceiverTransportCongestionControl receiverTransportCongestionControl(
+		RTC::BWE::ReceiverTransportCongestionController receiverTransportCongestionControl(
 		  std::addressof(listener),
 		  std::addressof(shared),
 		  { .congestionControlType = RTC::BWE::Types::CongestionControlType::REMB });
@@ -230,9 +230,9 @@ SCENARIO("BWE ReceiverTransportCongestionControl", "[bwe][receivertransportconge
 
 	SECTION("with REMB audio takes no part in the estimation")
 	{
-		TestReceiverTransportCongestionControlListener listener;
+		TestReceiverTransportCongestionControllerListener listener;
 
-		RTC::BWE::ReceiverTransportCongestionControl receiverTransportCongestionControl(
+		RTC::BWE::ReceiverTransportCongestionController receiverTransportCongestionControl(
 		  std::addressof(listener),
 		  std::addressof(shared),
 		  { .congestionControlType = RTC::BWE::Types::CongestionControlType::REMB });
@@ -249,14 +249,14 @@ SCENARIO("BWE ReceiverTransportCongestionControl", "[bwe][receivertransportconge
 		}
 
 		REQUIRE(listener.rtcpTypes.empty());
-		REQUIRE_FALSE(receiverTransportCongestionControl.GetAvailableBitrate().has_value());
+		REQUIRE(receiverTransportCongestionControl.GetAvailableBitrate().has_value() == false);
 	}
 
 	SECTION("with transport-cc audio is reported like video")
 	{
-		TestReceiverTransportCongestionControlListener listener;
+		TestReceiverTransportCongestionControllerListener listener;
 
-		RTC::BWE::ReceiverTransportCongestionControl receiverTransportCongestionControl(
+		RTC::BWE::ReceiverTransportCongestionController receiverTransportCongestionControl(
 		  std::addressof(listener),
 		  std::addressof(shared),
 		  { .congestionControlType = RTC::BWE::Types::CongestionControlType::TRANSPORT_CC });
@@ -287,9 +287,9 @@ SCENARIO("BWE ReceiverTransportCongestionControl", "[bwe][receivertransportconge
 	{
 		constexpr int64_t MaxIncomingBitrate{ 500000 };
 
-		TestReceiverTransportCongestionControlListener listener;
+		TestReceiverTransportCongestionControllerListener listener;
 
-		RTC::BWE::ReceiverTransportCongestionControl receiverTransportCongestionControl(
+		RTC::BWE::ReceiverTransportCongestionController receiverTransportCongestionControl(
 		  std::addressof(listener),
 		  std::addressof(shared),
 		  { .congestionControlType = RTC::BWE::Types::CongestionControlType::TRANSPORT_CC });
@@ -312,9 +312,9 @@ SCENARIO("BWE ReceiverTransportCongestionControl", "[bwe][receivertransportconge
 	{
 		constexpr int64_t MaxIncomingBitrate{ 500000 };
 
-		TestReceiverTransportCongestionControlListener listener;
+		TestReceiverTransportCongestionControllerListener listener;
 
-		RTC::BWE::ReceiverTransportCongestionControl receiverTransportCongestionControl(
+		RTC::BWE::ReceiverTransportCongestionController receiverTransportCongestionControl(
 		  std::addressof(listener),
 		  std::addressof(shared),
 		  { .congestionControlType = RTC::BWE::Types::CongestionControlType::TRANSPORT_CC });

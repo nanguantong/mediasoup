@@ -119,7 +119,7 @@ namespace RTC
 			  static_cast<int>(stateStringView.size()),
 			  stateStringView.data());
 
-			this->sctpOptions.Dump();
+			this->sctpOptions.Dump(indentation + 1);
 
 			if (this->tcb)
 			{
@@ -995,8 +995,9 @@ namespace RTC
 
 				if (message->GetPayloadLength() > this->sctpOptions.maxReceiveMessageSize)
 				{
-					MS_WARN_TAG(
+					MS_WARN_2TAGS(
 					  sctp,
+					  message,
 					  "dropping too large received message [messageByteLength:%zu, maxReceiveMessageSize:%zu]",
 					  message->GetPayloadLength(),
 					  this->sctpOptions.maxReceiveMessageSize);

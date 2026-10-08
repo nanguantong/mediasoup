@@ -10,6 +10,7 @@ import type {
 	TransportSocketFlags,
 	TransportTuple,
 	SctpState,
+	SctpZeroChecksum,
 	RtpListenerDump,
 	SctpListenerDump,
 	RecvRtpHeaderExtensions,
@@ -1127,6 +1128,28 @@ export function serializeProtocol(
 	}
 }
 
+export function serializeSctpZeroChecksum(
+	sctpZeroChecksum: SctpZeroChecksum
+): FbsTransport.SctpZeroChecksum {
+	switch (sctpZeroChecksum) {
+		case 'sctp-over-dtls': {
+			return FbsTransport.SctpZeroChecksum.SCTP_OVER_DTLS;
+		}
+
+		case 'trusted-network': {
+			return FbsTransport.SctpZeroChecksum.TRUSTED_NETWORK;
+		}
+
+		case 'none': {
+			return FbsTransport.SctpZeroChecksum.NONE;
+		}
+
+		default: {
+			throw new TypeError(`invalid sctpZeroChecksum: ${sctpZeroChecksum}`);
+		}
+	}
+}
+
 export function parseTuple(binary: FbsTransport.Tuple): TransportTuple {
 	return {
 		// @deprecated Use localAddress instead.
@@ -1269,14 +1292,6 @@ export function parseBaseTransportStats(
 		minOutgoingBitrate:
 			binary.minOutgoingBitrate() !== null
 				? Number(binary.minOutgoingBitrate())
-				: undefined,
-		rtpPacketLossReceived:
-			typeof binary.rtpPacketLossReceived() === 'number'
-				? Number(binary.rtpPacketLossReceived())
-				: undefined,
-		rtpPacketLossSent:
-			typeof binary.rtpPacketLossSent() === 'number'
-				? Number(binary.rtpPacketLossSent())
 				: undefined,
 	};
 }

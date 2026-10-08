@@ -3,11 +3,10 @@
 
 #include "RTC/RTP/RtpStreamSend.hpp"
 #include "Logger.hpp"
-#include "RTC/RTCP/FeedbackPsFir.hpp"
-#include "RTC/RTCP/FeedbackPsPli.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "Utils.hpp"
-#include <vector>
+#include <cmath> // std::pow(), std::round()
+#include <limits>
 
 namespace RTC
 {
@@ -16,12 +15,12 @@ namespace RTC
 		/* Static. */
 
 		// Limit max number of items in the retransmission buffer.
-		static constexpr size_t RetransmissionBufferMaxItems{ 2500 };
-		// 17: 16 bit mask + the initial sequence number.
-		static constexpr size_t MaxRequestedPackets{ 17 };
-		static thread_local std::vector<RTP::RetransmissionBuffer::Item*> RetransmissionContainer(
-		  MaxRequestedPackets + 1);
+		static constexpr size_t RetransmissionBufferMaxItems{ 3000 };
 		static constexpr int64_t DefaultRttMs{ 100 };
+		// Interval between consecutive iterations of pending retransmissions.
+		static constexpr int64_t RetransmissionIntervalMs{ 10 };
+		// Maximum number of packets retransmitted in each iteration.
+		static constexpr size_t MaxRetransmittedPacketsPerIteration{ 2 };
 
 		/* Instance methods. */
 
@@ -32,7 +31,9 @@ namespace RTC
 		  std::string& mid)
 		  : RTP::RtpStream::RtpStream(listener, shared, params, 10),
 		    mid(mid),
-		    transmissionCounter(shared, /*ignorePaddingOnlyPackets*/ true)
+		    transmissionCounter(shared, /*ignorePaddingOnlyPackets*/ true),
+		    retransmissionTimer(
+		      params.useNack ? shared->CreateTimer(this, "rtp-stream-send-retransmissions") : nullptr)
 		{
 			MS_TRACE();
 
@@ -112,6 +113,8 @@ namespace RTC
 				return ReceivePacketResult::DISCARDED;
 			}
 
+			UpdateUnsentSeqNumbers(packet->GetSequenceNumber());
+
 			bool stored{ false };
 
 			// If NACK is enabled, store the packet into the buffer.
@@ -132,7 +135,7 @@ namespace RTC
 					return ReceivePacketResult::DISCARDED;
 				}
 
-				stored = this->retransmissionBuffer->Insert(packet, sharedPacket);
+				stored = this->retransmissionBuffer->Insert(packet, sharedPacket, this->shared->GetTimeMs());
 			}
 
 			// Increase transmission counter.
@@ -150,101 +153,61 @@ namespace RTC
 
 			for (auto it = nackPacket->Begin(); it != nackPacket->End(); ++it)
 			{
-				const RTC::RTCP::FeedbackRtpNackItem* item = *it;
+				const RTC::RTCP::FeedbackRtpNackItem* nackItem = *it;
 
-				this->nackPacketCount += item->CountRequestedPackets();
+				this->nackPacketCount += nackItem->CountRequestedPackets();
 
-				FillRetransmissionContainer(item->GetPacketId(), item->GetLostPacketBitmask());
-
-				for (auto* item : RetransmissionContainer)
+				if (!this->retransmissionBuffer)
 				{
-					if (!item)
-					{
-						break;
-					}
-
-					MS_ASSERT(
-					  item->sharedPacket.HasPacket(),
-					  "item in retransmission container doesn't contain a packet [ssrc:%" PRIu32
-					  ", seq:%" PRIu16 ", timestamp:%" PRIu32 "]",
-					  item->ssrc,
-					  item->sequenceNumber,
-					  item->timestamp);
-
-					auto* packet = item->sharedPacket.GetPacket();
-
-					// Keep the values of the original packet received by the Consumer.
-					auto origSsrc      = packet->GetSsrc();
-					auto origSeq       = packet->GetSequenceNumber();
-					auto origTimestamp = packet->GetTimestamp();
-					auto origMarker    = packet->HasMarker();
-					std::string origMid;
-
-					// Put correct info into the packet.
-					packet->SetSsrc(item->ssrc);
-					packet->SetSequenceNumber(item->sequenceNumber);
-					packet->SetTimestamp(item->timestamp);
-					packet->SetMarker(item->marker);
-
-					if (item->encoder != nullptr)
-					{
-						packet->EncodePayload(item->encoder.get());
-					}
-
-					// Update MID RTP extension value.
-					if (!this->mid.empty())
-					{
-						packet->ReadMid(origMid);
-						packet->UpdateMid(this->mid);
-					}
-
-					// If we use RTX, encode it.
-					if (HasRtx())
-					{
-						// Increment RTX seq.
-						this->rtxSeq++;
-
-						packet->RtxEncode(this->params.rtxPayloadType, this->params.rtxSsrc, this->rtxSeq);
-					}
-
-					// Retransmit the packet.
-					static_cast<RTP::RtpStreamSend::Listener*>(this->listener)
-					  ->OnRtpStreamRetransmitRtpPacket(this, packet);
-
-					// Mark the packet as retransmitted.
-					RTP::RtpStream::PacketRetransmitted(packet);
-
-					// Mark the packet as repaired (only if this is the first retransmission).
-					if (item->sentTimes == 1)
-					{
-						RTP::RtpStream::PacketRepaired(packet);
-					}
-
-					// If we use RTX, restore it.
-					if (HasRtx())
-					{
-						// Restore the packet.
-						packet->RtxDecode(RtpStream::GetPayloadType(), item->ssrc);
-					}
-
-					// Restore MID.
-					if (!this->mid.empty())
-					{
-						packet->UpdateMid(origMid);
-					}
-
-					// Restore payload.
-					if (item->encoder != nullptr)
-					{
-						packet->RestorePayload();
-					}
-
-					// Restore RTP header fields.
-					packet->SetSsrc(origSsrc);
-					packet->SetSequenceNumber(origSeq);
-					packet->SetTimestamp(origTimestamp);
-					packet->SetMarker(origMarker);
+					continue;
 				}
+
+				// Queue the requested packets in the order they are requested: first the
+				// one in the packet id and then those in the bitmask. A packet already
+				// pending is not queued again since it will be retransmitted anyway.
+				uint16_t seq     = nackItem->GetPacketId();
+				uint16_t bitmask = nackItem->GetLostPacketBitmask();
+				bool requested{ true };
+
+				while (requested || bitmask != 0)
+				{
+					if (requested)
+					{
+						const bool inserted = this->pendingRetransmissionsSet.insert(seq).second;
+
+						if (inserted)
+						{
+							this->pendingRetransmissionsQueue.push_back(seq);
+						}
+					}
+
+					requested = (bitmask & 1) != 0;
+					bitmask >>= 1;
+					seq++;
+				}
+			}
+
+			// If NACK is not supported, exit.
+			if (!this->retransmissionBuffer)
+			{
+				MS_WARN_TAG(rtx, "NACK not supported");
+
+				return;
+			}
+
+			// If a retransmission iteration is already scheduled, nothing else to do.
+			if (this->retransmissionTimer->IsActive())
+			{
+				return;
+			}
+
+			// Otherwise retransmit the first pending packets right away and schedule
+			// the next iteration if there are retransmissions left.
+			RetransmitPendingPackets();
+
+			if (!this->pendingRetransmissionsQueue.empty())
+			{
+				this->retransmissionTimer->Start(RetransmissionIntervalMs);
 			}
 		}
 
@@ -272,7 +235,8 @@ namespace RTC
 			}
 		}
 
-		void RtpStreamSend::ReceiveRtcpReceiverReport(RTC::RTCP::ReceiverReport* report, int64_t receivedAtUs)
+		std::optional<RtpStreamSend::Loss> RtpStreamSend::ReceiveRtcpReceiverReport(
+		  RTC::RTCP::ReceiverReport* report, int64_t receivedAtUs)
 		{
 			MS_TRACE();
 
@@ -301,12 +265,91 @@ namespace RTC
 				  static_cast<float>(Utils::Time::CompactNtpRttToTimeUs(compactNtp - dlsr - lastSr)) / 1000;
 			}
 
-			this->packetsLost  = report->GetTotalLost();
-			this->fractionLost = report->GetFractionLost();
-			this->jitter       = static_cast<float>(report->GetJitter());
+			this->jitter = static_cast<float>(report->GetJitter());
+
+			// Work out how much of what it reports as lost really was lost on the way
+			// to it, which is the only part this link is answerable for.
+			const auto loss = UpdateSendLoss(report);
 
 			// Update the score with the received RR.
-			UpdateScore(report);
+			UpdateScore(loss);
+
+			return loss;
+		}
+
+		std::optional<RtpStreamSend::Loss> RtpStreamSend::UpdateSendLoss(RTC::RTCP::ReceiverReport* report)
+		{
+			MS_TRACE();
+
+			// Not a single packet has been sent, so there is no stretch of the stream
+			// this report can be measuring.
+			if (!this->lastRrSeq.has_value())
+			{
+				return std::nullopt;
+			}
+
+			// The remote endpoint counts its cycles from the first packet it saw, so
+			// the extended value it reports is not in our numbering. Only the 16 bits
+			// that travelled on the wire are, and this places them where they belong
+			// without disturbing what the unwrapper knows.
+			const int64_t rrSeq =
+			  this->seqUnwrapper.PeekUnwrap(static_cast<uint16_t>(report->GetLastSeq())).GetValue();
+			// NOTE: It is signed and may go down, since a duplicate counts as a packet
+			// received twice.
+			const int32_t totalLost = std::max<int32_t>(report->GetTotalLost(), 0);
+
+			// A report that goes backwards is one that got reordered. Taking it would
+			// move the mark back and count a stretch of the stream twice.
+			if (rrSeq <= this->lastRrSeq.value())
+			{
+				return std::nullopt;
+			}
+
+			// What was never sent within the interval is what the remote endpoint
+			// counts as lost without this link having lost it.
+			const auto beginSeq       = this->unsentSeqs.upper_bound(this->lastRrSeq.value());
+			const auto endSeq         = this->unsentSeqs.upper_bound(rrSeq);
+			const auto unsentSeqCount = static_cast<int64_t>(std::distance(beginSeq, endSeq));
+
+			// Everything up to what this report has seen is settled.
+			this->unsentSeqs.erase(this->unsentSeqs.begin(), endSeq);
+
+			// The numbering was reset and the remote endpoint went on counting over the
+			// whole session, so there is nothing this report can be compared against. It
+			// only leaves the marks for the next one.
+			if (!this->lastRrTotalLost.has_value())
+			{
+				this->lastRrSeq       = rrSeq;
+				this->lastRrTotalLost = totalLost;
+
+				return std::nullopt;
+			}
+
+			const int64_t expectedPackets = (rrSeq - this->lastRrSeq.value()) - unsentSeqCount;
+			// A hole already counted by a previous report and filled in since makes
+			// the remote endpoint report fewer lost packets than before, so the
+			// difference may well come out negative.
+			const int64_t lostPackets =
+			  int64_t{ totalLost } - this->lastRrTotalLost.value() - unsentSeqCount;
+			// What is reported cannot go backwards, so it takes the count held between
+			// nothing lost and everything expected lost.
+			const int64_t reportedLostPackets = std::clamp<int64_t>(lostPackets, 0, expectedPackets);
+
+			this->lastRrSeq       = rrSeq;
+			this->lastRrTotalLost = totalLost;
+
+			// NOTE: It is a count over the whole life of the stream, so it is held below
+			// the maximum of its type rather than let overflow.
+			this->packetsLost = static_cast<int32_t>(std::min<int64_t>(
+			  int64_t{ this->packetsLost } + reportedLostPackets, std::numeric_limits<int32_t>::max()));
+			// NOTE: The fraction is in 1/256 units, hence the shift, which is the
+			// scale a Receiver Report uses for its own.
+			this->fractionLost =
+			  expectedPackets > 0
+			    ? static_cast<uint8_t>(std::min<int64_t>((reportedLostPackets << 8) / expectedPackets, 255))
+			    : 0;
+
+			return Loss{ .lostPackets = lostPackets, .expectedPackets = expectedPackets };
 		}
 
 		void RtpStreamSend::ReceiveRtcpXrReceiverReferenceTime(
@@ -423,13 +466,79 @@ namespace RTC
 				this->retransmissionBuffer->Clear();
 			}
 
+			// Discard pending retransmissions.
+			this->pendingRetransmissionsQueue.clear();
+			this->pendingRetransmissionsSet.clear();
+
+			if (this->retransmissionTimer)
+			{
+				this->retransmissionTimer->Stop();
+			}
+
 			// Reset jitter.
 			this->jitter = 0;
+
+			// Nothing is being measured while the stream is paused, and the numbering
+			// goes on where it was once it resumes, so the marks the next Receiver
+			// Report is measured against are left alone.
+			this->fractionLost = 0;
 		}
 
 		void RtpStreamSend::Resume()
 		{
 			MS_TRACE();
+		}
+
+		void RtpStreamSend::UpdateUnsentSeqNumbers(uint16_t seq)
+		{
+			MS_TRACE();
+
+			const int64_t unwrappedSeq = this->seqUnwrapper.Unwrap(seq).GetValue();
+
+			// Nothing was sent before this one, so it leaves nothing behind. It is also
+			// where the interval of the first Receiver Report starts, so that the first
+			// one measures from here rather than from nowhere.
+			if (!this->highestSentSeq.has_value())
+			{
+				this->highestSentSeq = unwrappedSeq;
+				this->lastRrSeq      = unwrappedSeq - 1;
+
+				return;
+			}
+
+			// It arrived late and fills in one that was taken for never sent.
+			if (unwrappedSeq <= this->highestSentSeq.value())
+			{
+				this->unsentSeqs.erase(unwrappedSeq);
+
+				return;
+			}
+
+			// Whatever it skipped was never handed to this stream and never will be:
+			// it is what the uplink of the Producer lost and nobody could forward.
+			//
+			// NOTE: Only the most recent ones are taken, since anything older than that
+			// is what the bound below would drop right away anyway, and a numbering
+			// that jumps far ahead must not cost a walk over half the sequence number
+			// space.
+			const int64_t firstUnsentSeq = std::max<int64_t>(
+			  this->highestSentSeq.value() + 1,
+			  unwrappedSeq - static_cast<int64_t>(RtpStreamSend::MaxUnsentSeqNumbers));
+
+			for (int64_t unsentSeq{ firstUnsentSeq }; unsentSeq < unwrappedSeq; ++unsentSeq)
+			{
+				this->unsentSeqs.insert(unsentSeq);
+			}
+
+			this->highestSentSeq = unwrappedSeq;
+
+			// Only a Receiver Report drains this, so a remote endpoint that stops
+			// reporting must not make it grow without end. The oldest ones go, which
+			// are the ones the next report is least likely to name.
+			while (this->unsentSeqs.size() > RtpStreamSend::MaxUnsentSeqNumbers)
+			{
+				this->unsentSeqs.erase(this->unsentSeqs.begin());
+			}
 		}
 
 		int64_t RtpStreamSend::GetBitrate(
@@ -455,221 +564,245 @@ namespace RTC
 			MS_ABORT("invalid method call");
 		}
 
-		// This method looks for the requested RTP packets and inserts them into the
-		// RetransmissionContainer vector (and sets to null the next position).
+		// This method takes pending retransmissions from the front of the queue and
+		// retransmits their packets until MaxRetransmittedPacketsPerIteration packets
+		// have been retransmitted or the queue is empty. Pending retransmissions whose
+		// packet is not retransmitted don't count.
 		//
-		// If RTX is used the stored packet will be RTX encoded now (if not already
-		// encoded in a previous resend).
-		//
-		// NOTE: This method doesn't verify whether requested stored packet is too
-		// old, why? Because, if we verified it, we would do it by comparing its
-		// timestamp with the newest one in the retransmission buffer. However we
-		// already clean old packets upon receipt of any new packet (see Insert()
-		// method in RetransmissionBuffer class).
-		void RtpStreamSend::FillRetransmissionContainer(uint16_t seq, uint16_t bitmask)
+		// If RTX is used the stored packet will be RTX encoded now.
+		void RtpStreamSend::RetransmitPendingPackets()
 		{
 			MS_TRACE();
 
-			// Ensure the container's first element is 0.
-			RetransmissionContainer[0] = nullptr;
+			const int64_t nowMs = this->shared->GetTimeMs();
+			const int64_t rttMs = (this->rttMs > 0.0f ? static_cast<int64_t>(this->rttMs) : DefaultRttMs);
 
-			// If NACK is not supported, exit.
-			if (!this->retransmissionBuffer)
+			size_t numRetransmittedPackets{ 0 };
+
+			while (!this->pendingRetransmissionsQueue.empty() &&
+			       numRetransmittedPackets < MaxRetransmittedPacketsPerIteration)
 			{
-				MS_WARN_TAG(rtx, "NACK not supported");
+				const uint16_t seq = this->pendingRetransmissionsQueue.front();
 
+				this->pendingRetransmissionsQueue.pop_front();
+				this->pendingRetransmissionsSet.erase(seq);
+
+				RTP::RetransmissionBuffer::Item* const item = this->retransmissionBuffer->Get(seq);
+
+				// Packet not found.
+				if (!item)
+				{
+					MS_DEBUG_DEV("ignoring retransmission for a packet not stored [seq:%" PRIu16 "]", seq);
+
+					continue;
+				}
+				// Don't resend the packet if it was stored too long ago.
+				else if (this->retransmissionBuffer->IsTooOld(item, nowMs))
+				{
+					MS_DEBUG_DEV(
+					  "ignoring retransmission for a packet stored too long ago [seq:%" PRIu16
+					  ", stored:%" PRIi64 " ms ago]",
+					  seq,
+					  nowMs - item->storedAtMs);
+
+					continue;
+				}
+				// Don't resend the packet if it was resent in the last RTT ms.
+				else if (item->resentAtMs != 0 && nowMs - item->resentAtMs <= rttMs)
+				{
+					MS_DEBUG_TAG(
+					  rtx,
+					  "ignoring retransmission for a packet already resent in the last RTT ms "
+					  "[seq:%" PRIu16 ", rtt:%" PRIi64 " ms]",
+					  item->sequenceNumber,
+					  rttMs);
+
+					continue;
+				}
+
+				// Save when this packet was resent.
+				item->resentAtMs = nowMs;
+
+				// Increase the number of times this packet was sent.
+				item->sentTimes++;
+
+				MS_ASSERT(
+				  item->sharedPacket.HasPacket(),
+				  "stored item doesn't contain a packet [ssrc:%" PRIu32 ", seq:%" PRIu16
+				  ", timestamp:%" PRIu32 "]",
+				  item->ssrc,
+				  item->sequenceNumber,
+				  item->timestamp);
+
+				auto* const packet = item->sharedPacket.GetPacket();
+
+				// Keep the values of the original packet received by the Consumer.
+				const auto origSsrc      = packet->GetSsrc();
+				const auto origSeq       = packet->GetSequenceNumber();
+				const auto origTimestamp = packet->GetTimestamp();
+				const auto origMarker    = packet->HasMarker();
+
+				std::string origMid;
+
+				// Put correct info into the packet.
+				packet->SetSsrc(item->ssrc);
+				packet->SetSequenceNumber(item->sequenceNumber);
+				packet->SetTimestamp(item->timestamp);
+				packet->SetMarker(item->marker);
+
+				if (item->encoder != nullptr)
+				{
+					packet->EncodePayload(item->encoder.get());
+				}
+
+				// Update MID RTP extension value.
+				if (!this->mid.empty())
+				{
+					packet->ReadMid(origMid);
+					packet->UpdateMid(this->mid);
+				}
+
+				// If we use RTX, encode it.
+				if (HasRtx())
+				{
+					// Increment RTX seq.
+					this->rtxSeq++;
+
+					packet->RtxEncode(this->params.rtxPayloadType, this->params.rtxSsrc, this->rtxSeq);
+				}
+
+				// Retransmit the packet.
+				static_cast<RTP::RtpStreamSend::Listener*>(this->listener)
+				  ->OnRtpStreamRetransmitRtpPacket(this, packet);
+
+				// Mark the packet as retransmitted.
+				RTP::RtpStream::PacketRetransmitted(packet);
+
+				// Mark the packet as repaired (only if this is the first retransmission).
+				if (item->sentTimes == 1)
+				{
+					RTP::RtpStream::PacketRepaired(packet);
+				}
+
+				// If we use RTX, restore it.
+				if (HasRtx())
+				{
+					// Restore the packet.
+					packet->RtxDecode(RtpStream::GetPayloadType(), item->ssrc);
+				}
+
+				// Restore MID.
+				if (!this->mid.empty())
+				{
+					packet->UpdateMid(origMid);
+				}
+
+				// Restore payload.
+				if (item->encoder != nullptr)
+				{
+					packet->RestorePayload();
+				}
+
+				// Restore RTP header fields.
+				packet->SetSsrc(origSsrc);
+				packet->SetSequenceNumber(origSeq);
+				packet->SetTimestamp(origTimestamp);
+				packet->SetMarker(origMarker);
+
+				numRetransmittedPackets++;
+			}
+		}
+
+		void RtpStreamSend::UpdateScore(const std::optional<Loss>& loss)
+		{
+			MS_TRACE();
+
+			// Calculate the packets of this interval, which is what each counter has
+			// grown by since the previous score update.
+			const auto totalSentPackets          = this->transmissionCounter.GetPacketCount();
+			const auto totalRepairedPackets      = this->packetsRepaired;
+			const auto totalRetransmittedPackets = this->packetsRetransmitted;
+			const auto sentPackets               = totalSentPackets - this->sentPriorScore;
+			const auto retransmittedPackets = totalRetransmittedPackets - this->retransmittedPriorScore;
+
+			auto repairedPackets = totalRepairedPackets - this->repairedPriorScore;
+
+			this->sentPriorScore          = totalSentPackets;
+			this->repairedPriorScore      = totalRepairedPackets;
+			this->retransmittedPriorScore = totalRetransmittedPackets;
+
+			// The Receiver Report measured no stretch of the stream, so there is nothing
+			// to say about this interval. The counters above have been taken anyway, so
+			// that the next one is measured over what it really covers.
+			if (!loss.has_value())
+			{
 				return;
 			}
 
-			// Look for each requested packet.
-			const int64_t nowMs = this->shared->GetTimeMs();
-			const int64_t rttMs = (this->rttMs > 0.0f ? static_cast<int64_t>(this->rttMs) : DefaultRttMs);
-			uint16_t currentSeq = seq;
-			bool requested{ true };
-			size_t containerIdx{ 0 };
-
-			// Variables for debugging.
-			const uint16_t origBitmask = bitmask;
-			uint16_t sentBitmask{ 0b0000000000000000 };
-			bool isFirstPacket{ true };
-			bool firstPacketSent{ false };
-			uint8_t bitmaskCounter{ 0 };
-
-			while (requested || bitmask != 0)
-			{
-				bool sent = false;
-
-				if (requested)
-				{
-					auto* item = this->retransmissionBuffer->Get(currentSeq);
-
-					// Packet not found.
-					if (!item)
-					{
-						// Do nothing.
-					}
-					// Don't resent the packet if it was resent in the last RTT ms.
-					else if (item->resentAtMs != 0 && nowMs - item->resentAtMs <= rttMs)
-					{
-						MS_DEBUG_TAG(
-						  rtx,
-						  "ignoring retransmission for a packet already resent in the last RTT ms "
-						  "[seq:%" PRIu16 ", rtt:%" PRIi64 " ms]",
-						  item->sequenceNumber,
-						  rttMs);
-					}
-					// Stored packet is valid for retransmission. Resend it.
-					else
-					{
-						// Save when this packet was resent.
-						item->resentAtMs = nowMs;
-
-						// Increase the number of times this packet was sent.
-						item->sentTimes++;
-
-						// Store the item in the container and then increment its index.
-						RetransmissionContainer[containerIdx++] = item;
-
-						sent = true;
-
-						if (isFirstPacket)
-						{
-							firstPacketSent = true;
-						}
-					}
-				}
-
-				requested = (bitmask & 1) != 0;
-				bitmask >>= 1;
-				currentSeq++;
-
-				if (!isFirstPacket)
-				{
-					sentBitmask |= (sent ? 1 : 0) << bitmaskCounter;
-					bitmaskCounter++;
-				}
-				else
-				{
-					isFirstPacket = false;
-				}
-			}
-
-			// If not all the requested packets was sent, log it.
-			if (!firstPacketSent || origBitmask != sentBitmask)
-			{
-				MS_WARN_DEV(
-				  "could not resend all packets [seq:%" PRIu16
-				  ", first:%s, "
-				  "bitmask:" MS_UINT16_TO_BINARY_PATTERN ", sent bitmask:" MS_UINT16_TO_BINARY_PATTERN "]",
-				  seq,
-				  firstPacketSent ? "yes" : "no",
-				  MS_UINT16_TO_BINARY(origBitmask),
-				  MS_UINT16_TO_BINARY(sentBitmask));
-			}
-			else
-			{
-				MS_DEBUG_DEV(
-				  "all packets resent [seq:%" PRIu16 ", bitmask:" MS_UINT16_TO_BINARY_PATTERN "]",
-				  seq,
-				  MS_UINT16_TO_BINARY(origBitmask));
-			}
-
-			// Set the next container element to null.
-			RetransmissionContainer[containerIdx] = nullptr;
-		}
-
-		void RtpStreamSend::UpdateScore(RTC::RTCP::ReceiverReport* report)
-		{
-			MS_TRACE();
-
-			// Calculate number of packets sent in this interval.
-			const auto totalSent = this->transmissionCounter.GetPacketCount();
-			const auto sent      = totalSent - this->sentPriorScore;
-
-			this->sentPriorScore = totalSent;
-
-			// Calculate number of packets lost in this interval.
-			const int32_t totalLost = report->GetTotalLost() > 0 ? report->GetTotalLost() : 0;
-
-			uint64_t lost;
-
-			if (totalLost < this->lostPriorScore)
-			{
-				lost = 0;
-			}
-			else
-			{
-				lost = totalLost - this->lostPriorScore;
-			}
-
-			this->lostPriorScore = totalLost;
-
-			// Calculate number of packets repaired in this interval.
-			const auto totalRepaired = this->packetsRepaired;
-
-			auto repaired = totalRepaired - this->repairedPriorScore;
-
-			this->repairedPriorScore = totalRepaired;
-
-			// Calculate number of packets retransmitted in this interval.
-			const auto totatRetransmitted = this->packetsRetransmitted;
-			const auto retransmitted      = totatRetransmitted - this->retransmittedPriorScore;
-
-			this->retransmittedPriorScore = totatRetransmitted;
-
 			// We didn't send any packet.
-			if (sent == 0)
+			if (sentPackets == 0)
 			{
 				RTP::RtpStream::UpdateScore(10);
 
 				return;
 			}
 
-			lost     = std::min(lost, sent);
-			repaired = std::min(repaired, lost);
+			// Number of packets lost in this interval, which is what this link really
+			// lost and not what the remote endpoint reported, since that one also
+			// counts the sequence numbers that were never sent.
+			//
+			// NOTE: A report that gives back what a previous one was overcharged leaves
+			// this interval with nothing lost.
+			auto lostPackets = static_cast<uint64_t>(std::max<int64_t>(loss.value().lostPackets, 0));
+
+			lostPackets     = std::min(lostPackets, sentPackets);
+			repairedPackets = std::min(repairedPackets, lostPackets);
 
 #if MS_LOG_DEV_LEVEL == 3
 			MS_DEBUG_TAG(
 			  score,
-			  "[totalSent:%" PRIu64 ", totalLost:%" PRIi32 ", totalRepaired:%" PRIu64,
-			  totalSent,
-			  totalLost,
-			  totalRepaired);
+			  "[totalSentPackets:%" PRIu64 ", totalLostPackets:%" PRIi32 ", totalRepairedPackets:%" PRIu64,
+			  totalSentPackets,
+			  this->packetsLost,
+			  totalRepairedPackets);
 
 			MS_DEBUG_TAG(
 			  score,
-			  "fixed values [sent:%" PRIu64 ", lost:%" PRIu64 ", repaired:%" PRIu64
-			  ", retransmitted:%" PRIu64,
-			  sent,
-			  lost,
-			  repaired,
-			  retransmitted);
+			  "fixed values [sentPackets:%" PRIu64 ", lostPackets:%" PRIu64 ", repairedPackets:%" PRIu64
+			  ", retransmittedPackets:%" PRIu64,
+			  sentPackets,
+			  lostPackets,
+			  repairedPackets,
+			  retransmittedPackets);
 #endif
 
-			auto repairedRatio  = static_cast<float>(repaired) / static_cast<float>(sent);
+			auto repairedRatio  = static_cast<float>(repairedPackets) / static_cast<float>(sentPackets);
 			auto repairedWeight = std::pow(1 / (repairedRatio + 1), 4);
 
-			MS_ASSERT(retransmitted >= repaired, "repaired packets cannot be more than retransmitted ones");
+			MS_ASSERT(
+			  retransmittedPackets >= repairedPackets,
+			  "repaired packets cannot be more than retransmitted ones");
 
-			if (retransmitted > 0)
+			if (retransmittedPackets > 0)
 			{
-				repairedWeight *= static_cast<float>(repaired) / retransmitted;
+				repairedWeight *= static_cast<float>(repairedPackets) / retransmittedPackets;
 			}
 
-			lost = static_cast<uint64_t>(lost - (repaired * repairedWeight));
+			lostPackets = static_cast<uint64_t>(lostPackets - (repairedPackets * repairedWeight));
 
-			auto deliveredRatio = static_cast<float>(sent - lost) / static_cast<float>(sent);
-			auto score          = static_cast<uint8_t>(std::round(std::pow(deliveredRatio, 4) * 10));
+			auto deliveredRatio =
+			  static_cast<float>(sentPackets - lostPackets) / static_cast<float>(sentPackets);
+			auto score = static_cast<uint8_t>(std::round(std::pow(deliveredRatio, 4) * 10));
 
 #if MS_LOG_DEV_LEVEL == 3
 			MS_DEBUG_TAG(
 			  score,
-			  "[deliveredRatio:%f, repairedRatio:%f, repairedWeight:%f, new lost:%" PRIu64
+			  "[deliveredRatio:%f, repairedRatio:%f, repairedWeight:%f, new lostPackets:%" PRIu64
 			  ", score:%" PRIu8 "]",
 			  deliveredRatio,
 			  repairedRatio,
 			  repairedWeight,
-			  lost,
+			  lostPackets,
 			  score);
 #endif
 
@@ -685,6 +818,57 @@ namespace RTC
 			if (this->retransmissionBuffer)
 			{
 				this->retransmissionBuffer->Clear();
+			}
+
+			// Discard pending retransmissions, since their sequence numbers belong to
+			// the previous numbering.
+			this->pendingRetransmissionsQueue.clear();
+			this->pendingRetransmissionsSet.clear();
+
+			if (this->retransmissionTimer)
+			{
+				this->retransmissionTimer->Stop();
+			}
+
+			ResetSendLoss();
+		}
+
+		void RtpStreamSend::ResetSendLoss()
+		{
+			MS_TRACE();
+
+			// What was never sent belongs to a numbering that is not in use anymore,
+			// and so does the mark the next Receiver Report would be measured against.
+			this->seqUnwrapper.Reset();
+			this->unsentSeqs.clear();
+			this->highestSentSeq.reset();
+			this->lastRrSeq.reset();
+			// The remote endpoint counts what it has lost over the whole session and
+			// does not reset along with us, so the next Receiver Report cannot be a
+			// difference against anything and can only become the new mark.
+			this->lastRrTotalLost.reset();
+			// Nothing has been measured over this numbering, and holding on to what
+			// was measured over the previous one would keep reporting it for as long
+			// as the stream stays quiet.
+			//
+			// NOTE: The total of lost packets is not cleared, being a count over the
+			// whole life of the stream rather than a measure of its current state.
+			this->fractionLost = 0;
+		}
+
+		void RtpStreamSend::OnTimer(TimerHandleInterface* timer)
+		{
+			MS_TRACE();
+
+			if (timer == this->retransmissionTimer.get())
+			{
+				RetransmitPendingPackets();
+
+				// Schedule the next iteration if there are retransmissions left.
+				if (!this->pendingRetransmissionsQueue.empty())
+				{
+					this->retransmissionTimer->Start(RetransmissionIntervalMs);
+				}
 			}
 		}
 	} // namespace RTP
