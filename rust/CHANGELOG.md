@@ -2,6 +2,12 @@
 
 ### NEXT
 
+- Update `ankerl/unordered_dense` Meson subproject to 5.3.2 ([PR #1985](https://github.com/versatica/mediasoup/pull/1985)).
+- `RtpStreamSend`: Don't discount repaired packets twice in the score when RTX is not used ([PR #1987](https://github.com/versatica/mediasoup/pull/1987)).
+- SCTP: Don't emit association errors in `Association::ResetStreams()` ([PR #1990](https://github.com/versatica/mediasoup/pull/1990)).
+
+### 0.30.0
+
 - Worker: Add more logs with "message" log tag ([PR #1966](https://github.com/versatica/mediasoup/pull/1966)).
 - SCTP: Fix deferred stream reset with an empty stream list not deferring incoming data ([PR #1967](https://github.com/versatica/mediasoup/pull/1967)).
 - Worker: Space in time RTP retransmissions triggered by NACKs ([PR #1965](https://github.com/versatica/mediasoup/pull/1965)).
@@ -10,6 +16,9 @@
 - `RtpStreamSend`: Don't count the sender's uplink loss as loss of the consumer link ([PR #1974](https://github.com/versatica/mediasoup/pull/1974)).
   - **Breaking change:** `consumer.getStats()` now reports `fractionLost` and `packetsLost` of its send streams counting only the loss of the downlink to the consuming peer.
 - SCTP: Add `sctpZeroChecksum` option to enable SCTP Zero Checksum (RFC 9653) ([PR #1977](https://github.com/versatica/mediasoup/pull/1977)).
+- Worker: Compute CRC32 and CRC32c with the slice-by-8 algorithm ([PR #1976](https://github.com/versatica/mediasoup/pull/1976)).
+- Fix: Do not panic when JSON `RtpParameters` include an unsupported RTP header extension URI ([PR #1980](https://github.com/versatica/mediasoup/pull/1980)).
+- Worker: Update Meson subprojects ([PR #1981](https://github.com/versatica/mediasoup/pull/1981)).
 
 ### 0.29.0
 

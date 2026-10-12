@@ -2,6 +2,10 @@
 
 ### NEXT
 
+### 0.8.0
+
+- Remove `RtpHeaderExtensionUri::Unsupported` variant ([PR #1980](https://github.com/versatica/mediasoup/pull/1980)).
+
 ### 0.7.0
 
 - SCTP: Add `sctpZeroChecksum` option to enable SCTP Zero Checksum (RFC 9653) ([PR #1977](https://github.com/versatica/mediasoup/pull/1977)).
