@@ -6,6 +6,9 @@
 #include "Channel/ChannelSocket.hpp"
 #include "FBS/consumer.h"
 #include "FBS/transport.h"
+#ifdef MS_USE_BUILTIN_BWE
+#include "RTC/BWE/BitrateAllocator.hpp"
+#endif
 #include "RTC/ConsumerTypes.hpp"
 #include "RTC/ProducerStreamManager.hpp"
 #include "RTC/RTCP/CompoundPacket.hpp"
@@ -30,6 +33,9 @@ namespace RTC
 {
 	class Consumer : public Channel::ChannelSocket::RequestHandler,
 	                 public RTC::RTP::RtpStreamSend::Listener,
+#ifdef MS_USE_BUILTIN_BWE
+	                 public RTC::BWE::BitrateAllocator::Candidate,
+#endif
 	                 public RTC::ProducerStreamManager::Listener
 	{
 		using RetransmissionBuffer =
@@ -152,9 +158,18 @@ namespace RTC
 			this->externallyManagedBitrate = true;
 			this->producerStreamManager->SetExternallyManagedBitrate();
 		}
+#ifdef MS_USE_BUILTIN_BWE
+		const std::string& GetBitrateAllocationId() const override;
+		bool IsBitrateAdaptable() const override;
+		int64_t GetOutputBitrate() override;
+		uint8_t GetBitrateWeight() const override;
+		int64_t TakeBitrate(int64_t bitrate) override;
+		void ApplyBitrateAllocation() override;
+#else
 		uint8_t GetBitratePriority() const;
 		int64_t IncreaseLayer(int64_t bitrate, bool considerLoss);
 		void ApplyLayers();
+#endif
 		int64_t GetDesiredBitrate() const;
 		void SendRtpPacket(RTC::RTP::Packet* packet, RTC::RTP::SharedPacket& sharedPacket);
 		bool GetRtcp(RTC::RTCP::CompoundPacket* packet, int64_t nowUs);
@@ -165,16 +180,19 @@ namespace RTC
 		void ReceiveNack(RTC::RTCP::FeedbackRtpNackPacket* nackPacket);
 		void ReceiveKeyFrameRequest(RTC::RTCP::FeedbackPs::MessageType messageType, uint32_t ssrc);
 		/**
-		 * @returns What the link to the remote endpoint lost and what it was expected
-		 *   to deliver since the previous Receiver Report, or no value if this one
-		 *   measures no interval at all.
+		 * @returns What this Receiver Report says about the link to the remote
+		 *   endpoint.
 		 */
-		std::optional<RTC::RTP::RtpStreamSend::Loss> ReceiveRtcpReceiverReport(
+		RTC::RTP::RtpStreamSend::ReceiverReportResult ReceiveRtcpReceiverReport(
 		  RTC::RTCP::ReceiverReport* report, int64_t receivedAtUs);
 		void ReceiveRtcpXrReceiverReferenceTime(
 		  RTC::RTCP::ReceiverReferenceTime* report, int64_t receivedAtUs);
 		int64_t GetTransmissionRate(int64_t nowMs);
-		float GetRttMs() const;
+		/**
+		 * Longest round trip time measured on the RTP streams of this Consumer, or
+		 * no value while none of them has measured any.
+		 */
+		std::optional<float> GetRttMs() const;
 
 		/* Methods inherited from Channel::ChannelSocket::RequestHandler. */
 	public:
