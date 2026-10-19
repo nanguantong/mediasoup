@@ -2,6 +2,12 @@
 
 ### NEXT
 
+- Fix simulcast RTP timestamp jumps on layer switch and frozen retransmission buffer ([PR #2002](https://github.com/versatica/mediasoup/pull/2002)).
+
+### 3.30.1
+
+- Node: Validate bitrate inputs and keep the Channel buffer builder usable ([PR #2001](https://github.com/versatica/mediasoup/pull/2001)).
+
 ### 3.30.0
 
 - Update `ankerl/unordered_dense` Meson subproject to 5.3.2 ([PR #1985](https://github.com/versatica/mediasoup/pull/1985)).
@@ -12,6 +18,7 @@
   - `RtpStreamStats.roundTripTime` (optional) now has no value (instead of 0) when the RTT is unknown.
 - SCTP: Limit when chunks are retransmitted ([PR #1993](https://github.com/versatica/mediasoup/pull/1993)).
 - `SeqManager`: Fix uncleared previous cycle drops and optimize ([PR #1994](https://github.com/versatica/mediasoup/pull/1994)).
+- `RetransmissionBuffer`: Avoid needless allocations when storing and removing items ([PR #1997](https://github.com/versatica/mediasoup/pull/1997)).
 
 ### 3.29.0
 
