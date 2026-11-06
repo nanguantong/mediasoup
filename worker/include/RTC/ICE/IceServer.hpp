@@ -41,23 +41,32 @@ namespace RTC
 				  const RTC::ICE::IceServer* iceServer,
 				  const RTC::ICE::StunPacket* packet,
 				  RTC::TransportTuple* tuple) = 0;
+
 				virtual void OnIceServerLocalUsernameFragmentAdded(
 				  const RTC::ICE::IceServer* iceServer, const std::string& usernameFragment) = 0;
+
 				virtual void OnIceServerLocalUsernameFragmentRemoved(
 				  const RTC::ICE::IceServer* iceServer, const std::string& usernameFragment) = 0;
+
 				virtual void OnIceServerTupleAdded(
 				  const RTC::ICE::IceServer* iceServer, RTC::TransportTuple* tuple) = 0;
+
 				virtual void OnIceServerTupleRemoved(
 				  const RTC::ICE::IceServer* iceServer, RTC::TransportTuple* tuple) = 0;
+
 				virtual void OnIceServerSelectedTuple(
-				  const RTC::ICE::IceServer* iceServer, RTC::TransportTuple* tuple)        = 0;
-				virtual void OnIceServerConnected(const RTC::ICE::IceServer* iceServer)    = 0;
-				virtual void OnIceServerCompleted(const RTC::ICE::IceServer* iceServer)    = 0;
+				  const RTC::ICE::IceServer* iceServer, RTC::TransportTuple* tuple) = 0;
+
+				virtual void OnIceServerConnected(const RTC::ICE::IceServer* iceServer) = 0;
+
+				virtual void OnIceServerCompleted(const RTC::ICE::IceServer* iceServer) = 0;
+
 				virtual void OnIceServerDisconnected(const RTC::ICE::IceServer* iceServer) = 0;
 			};
 
 		public:
 			static const std::string& IceStateToString(IceState iceState);
+
 			static FBS::WebRtcTransport::IceState IceStateToFbs(IceState state);
 
 		private:
@@ -70,30 +79,40 @@ namespace RTC
 			  const std::string& usernameFragment,
 			  const std::string& password,
 			  uint8_t consentTimeoutSec);
+
 			~IceServer() override;
 
 		public:
 			void Dump(int indentation = 0) const;
+
 			void ProcessStunPacket(const RTC::ICE::StunPacket* packet, RTC::TransportTuple* tuple);
+
 			const std::string& GetUsernameFragment() const
 			{
 				return this->usernameFragment;
 			}
+
 			const std::string& GetPassword() const
 			{
 				return this->password;
 			}
+
 			IceState GetState() const
 			{
 				return this->state;
 			}
+
 			RTC::TransportTuple* GetSelectedTuple() const
 			{
 				return this->selectedTuple;
 			}
+
 			void RestartIce(const std::string& usernameFragment, const std::string& password);
+
 			bool IsValidTuple(const RTC::TransportTuple* tuple) const;
+
 			void RemoveTuple(RTC::TransportTuple* tuple);
+
 			/**
 			 * This should be just called in 'connected' or 'completed' state and the
 			 * given tuple must be an already valid tuple.
@@ -102,33 +121,44 @@ namespace RTC
 
 		private:
 			void ProcessStunRequest(const RTC::ICE::StunPacket* request, RTC::TransportTuple* tuple);
+
 			void ProcessStunIndication(const RTC::ICE::StunPacket* indication);
+
 			void ProcessStunResponse(const RTC::ICE::StunPacket* response);
+
 			void HandleTuple(
 			  RTC::TransportTuple* tuple, bool hasUseCandidate, bool hasNomination, uint32_t nomination);
+
 			/**
 			 * Store the given tuple and return its stored address.
 			 */
 			RTC::TransportTuple* AddTuple(RTC::TransportTuple* tuple);
+
 			/**
 			 * If the given tuple exists return its stored address, nullptr otherwise.
 			 */
 			RTC::TransportTuple* HasTuple(const RTC::TransportTuple* tuple) const;
+
 			/**
 			 * Set the given tuple as the selected tuple.
 			 * NOTE: The given tuple MUST be already stored within the list.
 			 */
 			void SetSelectedTuple(RTC::TransportTuple* storedTuple);
+
 			bool IsConsentCheckSupported() const
 			{
 				return this->consentTimeoutMs != 0;
 			}
+
 			bool IsConsentCheckRunning() const
 			{
 				return (this->consentCheckTimer && this->consentCheckTimer->IsActive());
 			}
+
 			void StartConsentCheck();
+
 			void RestartConsentCheck();
+
 			void StopConsentCheck();
 
 			/* Pure virtual methods inherited from TimerHandleInterface::Listener. */
@@ -137,8 +167,8 @@ namespace RTC
 
 		private:
 			// Passed by argument.
-			Listener* listener{ nullptr };
-			SharedInterface* shared{ nullptr };
+			Listener* const listener;
+			SharedInterface* const shared;
 			std::string usernameFragment;
 			std::string password;
 			int64_t consentTimeoutMs{ 30000 };
@@ -149,7 +179,7 @@ namespace RTC
 			uint32_t remoteNomination{ 0 };
 			std::list<RTC::TransportTuple> tuples;
 			RTC::TransportTuple* selectedTuple{ nullptr };
-			TimerHandleInterface* consentCheckTimer{ nullptr };
+			std::unique_ptr<TimerHandleInterface> consentCheckTimer;
 			bool isRemovingTuples{ false };
 		};
 	} // namespace ICE

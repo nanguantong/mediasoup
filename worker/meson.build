@@ -81,13 +81,14 @@ if get_option('ms_build_fuzzer')
   ]
 endif
 
-if get_option('ms_use_builtin_bwe')
-  cpp_args += [
-    '-DMS_USE_BUILTIN_BWE',
-  ]
-endif
-
 cpp = meson.get_compiler('cpp')
+
+# Ignoring the result of a [[nodiscard]] function is an error, not a warning.
+if cpp.get_argument_syntax() == 'msvc'
+  cpp_args += ['/we4834']
+else
+  cpp_args += ['-Werror=unused-result']
+endif
 
 # This is a workaround to define FLATBUFFERS_LOCALE_INDEPENDENT=0 outside
 # flatbuffers project, which is needed in case the current arch doesn't support
@@ -162,7 +163,6 @@ common_sources = [
   'src/RTC/TcpServer.cpp',
   'src/RTC/Transport.cpp',
   'src/RTC/TransportTuple.cpp',
-  'src/RTC/TrendCalculator.cpp',
   'src/RTC/UdpSocket.cpp',
   'src/RTC/WebRtcServer.cpp',
   'src/RTC/WebRtcTransport.cpp',
@@ -209,13 +209,12 @@ common_sources = [
   'src/RTC/ICE/IceServer.cpp',
   'src/RTC/ICE/StunPacket.cpp',
   'src/RTC/RTP/Packet.cpp',
-  'src/RTC/RTP/ProbationGenerator.cpp',
   'src/RTC/RTP/RetransmissionBuffer.cpp',
   'src/RTC/RTP/RtpStream.cpp',
   'src/RTC/RTP/RtpStreamRecv.cpp',
   'src/RTC/RTP/RtpStreamSend.cpp',
   'src/RTC/RTP/RtxStream.cpp',
-  'src/RTC/RTP/SharedPacket.cpp',
+  'src/RTC/RTP/PacketUtils.cpp',
   'src/RTC/RTP/Codecs/AV1.cpp',
   'src/RTC/RTP/Codecs/H264.cpp',
   'src/RTC/RTP/Codecs/Opus.cpp',
@@ -251,7 +250,27 @@ common_sources = [
   'src/RTC/RTCP/XrReceiverReferenceTime.cpp',
   'src/RTC/NEW_RTCP/packet/CompoundPacket.cpp',
   'src/RTC/NEW_RTCP/packet/Packet.cpp',
+  'src/RTC/NEW_RTCP/packet/AnyFeedbackPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/AnyPayloadSpecificFeedbackPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/AnyReportPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/AnyTransportLayerFeedbackPacket.cpp',
   'src/RTC/NEW_RTCP/packet/ByePacket.cpp',
+  'src/RTC/NEW_RTCP/packet/FirPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/NackPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/PliPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/ReceiverReportPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/RembPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/SdesPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/SenderReportPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/TransportWideCcPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/UnknownPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/UnknownPayloadSpecificFeedbackPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/UnknownTransportLayerFeedbackPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/XrPacket.cpp',
+  'src/RTC/NEW_RTCP/packet/ExtendedReport.cpp',
+  'src/RTC/NEW_RTCP/packet/extendedReports/DlrrExtendedReport.cpp',
+  'src/RTC/NEW_RTCP/packet/extendedReports/RrtExtendedReport.cpp',
+  'src/RTC/NEW_RTCP/packet/extendedReports/UnknownExtendedReport.cpp',
   'src/RTC/SCTP/association/Association.cpp',
   'src/RTC/SCTP/association/AssociationListenerDeferrer.cpp',
   'src/RTC/SCTP/association/Capabilities.cpp',
@@ -331,16 +350,6 @@ common_sources = [
   'src/RTC/SCTP/public/Message.cpp',
 ]
 
-# The deps/libwebrtc bandwidth estimation is only built when the built-in one is
-# not used.
-if not get_option('ms_use_builtin_bwe')
-  common_sources += [
-    'src/DepLibWebRTC.cpp',
-    'src/RTC/TransportCongestionControlClient.cpp',
-    'src/RTC/TransportCongestionControlServer.cpp',
-  ]
-endif
-
 libuv_proj = subproject(
   'libuv',
   default_options: [
@@ -395,31 +404,6 @@ link_whole = [
   libsrtp3_proj.get_variable('libsrtp3'),
   flatbuffers_proj.get_variable('flatbuffers_lib'),
 ]
-
-if not get_option('ms_use_builtin_bwe')
-  # NOTE: abseil-cpp is in the tree only because deps/libwebrtc needs it.
-  abseil_cpp_proj = subproject(
-    'abseil-cpp',
-    default_options: [
-      'warning_level=0',
-      'cpp_std=c++17',
-    ],
-  )
-
-  # Add current build directory so libwebrtc has access to FBS folder.
-  libwebrtc_include_directories = include_directories('include', 'fbs')
-
-  subdir('deps/libwebrtc')
-
-  dependencies += [
-    abseil_cpp_proj.get_variable('absl_container_dep'),
-    libwebrtc_dep,
-  ]
-  link_whole += [
-    abseil_cpp_proj.get_variable('absl_container_lib'),
-    libwebrtc,
-  ]
-endif
 
 if host_machine.system() == 'windows'
   wingetopt_proj = subproject(
@@ -502,7 +486,6 @@ test_sources = [
   'test/src/RTC/TestSeqManager.cpp',
   'test/src/RTC/TestSubchannelsCodec.cpp',
   'test/src/RTC/TestTransportTuple.cpp',
-  'test/src/RTC/TestTrendCalculator.cpp',
   'test/src/RTC/BWE/helpers/LinkSimulator.cpp',
   'test/src/RTC/BWE/helpers/RemoteBitrateEstimatorAbsSendTimeTestHelper.cpp',
   'test/src/RTC/BWE/TestAimdRateControl.cpp',
@@ -535,11 +518,10 @@ test_sources = [
   'test/src/RTC/ICE/TestStunPacket.cpp',
   'test/src/RTC/RTP/rtpCommon.cpp',
   'test/src/RTC/RTP/TestPacket.cpp',
-  'test/src/RTC/RTP/TestProbationGenerator.cpp',
   'test/src/RTC/RTP/TestRetransmissionBuffer.cpp',
   'test/src/RTC/RTP/TestRtpStreamSend.cpp',
   'test/src/RTC/RTP/TestRtpStreamRecv.cpp',
-  'test/src/RTC/RTP/TestSharedPacket.cpp',
+  'test/src/RTC/RTP/TestPacketUtils.cpp',
   'test/src/RTC/RTP/Codecs/TestH264.cpp',
   'test/src/RTC/RTP/Codecs/TestVP8.cpp',
   'test/src/RTC/RTP/Codecs/TestVP9.cpp',
@@ -560,13 +542,30 @@ test_sources = [
   'test/src/RTC/RTCP/TestFeedbackRtpTmmb.cpp',
   'test/src/RTC/RTCP/TestFeedbackRtpTransport.cpp',
   'test/src/RTC/RTCP/TestBye.cpp',
+  'test/src/RTC/RTCP/TestCompoundPacket.cpp',
   'test/src/RTC/RTCP/TestReceiverReport.cpp',
   'test/src/RTC/RTCP/TestSdes.cpp',
   'test/src/RTC/RTCP/TestSenderReport.cpp',
   'test/src/RTC/RTCP/TestPacket.cpp',
   'test/src/RTC/RTCP/TestXr.cpp',
   'test/src/RTC/NEW_RTCP/rtcpCommon.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestCompoundPacket.cpp',
   'test/src/RTC/NEW_RTCP/packet/TestByePacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestFirPacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestNackPacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestPliPacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestReceiverReportPacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestRembPacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestSdesPacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestSenderReportPacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestTransportWideCcPacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestUnknownPacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestUnknownPayloadSpecificFeedbackPacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestUnknownTransportLayerFeedbackPacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/TestXrPacket.cpp',
+  'test/src/RTC/NEW_RTCP/packet/extendedReports/TestDlrrExtendedReport.cpp',
+  'test/src/RTC/NEW_RTCP/packet/extendedReports/TestRrtExtendedReport.cpp',
+  'test/src/RTC/NEW_RTCP/packet/extendedReports/TestUnknownExtendedReport.cpp',
   'test/src/RTC/SCTP/sctpCommon.cpp',
   'test/src/RTC/SCTP/association/TestAssociation.cpp',
   'test/src/RTC/SCTP/association/TestCapabilities.cpp',
@@ -650,12 +649,6 @@ test_sources = [
   'test/src/Utils/TestUnwrappedSequenceNumber.cpp',
 ]
 
-if not get_option('ms_use_builtin_bwe')
-  test_sources += [
-    'test/src/RTC/TestTransportCongestionControlServer.cpp',
-  ]
-endif
-
 mediasoup_worker_test = executable(
   'mediasoup-worker-test',
   build_by_default: false,
@@ -663,9 +656,7 @@ mediasoup_worker_test = executable(
   install_tag: 'mediasoup-worker-test',
   dependencies: dependencies,
   sources: common_sources + test_sources + mock_sources,
-  include_directories: include_directories(
-    'include',
-  ),
+  include_directories: include_directories('include'),
   cpp_args: cpp_args,
 )
 
@@ -682,9 +673,7 @@ mediasoup_worker_test_asan_address = executable(
   install_tag: 'mediasoup-worker-test-asan-address',
   dependencies: dependencies,
   sources: common_sources + test_sources + mock_sources,
-  include_directories: include_directories(
-    'include',
-  ),
+  include_directories: include_directories('include'),
   cpp_args: cpp_args + [
     '-g',
     '-O3',
@@ -709,9 +698,7 @@ mediasoup_worker_test_asan_undefined = executable(
   install_tag: 'mediasoup-worker-test-asan-undefined',
   dependencies: dependencies,
   sources: common_sources + test_sources + mock_sources,
-  include_directories: include_directories(
-    'include',
-  ),
+  include_directories: include_directories('include'),
   cpp_args: cpp_args + [
     '-g',
     '-O3',
@@ -735,10 +722,8 @@ fuzzer_sources = [
   'fuzzer/src/RTC/FuzzerDtlsTransport.cpp',
   'fuzzer/src/RTC/FuzzerRateCalculator.cpp',
   'fuzzer/src/RTC/FuzzerSeqManager.cpp',
-  'fuzzer/src/RTC/FuzzerTrendCalculator.cpp',
   'fuzzer/src/RTC/ICE/FuzzerStunPacket.cpp',
   'fuzzer/src/RTC/RTP/FuzzerPacket.cpp',
-  'fuzzer/src/RTC/RTP/FuzzerProbationGenerator.cpp',
   'fuzzer/src/RTC/RTP/FuzzerRetransmissionBuffer.cpp',
   'fuzzer/src/RTC/RTP/FuzzerRtpStreamSend.cpp',
   'fuzzer/src/RTC/RTP/Codecs/FuzzerOpus.cpp',
@@ -770,6 +755,23 @@ fuzzer_sources = [
   'fuzzer/src/RTC/RTCP/FuzzerSdes.cpp',
   'fuzzer/src/RTC/RTCP/FuzzerSenderReport.cpp',
   'fuzzer/src/RTC/RTCP/FuzzerXr.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerByePacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerCompoundPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerFirPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerNackPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerPliPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerReceiverReportPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerRembPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerSdesPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerSenderReportPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerTransportWideCcPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerUnknownPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerUnknownPayloadSpecificFeedbackPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerUnknownTransportLayerFeedbackPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerXrPacket.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/extendedReports/FuzzerDlrrExtendedReport.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/extendedReports/FuzzerRrtExtendedReport.cpp',
+  'fuzzer/src/RTC/NEW_RTCP/packet/extendedReports/FuzzerUnknownExtendedReport.cpp',
   'fuzzer/src/RTC/SCTP/association/FuzzerStateCookie.cpp',
   'fuzzer/src/RTC/SCTP/packet/FuzzerPacket.cpp',
 ]
@@ -781,10 +783,7 @@ executable(
   install_tag: 'mediasoup-worker-fuzzer',
   dependencies: dependencies,
   sources: common_sources + fuzzer_sources + mock_sources,
-  include_directories: include_directories(
-    'include',
-    'fuzzer/include'
-  ),
+  include_directories: include_directories('include'),
   cpp_args: cpp_args + [
     '-g',
     '-O3',

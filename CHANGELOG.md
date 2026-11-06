@@ -2,6 +2,27 @@
 
 ### NEXT
 
+- New RTCP: Use new RTCP stack for generated BWE RTCP packets ([PR #2039](https://github.com/versatica/mediasoup/pull/2039)).
+
+### 3.32.2
+
+- Worker: Fix DTLS BIO callback return value ([PR #2025](https://github.com/versatica/mediasoup/pull/2025)).
+- Worker: Fix crash when destroying standalone `WebRtcTransport` using TCP ([PR #2038](https://github.com/versatica/mediasoup/pull/2038), credits to @blackwithwhite666).
+
+### 3.32.1
+
+- BWE: Reduce CPU usage in `RTC::BWE::SendPacketHistory` ([PR #2018](https://github.com/versatica/mediasoup/pull/2018)).
+- Worker: Improve C++ code ([PR #2021](https://github.com/versatica/mediasoup/pull/2021)).
+- Worker: Fix abort due to big received packet ([PR #2022](https://github.com/versatica/mediasoup/pull/2022)).
+
+### 3.32.0
+
+- Worker: Get rid of `RTC::RTP::SharedPacket` class ([PR #2012](https://github.com/versatica/mediasoup/pull/2012)).
+- New built-in BWE stack ([task #1895](https://github.com/versatica/mediasoup/issues/1895)):
+  - `WebRtcTransportOptions` and `PlainTransportOptions`: Add `enableBwe`, `initialAvailableOutgoingBitrate`, `minOutgoingBitrate`, `maxOutgoingBitrate` and `maxIncomingBitrate`.
+  - **Breaking change:** `WorkerSettings` no longer takes `libwebrtcFieldTrials`.
+  - **Breaking change:** The transport "bwe" trace event now reports `desiredBitrate`, `minBitrate`, `maxBitrate` and `availableBitrate`.
+
 ### 3.31.0
 
 - Fix simulcast RTP timestamp jumps on layer switch and frozen retransmission buffer ([PR #2002](https://github.com/versatica/mediasoup/pull/2002)).

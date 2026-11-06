@@ -1,7 +1,7 @@
 #define MS_CLASS "FuzzerRtcDtlsTransport"
 // #define MS_LOG_DEV_LEVEL 3
 
-#include "RTC/FuzzerDtlsTransport.hpp"
+#include "fuzzer/include/RTC/FuzzerDtlsTransport.hpp"
 #include "Logger.hpp"
 #include "Utils.hpp"
 #include "mocks/include/MockShared.hpp"
@@ -61,10 +61,10 @@ void FuzzerRtcDtlsTransport::Fuzz(const uint8_t* data, size_t len)
 		// NOTE: Use a random integer in range 1..5 since FingerprintAlgorithm enum
 		// has 5 possible values starting with value 1.
 		dtlsRemoteFingerprint.algorithm = static_cast<RTC::DtlsTransport::FingerprintAlgorithm>(
-		  Utils::Crypto::GetRandomUInt<uint16_t>(1u, 5u));
+		  Utils::Crypto::GetRandomUInt<uint16_t>(1, 5));
 
 		dtlsRemoteFingerprint.value =
-		  Utils::Crypto::GetRandomString(Utils::Crypto::GetRandomUInt<uint16_t>(3u, 20u));
+		  Utils::Crypto::GetRandomString(Utils::Crypto::GetRandomUInt<uint16_t>(3, 20));
 
 		dtlsTransportSingleton->Run(localRole);
 		dtlsTransportSingleton->SetRemoteFingerprint(dtlsRemoteFingerprint);

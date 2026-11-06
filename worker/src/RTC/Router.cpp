@@ -9,7 +9,7 @@
 #include "RTC/DirectTransport.hpp"
 #include "RTC/PipeTransport.hpp"
 #include "RTC/PlainTransport.hpp"
-#include "RTC/RTP/SharedPacket.hpp"
+#include "RTC/RTP/PacketUtils.hpp"
 #include "RTC/WebRtcTransport.hpp"
 
 namespace RTC
@@ -107,7 +107,8 @@ namespace RTC
 			}
 
 			mapProducerIdConsumerIds.emplace_back(
-			  FBS::Common::CreateStringStringArrayDirect(builder, producer->id.c_str(), &consumerIds));
+			  FBS::Common::CreateStringStringArrayDirect(
+			    builder, producer->id.c_str(), std::addressof(consumerIds)));
 		}
 
 		// Add mapConsumerIdProducerId.
@@ -141,7 +142,8 @@ namespace RTC
 			}
 
 			mapProducerIdObserverIds.emplace_back(
-			  FBS::Common::CreateStringStringArrayDirect(builder, producer->id.c_str(), &observerIds));
+			  FBS::Common::CreateStringStringArrayDirect(
+			    builder, producer->id.c_str(), std::addressof(observerIds)));
 		}
 
 		// Add mapDataProducerIdDataConsumerIds.
@@ -163,7 +165,7 @@ namespace RTC
 
 			mapDataProducerIdDataConsumerIds.emplace_back(
 			  FBS::Common::CreateStringStringArrayDirect(
-			    builder, dataProducer->id.c_str(), &dataConsumerIds));
+			    builder, dataProducer->id.c_str(), std::addressof(dataConsumerIds)));
 		}
 
 		// Add mapDataConsumerIdDataProducerId.
@@ -183,13 +185,13 @@ namespace RTC
 		return FBS::Router::CreateDumpResponseDirect(
 		  builder,
 		  this->id.c_str(),
-		  &transportIds,
-		  &rtpObserverIds,
-		  &mapProducerIdConsumerIds,
-		  &mapConsumerIdProducerId,
-		  &mapProducerIdObserverIds,
-		  &mapDataProducerIdDataConsumerIds,
-		  &mapDataConsumerIdDataProducerId);
+		  std::addressof(transportIds),
+		  std::addressof(rtpObserverIds),
+		  std::addressof(mapProducerIdConsumerIds),
+		  std::addressof(mapConsumerIdProducerId),
+		  std::addressof(mapProducerIdObserverIds),
+		  std::addressof(mapDataProducerIdDataConsumerIds),
+		  std::addressof(mapDataConsumerIdDataProducerId));
 	}
 
 	void Router::HandleRequest(Channel::ChannelRequest* request)
@@ -679,10 +681,10 @@ namespace RTC
 
 		if (!consumers.empty())
 		{
-			// Cloned ref-counted packet that will be filled for as long as needed
-			// avoiding multiple allocations unless absolutely necessary.
-			// Clone only happens if needed and only once.
-			RTC::RTP::SharedPacket sharedPacket;
+			// Cloned ref-counted packet shared by all Consumers that need to store
+			// this packet, avoiding multiple allocations. Clone only happens if
+			// needed and only once.
+			std::shared_ptr<RTC::RTP::Packet> sharedPacket{ nullptr };
 
 			for (auto* consumer : consumers)
 			{
@@ -698,9 +700,9 @@ namespace RTC
 
 				// Assert that, if this Consumer filled sharedPacket or it was already
 				// filled, both packet and sharedPacket are the very same RTP packet.
-				if (sharedPacket.HasPacket())
+				if (sharedPacket)
 				{
-					sharedPacket.AssertSamePacket(packet);
+					RTC::RTP::PacketUtils::AssertSamePacket(sharedPacket, packet);
 				}
 			}
 		}

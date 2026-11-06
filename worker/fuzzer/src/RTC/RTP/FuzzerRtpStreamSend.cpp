@@ -1,6 +1,6 @@
-#include "RTC/RTP/FuzzerRtpStreamSend.hpp"
+#include "fuzzer/include/RTC/RTP/FuzzerRtpStreamSend.hpp"
 #include "RTC/RTCP/ReceiverReport.hpp"
-#include "RTC/RTP/SharedPacket.hpp"
+#include "RTC/RTP/PacketUtils.hpp"
 #include "Utils.hpp"
 #include "mocks/include/MockShared.hpp"
 
@@ -44,17 +44,20 @@ void FuzzerRtcRtpStreamSend::Fuzz(const uint8_t* data, size_t len)
 	std::string mid;
 	auto* stream = new RTC::RTP::RtpStreamSend(
 	  std::addressof(testRtpStreamListener), std::addressof(shared), params, mid);
-	size_t offset{ 0u };
+	size_t offset{ 0 };
 
 	while (len >= 12)
 	{
-		const RTC::RTP::SharedPacket sharedPacket;
-
 		// Set 'random' sequence number and timestamp.
 		packet->SetSequenceNumber(Utils::Byte::Get2Bytes(data, offset));
 		packet->SetTimestamp(Utils::Byte::Get4Bytes(data, offset + 2));
 
-		stream->ReceivePacket(packet, sharedPacket);
+		const auto result = stream->ReceivePacket(packet);
+
+		if (result.retransmissionBufferItem)
+		{
+			result.retransmissionBufferItem->sharedPacket = RTC::RTP::PacketUtils::ClonePacket(packet);
+		}
 
 		// Feed a 'random' Receiver Report, which is what the loss of the stream is
 		// worked out from.

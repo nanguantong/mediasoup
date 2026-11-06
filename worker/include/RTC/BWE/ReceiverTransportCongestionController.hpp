@@ -6,7 +6,9 @@
 #include "RTC/BWE/RemoteBitrateEstimatorAbsSendTime.hpp"
 #include "RTC/BWE/TransportWideCcFeedbackGenerator.hpp"
 #include "RTC/Consts.hpp"
-#include "RTC/RTCP/Packet.hpp"
+#include "RTC/NEW_RTCP/packet/Packet.hpp"
+#include "RTC/NEW_RTCP/packet/RembPacket.hpp"
+#include "RTC/NEW_RTCP/packet/TransportWideCcPacket.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "SharedInterface.hpp"
@@ -50,7 +52,7 @@ namespace RTC
 				 */
 				virtual void OnReceiverTransportCongestionControllerSendRtcpPacket(
 				  ReceiverTransportCongestionController* receiverTransportCongestionControl,
-				  RTC::RTCP::Packet* packet) = 0;
+				  const RTC::NEW_RTCP::Packet* packet) = 0;
 			};
 
 			struct ReceiverTransportCongestionControllerOptions
@@ -58,7 +60,7 @@ namespace RTC
 				/**
 				 * Largest an RTCP packet may be on this transport (bytes).
 				 */
-				size_t maxRtcpPacketLen{ RTC::Consts::RtcpPacketMaxSize };
+				size_t maxRtcpPacketLen{ RTC::Consts::OutgoingRtcpPacketMaxSize };
 			};
 
 		public:
@@ -116,7 +118,7 @@ namespace RTC
 		public:
 			void OnTransportWideCcFeedbackGeneratorSendPacket(
 			  TransportWideCcFeedbackGenerator* transportWideCcFeedbackGenerator,
-			  RTC::RTCP::FeedbackRtpTransportPacket* packet) override;
+			  const RTC::NEW_RTCP::TransportWideCcPacket* packet) override;
 
 			/* Pure virtual methods inherited from RemoteBitrateEstimatorAbsSendTime::Listener. */
 		public:
@@ -128,12 +130,12 @@ namespace RTC
 			/* Pure virtual methods inherited from RembGenerator::Listener. */
 		public:
 			void OnRembGeneratorSendPacket(
-			  RembGenerator* rembGenerator, RTC::RTCP::FeedbackPsRembPacket* packet) override;
+			  RembGenerator* rembGenerator, const RTC::NEW_RTCP::RembPacket* packet) override;
 
 		private:
 			// Passed by argument.
-			Listener* listener{ nullptr };
-			SharedInterface* shared{ nullptr };
+			Listener* const listener;
+			SharedInterface* const shared;
 			TransportWideCcFeedbackGenerator transportWideCcFeedbackGenerator;
 			RemoteBitrateEstimatorAbsSendTime remoteBitrateEstimator;
 			RembGenerator rembGenerator;

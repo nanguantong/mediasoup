@@ -130,7 +130,7 @@ namespace RTC
 				// NOTE: This may throw.
 				FillPadding(newPaddedLength - newNotPaddedLength);
 			}
-			catch (const MediaSoupError& error)
+			catch (const MediaSoupError&)
 			{
 				// Rollback.
 				SetLength(previousLength);
@@ -156,7 +156,7 @@ namespace RTC
 				// NOTE: This will throw if computed length field value is too big.
 				SetLengthField(previousLength + item->GetLengthField());
 			}
-			catch (const MediaSoupError& error)
+			catch (const MediaSoupError&)
 			{
 				// Rollback.
 				SetLength(previousLength);
@@ -168,6 +168,12 @@ namespace RTC
 		void TLV::SetLengthField(size_t length)
 		{
 			MS_TRACE();
+
+			if (length < TLV::TLVHeaderLength)
+			{
+				MS_THROW_TYPE_ERROR(
+				  "length (%zu bytes) cannot be lower than %zu", length, TLV::TLVHeaderLength);
+			}
 
 			if (length > std::numeric_limits<uint16_t>::max())
 			{

@@ -3,15 +3,15 @@
 #include <ankerl/unordered_dense.h>
 #include <array>
 #include <catch2/catch_test_macros.hpp>
-#include <limits> // std::numeric_limits()
+#include <limits> // std::numeric_limits
 #include <random> // std::mt19937
 
 SCENARIO("Utils::Crypto", "[utils][crypto]")
 {
 	SECTION("GetCRC32()")
 	{
-		uint8_t dataEmpty[] = {};
-		uint8_t dataZero[]  = { 0 };
+		std::array<uint8_t, 0> dataEmpty{};
+		uint8_t dataZero[] = { 0 };
 		// clang-format off
 		uint8_t dataRandom[] =
 		{
@@ -20,7 +20,7 @@ SCENARIO("Utils::Crypto", "[utils][crypto]")
 		};
 		// clang-format on
 
-		REQUIRE(Utils::Crypto::GetCRC32(dataEmpty, sizeof(dataEmpty)) == 0U);
+		REQUIRE(Utils::Crypto::GetCRC32(dataEmpty.data(), dataEmpty.size()) == 0);
 		REQUIRE(Utils::Crypto::GetCRC32(dataZero, sizeof(dataZero)) == 0xD202EF8D);
 		REQUIRE(Utils::Crypto::GetCRC32(dataRandom, sizeof(dataRandom)) == 0xEEE31378);
 	}
@@ -30,7 +30,7 @@ SCENARIO("Utils::Crypto", "[utils][crypto]")
 		// Tests copied from dcSCTP code in libwebrtc:
 		// https://webrtc.googlesource.com/src//+/refs/heads/main/net/dcsctp/packet/crc32c_test.cc
 
-		uint8_t dataEmpty[]     = {};
+		std::array<uint8_t, 0> dataEmpty{};
 		uint8_t dataZero[]      = { 0 };
 		uint8_t dataManyZeros[] = { 0, 0, 0, 0 };
 		uint8_t dataShort[]     = { 1, 2, 3, 4 };
@@ -65,7 +65,7 @@ SCENARIO("Utils::Crypto", "[utils][crypto]")
 		};
 		// clang-format on
 
-		REQUIRE(Utils::Crypto::GetCRC32c(dataEmpty, sizeof(dataEmpty)) == 0);
+		REQUIRE(Utils::Crypto::GetCRC32c(dataEmpty.data(), dataEmpty.size()) == 0);
 		REQUIRE(Utils::Crypto::GetCRC32c(dataZero, sizeof(dataZero)) == 0x51537d52);
 		REQUIRE(Utils::Crypto::GetCRC32c(dataManyZeros, sizeof(dataManyZeros)) == 0xC74B6748);
 		REQUIRE(Utils::Crypto::GetCRC32c(dataShort, sizeof(dataShort)) == 0xF48C3029);
@@ -88,13 +88,13 @@ SCENARIO("Utils::Crypto", "[utils][crypto]")
 		{
 			uint32_t crc{ 0xFFFFFFFF };
 
-			for (size_t i{ 0u }; i < size; ++i)
+			for (size_t i{ 0 }; i < size; ++i)
 			{
 				uint32_t byte{ static_cast<uint32_t>((crc ^ data[i]) & 0xFF) };
 
-				for (size_t bit{ 0u }; bit < 8u; ++bit)
+				for (size_t bit{ 0 }; bit < 8; ++bit)
 				{
-					byte = (byte & 1u) ? (byte >> 1) ^ polynomial : (byte >> 1);
+					byte = (byte & 1) ? (byte >> 1) ^ polynomial : (byte >> 1);
 				}
 
 				crc = (crc >> 8) ^ byte;
@@ -119,37 +119,37 @@ SCENARIO("Utils::Crypto", "[utils][crypto]")
 			byte = static_cast<uint8_t>(rng());
 		}
 
-		size_t mismatches{ 0u };
+		size_t mismatches{ 0 };
 
 		// Every length up to 1024 bytes at every misalignment within an 8 byte word.
-		for (size_t offset{ 0u }; offset < 8u; ++offset)
+		for (size_t offset{ 0 }; offset < 8; ++offset)
 		{
-			for (size_t size{ 0u }; size <= 1024u; ++size)
+			for (size_t size{ 0 }; size <= 1024; ++size)
 			{
 				const uint8_t* data = buffer.data() + offset;
 
 				// CRC-32 (IEEE 802.3), no byte swap.
-				if (Utils::Crypto::GetCRC32(data, size) != reference(0xEDB88320u, false, data, size))
+				if (Utils::Crypto::GetCRC32(data, size) != reference(0xEDB88320, false, data, size))
 				{
 					++mismatches;
 				}
 
 				// CRC-32C (Castagnoli), byte swapped.
-				if (Utils::Crypto::GetCRC32c(data, size) != reference(0x82F63B78u, true, data, size))
+				if (Utils::Crypto::GetCRC32c(data, size) != reference(0x82F63B78, true, data, size))
 				{
 					++mismatches;
 				}
 			}
 		}
 
-		REQUIRE(mismatches == 0u);
+		REQUIRE(mismatches == 0);
 	}
 }
 
 SCENARIO("Utils::Crypto::GetRandomUInt()", "[utils][crypto]")
 {
 	ankerl::unordered_dense::set<uint32_t> randomUint32Numbers;
-	ankerl::unordered_dense::set<uint32_t> randomUint64Numbers;
+	ankerl::unordered_dense::set<uint64_t> randomUint64Numbers;
 
 	for (size_t i = 0; i < 200; ++i)
 	{

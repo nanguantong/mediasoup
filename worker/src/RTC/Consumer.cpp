@@ -4,8 +4,10 @@
 #include "RTC/Consumer.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
+#include "RTC/Consts.hpp"
 #include "RTC/PipeProducerStreamManager.hpp"
 #include "RTC/RTP/Codecs/Tools.hpp"
+#include "RTC/RTP/PacketUtils.hpp"
 #include "RTC/SimpleProducerStreamManager.hpp"
 #include "RTC/SimulcastProducerStreamManager.hpp"
 #include "RTC/SvcProducerStreamManager.hpp"
@@ -21,6 +23,44 @@ namespace RTC
 
 	static constexpr size_t TargetLayerRetransmissionBufferSize{ 30 };
 
+	/* Class methods. */
+
+	void Consumer::StorePacketInTargetLayerRetransmissionBuffer(
+	  std::map<uint16_t, std::shared_ptr<RTC::RTP::Packet>, RTC::SeqManager<uint16_t>::SeqLowerThan>&
+	    targetLayerRetransmissionBuffer,
+	  RTC::RTP::Packet* packet,
+	  std::shared_ptr<RTC::RTP::Packet>& sharedPacket)
+	{
+		MS_TRACE();
+
+		MS_DEBUG_DEV(
+		  "storing packet in target layer retransmission buffer [ssrc:%" PRIu32 ", seq:%" PRIu16
+		  ", ts:%" PRIu32 "]",
+		  packet->GetSsrc(),
+		  packet->GetSequenceNumber(),
+		  packet->GetTimestamp());
+
+		// Store original packet into the buffer. Only clone once and only if
+		// necessary.
+		if (!sharedPacket)
+		{
+			sharedPacket = RTC::RTP::PacketUtils::ClonePacket(packet);
+		}
+		// Assert that the clone already made by another Consumer of the same
+		// Producer is a clone of this very same packet.
+		else
+		{
+			RTC::RTP::PacketUtils::AssertSamePacket(sharedPacket, packet);
+		}
+
+		targetLayerRetransmissionBuffer[packet->GetSequenceNumber()] = sharedPacket;
+
+		if (targetLayerRetransmissionBuffer.size() > TargetLayerRetransmissionBufferSize)
+		{
+			targetLayerRetransmissionBuffer.erase(targetLayerRetransmissionBuffer.begin());
+		}
+	}
+
 	/* Instance methods. */
 
 	Consumer::Consumer(
@@ -33,11 +73,11 @@ namespace RTC
 	    producerId(producerId),
 	    shared(shared),
 	    listener(listener),
-	    kind(RTC::Media::Kind(data->kind()))
+	    kind(RTC::Media::Kind(data->kind())),
+	    pipe(data->type() == FBS::RtpParameters::Type::PIPE),
+	    paused(data->paused())
 	{
 		MS_TRACE();
-
-		this->pipe = data->type() == FBS::RtpParameters::Type::PIPE;
 
 		// This may throw.
 		this->rtpParameters = RTC::RtpParameters(data->rtpParameters());
@@ -45,6 +85,16 @@ namespace RTC
 		if (this->rtpParameters.encodings.empty())
 		{
 			MS_THROW_TYPE_ERROR("empty rtpParameters.encodings");
+		}
+
+		// The MID is written in the MID RTP header extension of every packet sent,
+		// which has room for a limited length.
+		if (this->rtpParameters.mid.length() > RTC::Consts::MidRtpExtensionMaxLength)
+		{
+			MS_THROW_TYPE_ERROR(
+			  "rtpParameters.mid too long [len:%zu, max len:%" PRIu8 "]",
+			  this->rtpParameters.mid.length(),
+			  RTC::Consts::MidRtpExtensionMaxLength);
 		}
 
 		// All encodings must have SSRCs.
@@ -155,9 +205,6 @@ namespace RTC
 				this->rtpHeaderExtensionIds.mediasoupPacketId = exten.id;
 			}
 		}
-
-		// paused is set to false by default.
-		this->paused = data->paused();
 
 		// Fill supported codec payload types.
 		for (auto& codec : this->rtpParameters.codecs)
@@ -801,9 +848,7 @@ namespace RTC
 					MS_THROW_TYPE_ERROR("wrong priority (must be higher than 0)");
 				}
 
-#ifdef MS_USE_BUILTIN_BWE
 				const uint8_t previousPriority = this->priority;
-#endif
 
 				this->priority = body->priority();
 
@@ -812,7 +857,6 @@ namespace RTC
 
 				request->Accept(FBS::Response::Body::Consumer_SetPriorityResponse, responseOffset);
 
-#ifdef MS_USE_BUILTIN_BWE
 				// The priority is the weight the bitrate allocation gives this one
 				// against the others, so a new one is only worth anything once they are
 				// weighed again.
@@ -820,7 +864,6 @@ namespace RTC
 				{
 					this->listener->OnConsumerNeedBitrateChange(this);
 				}
-#endif
 
 				break;
 			}
@@ -1051,7 +1094,6 @@ namespace RTC
 		this->listener->OnConsumerProducerClosed(this);
 	}
 
-#ifdef MS_USE_BUILTIN_BWE
 	const std::string& Consumer::GetBitrateAllocationId() const
 	{
 		MS_TRACE();
@@ -1095,72 +1137,7 @@ namespace RTC
 
 		this->producerStreamManager->SetBitrateOption(option);
 	}
-#else
-	uint8_t Consumer::GetBitratePriority() const
-	{
-		MS_TRACE();
 
-		MS_ASSERT(this->externallyManagedBitrate, "bitrate is not externally managed");
-
-		// Audio does not play the BWE game.
-		if (this->kind != RTC::Media::Kind::VIDEO)
-		{
-			return 0;
-		}
-
-		if (!IsActive())
-		{
-			return 0;
-		}
-
-		return this->priority;
-	}
-
-	int64_t Consumer::IncreaseLayer(int64_t bitrate, bool considerLoss)
-	{
-		MS_TRACE();
-
-		MS_ASSERT(this->externallyManagedBitrate, "bitrate is not externally managed");
-		MS_ASSERT(IsActive(), "should be active");
-
-		// Pipe does not play the BWE game.
-		if (this->pipe)
-		{
-			return 0;
-		}
-
-		float lossPercentage{ 0.0f };
-
-		auto* rtpStream = this->mapSsrcRtpStream.begin()->second;
-
-		if (considerLoss)
-		{
-			lossPercentage = rtpStream->GetLossPercentage();
-		}
-
-		const int64_t nowMs = this->shared->GetTimeMs();
-
-		return this->producerStreamManager->IncreaseLayer(bitrate, considerLoss, lossPercentage, nowMs);
-	}
-
-	void Consumer::ApplyLayers()
-	{
-		MS_TRACE();
-
-		MS_ASSERT(this->externallyManagedBitrate, "bitrate is not externally managed");
-		MS_ASSERT(IsActive(), "should be active");
-
-		// Pipe does not play the BWE game.
-		if (this->pipe)
-		{
-			return;
-		}
-
-		this->producerStreamManager->ApplyLayers();
-	}
-#endif
-
-#ifdef MS_USE_BUILTIN_BWE
 	int64_t Consumer::GetDesiredBitrate() const
 	{
 		MS_TRACE();
@@ -1180,46 +1157,9 @@ namespace RTC
 
 		return std::max(maxBitrate, desiredBitrate);
 	}
-#else
-	int64_t Consumer::GetDesiredBitrate() const
-	{
-		MS_TRACE();
-
-		MS_ASSERT(this->externallyManagedBitrate, "bitrate is not externally managed");
-
-		// Pipe does not play the BWE game.
-		if (this->pipe)
-		{
-			return 0;
-		}
-
-		// Audio does not play the BWE game.
-		if (this->kind != RTC::Media::Kind::VIDEO)
-		{
-			return 0;
-		}
-
-		if (!IsActive())
-		{
-			return 0;
-		}
-
-		const int64_t nowMs = this->shared->GetTimeMs();
-
-		auto desiredBitrate = this->producerStreamManager->GetDesiredBitrate(nowMs);
-
-		// If consumer.rtpParameters.encodings[0].maxBitrate was given and it's
-		// greater than computed one, then use it.
-		auto maxBitrate = this->rtpParameters.encodings[0].maxBitrate;
-
-		desiredBitrate = std::max(maxBitrate, desiredBitrate);
-
-		return desiredBitrate;
-	}
-#endif
 
 	// NOLINTNEXTLINE(misc-no-recursion)
-	void Consumer::SendRtpPacket(RTC::RTP::Packet* packet, RTC::RTP::SharedPacket& sharedPacket)
+	void Consumer::SendRtpPacket(RTC::RTP::Packet* packet, std::shared_ptr<RTC::RTP::Packet>& sharedPacket)
 	{
 		MS_TRACE();
 
@@ -1280,7 +1220,7 @@ namespace RTC
 		}
 
 		// Ask the ProducerStreamManager to process the packet.
-		auto action = this->producerStreamManager->ProcessRtpPacket(
+		const auto action = this->producerStreamManager->ProcessRtpPacket(
 		  packet, this->lastSentPacketHasMarker, rtpStream->GetClockRate(), rtpStream->GetMaxPacketTs());
 
 		switch (action.type)
@@ -1299,7 +1239,7 @@ namespace RTC
 
 			case ProducerStreamManager::RtpPacketProcessResult::Type::BUFFER:
 			{
-				StorePacketInTargetLayerRetransmissionBuffer(
+				Consumer::StorePacketInTargetLayerRetransmissionBuffer(
 				  *targetLayerRetransmissionBuffer, packet, sharedPacket);
 
 				return;
@@ -1375,10 +1315,9 @@ namespace RTC
 			  origTimestamp);
 		}
 
-		const RTC::RTP::RtpStreamSend::ReceivePacketResult result =
-		  rtpStream->ReceivePacket(packet, sharedPacket);
+		const auto result = rtpStream->ReceivePacket(packet);
 
-		if (result != RTC::RTP::RtpStreamSend::ReceivePacketResult::DISCARDED)
+		if (result.accepted)
 		{
 			if (rtpSeqManager->GetMaxOutput() == packet->GetSequenceNumber())
 			{
@@ -1418,11 +1357,27 @@ namespace RTC
 		// Restore the original payload if needed.
 		packet->RestorePayload();
 
-		// If sharedPacket doesn't have a packet inside and it has been stored we
-		// need to clone the packet into it.
-		if (!sharedPacket.HasPacket() && result == RTC::RTP::RtpStreamSend::ReceivePacketResult::ACCEPTED_AND_STORED)
+		// If the packet was accepted and the info has been stored into
+		// the retransmission buffer then we must hand a clone of it over to the
+		// stream. Clone it only once only if needed.
+		//
+		// NOTE: This must happen here, once the packet has been restored above, so
+		// that the clone holds the original packet and not the one rewritten for
+		// this Consumer (the stream reapplies its own values and payload encoding on
+		// every retransmission).
+		if (result.retransmissionBufferItem)
 		{
-			sharedPacket.Assign(packet);
+			if (!sharedPacket)
+			{
+				sharedPacket = RTC::RTP::PacketUtils::ClonePacket(packet);
+			}
+
+			MS_ASSERT(
+			  !result.retransmissionBufferItem->sharedPacket,
+			  "retransmission buffer item already holds a packet [seq:%" PRIu16 "]",
+			  result.retransmissionBufferItem->sequenceNumber);
+
+			result.retransmissionBufferItem->sharedPacket = sharedPacket;
 		}
 
 		// If sent packet was the first packet of a key frame, let's send buffered
@@ -1432,12 +1387,12 @@ namespace RTC
 		{
 			// NOTE: Only send buffered packets if the first packet containing the
 			// key frame was sent.
-			if (result != RTC::RTP::RtpStreamSend::ReceivePacketResult::DISCARDED)
+			if (result.accepted)
 			{
 				for (auto& kv : *targetLayerRetransmissionBuffer)
 				{
 					auto& bufferedSharedPacket = kv.second;
-					auto* bufferedPacket       = bufferedSharedPacket.GetPacket();
+					auto* bufferedPacket       = bufferedSharedPacket.get();
 
 					if (bufferedPacket->GetSequenceNumber() > origSeq)
 					{
@@ -1474,7 +1429,7 @@ namespace RTC
 		}
 	}
 
-	bool Consumer::GetRtcp(RTC::RTCP::CompoundPacket* packet, int64_t nowUs)
+	std::vector<RTC::RTCP::CompoundPacket::SendStreamItems> Consumer::GetRtcp(int64_t nowUs)
 	{
 		MS_TRACE();
 
@@ -1488,50 +1443,42 @@ namespace RTC
 		{
 			if (nowUs != this->lastRtcpSentAtUs && static_cast<float>(elapsedMs * 1.15) < this->maxRtcpIntervalMs)
 			{
-				return true;
+				return {};
 			}
 		}
 		else if (static_cast<float>(elapsedMs * 1.15) < this->maxRtcpIntervalMs)
 		{
-			return true;
+			return {};
 		}
 
-		std::vector<RTCP::SenderReport*> senderReports;
-		std::vector<RTCP::SdesChunk*> sdesChunks;
-		std::vector<RTCP::DelaySinceLastRr::SsrcInfo*> delaySinceLastRrSsrcInfos;
+		std::vector<RTC::RTCP::CompoundPacket::SendStreamItems> sendStreamItems;
 
 		for (auto* rtpStream : this->rtpStreams)
 		{
-			auto* report = rtpStream->GetRtcpSenderReport(nowUs);
+			auto* const report = rtpStream->GetRtcpSenderReport(nowUs);
 
 			if (!report)
 			{
 				continue;
 			}
 
-			senderReports.push_back(report);
-
 			// Build SDES chunk for this sender.
-			auto* sdesChunk = rtpStream->GetRtcpSdesChunk();
-			sdesChunks.push_back(sdesChunk);
+			auto* const sdesChunk = rtpStream->GetRtcpSdesChunk();
 
-			auto* delaySinceLastRrSsrcInfo = rtpStream->GetRtcpXrDelaySinceLastRrSsrcInfo(nowUs);
+			auto* const delaySinceLastRrSsrcInfo = rtpStream->GetRtcpXrDelaySinceLastRrSsrcInfo(nowUs);
 
-			if (delaySinceLastRrSsrcInfo)
-			{
-				delaySinceLastRrSsrcInfos.push_back(delaySinceLastRrSsrcInfo);
-			}
-		}
-
-		// RTCP Compound packet buffer cannot hold the data.
-		if (!packet->Add(senderReports, sdesChunks, delaySinceLastRrSsrcInfos))
-		{
-			return false;
+			sendStreamItems.push_back(
+			  {
+			    .senderReport = std::unique_ptr<RTC::RTCP::SenderReport>(report),
+			    .sdesChunk    = std::unique_ptr<RTC::RTCP::SdesChunk>(sdesChunk),
+			    .delaySinceLastRrSsrcInfo =
+			      std::unique_ptr<RTC::RTCP::DelaySinceLastRr::SsrcInfo>(delaySinceLastRrSsrcInfo),
+			  });
 		}
 
 		this->lastRtcpSentAtUs = nowUs;
 
-		return true;
+		return sendStreamItems;
 	}
 
 	uint8_t Consumer::GetWorstRemoteFractionLost(uint32_t /*mappedSsrc*/) const
@@ -1734,19 +1681,6 @@ namespace RTC
 		}
 
 		this->producerStreamManager->OnPaused();
-
-#ifndef MS_USE_BUILTIN_BWE
-		if (this->externallyManagedBitrate)
-		{
-			// Audio does not play the BWE game.
-			if (this->kind != RTC::Media::Kind::VIDEO)
-			{
-				return;
-			}
-
-			this->listener->OnConsumerNeedZeroBitrate(this);
-		}
-#endif
 	}
 
 	void Consumer::UserOnResumed()
@@ -1862,42 +1796,6 @@ namespace RTC
 			this->mapRtpStreamRtpSeqManager[rtpStream] = RTC::SeqManager<uint16_t>(initialOutputSeq);
 
 			this->mapRtpStreamTargetLayerRetransmissionBuffer[rtpStream];
-		}
-	}
-
-	void Consumer::StorePacketInTargetLayerRetransmissionBuffer(
-	  std::map<uint16_t, RTC::RTP::SharedPacket, RTC::SeqManager<uint16_t>::SeqLowerThan>&
-	    targetLayerRetransmissionBuffer,
-	  RTC::RTP::Packet* packet,
-	  RTC::RTP::SharedPacket& sharedPacket)
-	{
-		MS_TRACE();
-
-		MS_DEBUG_DEV(
-		  "storing packet in target layer retransmission buffer [ssrc:%" PRIu32 ", seq:%" PRIu16
-		  ", ts:%" PRIu32 "]",
-		  packet->GetSsrc(),
-		  packet->GetSequenceNumber(),
-		  packet->GetTimestamp());
-
-		// Store original packet into the buffer. Only clone once and only if
-		// necessary.
-		if (!sharedPacket.HasPacket())
-		{
-			sharedPacket.Assign(packet);
-		}
-		// Assert that, if sharedPacket was already filled, both packet and
-		// sharedPacket are the very same RTP packet.
-		else
-		{
-			sharedPacket.AssertSamePacket(packet);
-		}
-
-		targetLayerRetransmissionBuffer[packet->GetSequenceNumber()] = sharedPacket;
-
-		if (targetLayerRetransmissionBuffer.size() > TargetLayerRetransmissionBufferSize)
-		{
-			targetLayerRetransmissionBuffer.erase(targetLayerRetransmissionBuffer.begin());
 		}
 	}
 
@@ -2077,19 +1975,6 @@ namespace RTC
 
 		// Emit the score event.
 		EmitScore();
-
-#ifndef MS_USE_BUILTIN_BWE
-		// TODO: @jmillan: Previously present in Simulcast and SVC. Does it make sense
-		// to move it here?
-		if (IsActive())
-		{
-			// Just check target layers if our bitrate is not externally managed.
-			if (!this->externallyManagedBitrate)
-			{
-				this->producerStreamManager->MayChangeLayers();
-			}
-		}
-#endif
 	}
 
 	void Consumer::OnRtpStreamRetransmitRtpPacket(
@@ -2132,7 +2017,9 @@ namespace RTC
 
 		for (auto& kv : this->mapRtpStreamTargetLayerRetransmissionBuffer)
 		{
-			kv.second.clear();
+			auto& targetLayerRetransmissionBuffer = kv.second;
+
+			targetLayerRetransmissionBuffer.clear();
 		}
 	}
 

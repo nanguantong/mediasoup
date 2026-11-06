@@ -14,8 +14,8 @@ namespace RTC
 		static constexpr size_t StunResponseFactoryBufferLength{ 65536 };
 		static thread_local uint8_t StunResponseFactoryBuffer[StunResponseFactoryBufferLength];
 		static constexpr size_t MaxTuples{ 8 };
-		static constexpr uint8_t ConsentCheckMinTimeoutSec{ 10u };
-		static constexpr uint8_t ConsentCheckMaxTimeoutSec{ 60u };
+		static constexpr uint8_t ConsentCheckMinTimeoutSec{ 10 };
+		static constexpr uint8_t ConsentCheckMaxTimeoutSec{ 60 };
 
 		/* Class variables. */
 
@@ -80,7 +80,7 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			if (consentTimeoutSec == 0u)
+			if (consentTimeoutSec == 0)
 			{
 				// 0 means disabled so it's a valid value.
 			}
@@ -143,10 +143,6 @@ namespace RTC
 
 			// Unset selected tuple.
 			this->selectedTuple = nullptr;
-
-			// Delete the ICE consent check timer.
-			delete this->consentCheckTimer;
-			this->consentCheckTimer = nullptr;
 		}
 
 		void IceServer::Dump(int indentation) const
@@ -223,7 +219,7 @@ namespace RTC
 			this->oldPassword = this->password;
 			this->password    = password;
 
-			this->remoteNomination = 0u;
+			this->remoteNomination = 0;
 
 			// Notify the listener.
 			this->listener->OnIceServerLocalUsernameFragmentAdded(this, usernameFragment);
@@ -319,7 +315,7 @@ namespace RTC
 					this->state = IceState::DISCONNECTED;
 
 					// Reset remote nomination.
-					this->remoteNomination = 0u;
+					this->remoteNomination = 0;
 
 					// Notify the listener.
 					this->listener->OnIceServerDisconnected(this);
@@ -937,7 +933,7 @@ namespace RTC
 			// Create the ICE consent check timer if it doesn't exist.
 			if (!this->consentCheckTimer)
 			{
-				this->consentCheckTimer = this->shared->CreateTimer(this, "ice-server-consent-check");
+				this->consentCheckTimer.reset(this->shared->CreateTimer(this, "ice-server-consent-check"));
 			}
 
 			this->consentCheckTimer->Start(this->consentTimeoutMs);
@@ -968,7 +964,7 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			if (timer == this->consentCheckTimer)
+			if (timer == this->consentCheckTimer.get())
 			{
 				MS_ASSERT(IsConsentCheckSupported(), "ICE consent check not supported");
 
@@ -987,7 +983,7 @@ namespace RTC
 				this->state = IceState::DISCONNECTED;
 
 				// Reset remote nomination.
-				this->remoteNomination = 0u;
+				this->remoteNomination = 0;
 
 				// Clear all tuples.
 				this->isRemovingTuples = true;

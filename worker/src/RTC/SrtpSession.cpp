@@ -5,10 +5,15 @@
 #include "DepLibSRTP.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
+#include "RTC/Consts.hpp"
 
 namespace RTC
 {
 	/* Static. */
+
+	static_assert(
+	  RTC::Consts::SrtpMaxOverhead == SRTP_MAX_TAG_LEN,
+	  "SrtpMaxOverhead must match the longest SRTP authentication tag");
 
 	static constexpr size_t EncryptBufferSize{ 65536 };
 	alignas(4) static thread_local uint8_t EncryptBuffer[EncryptBufferSize];
@@ -286,7 +291,7 @@ namespace RTC
 				{
 					MS_ABORT("srtp_dealloc() failed: %s", DepLibSRTP::GetErrorString(err).c_str());
 				}
-				catch (const std::exception& error) // NOLINT(bugprone-empty-catch)
+				catch (const std::exception&) // NOLINT(bugprone-empty-catch)
 				{
 					// NOTE: This is to avoid a warning:
 					// '~SrtpSession' has a non-throwing exception specification but can

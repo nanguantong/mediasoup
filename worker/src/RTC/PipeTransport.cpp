@@ -4,6 +4,7 @@
 #include "RTC/PipeTransport.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
+#include "RTC/Consts.hpp"
 #include "RTC/PortManager.hpp"
 #include "RTC/SCTP/packet/Packet.hpp"
 #include "Settings.hpp"
@@ -32,7 +33,8 @@ namespace RTC
 	  // SCTP over PipeTransport is not protected by DTLS, so received State
 	  // Cookies must be authenticated to prevent forgery (RFC 9260 section 5.1.3).
 	  : RTC::Transport::Transport(
-	      shared, id, listener, options->base(), /*requireSctpStateCookieAuthentication*/ true)
+	      shared, id, listener, options->base(), /*requireSctpStateCookieAuthentication*/ true),
+	    rtx(options->enableRtx())
 	{
 		MS_TRACE();
 
@@ -64,8 +66,6 @@ namespace RTC
 		this->listenInfo.flags.ipv6Only     = options->listenInfo()->flags()->ipv6Only();
 		this->listenInfo.flags.udpReusePort = options->listenInfo()->flags()->udpReusePort();
 
-		this->rtx = options->enableRtx();
-
 		if (options->enableSrtp())
 		{
 			this->srtpKey       = Utils::Crypto::GetRandomString(PipeTransport::srtpMasterLength);
@@ -78,7 +78,7 @@ namespace RTC
 			{
 				RTC::PortManager::PortRangeKey portRangeKey;
 
-				this->udpSocket = new RTC::UdpSocket(
+				this->udpSocket = std::make_unique<RTC::UdpSocket>(
 				  this,
 				  this->shared,
 				  this->listenInfo.ip,
@@ -89,7 +89,7 @@ namespace RTC
 			}
 			else if (this->listenInfo.port != 0)
 			{
-				this->udpSocket = new RTC::UdpSocket(
+				this->udpSocket = std::make_unique<RTC::UdpSocket>(
 				  this, this->shared, this->listenInfo.ip, this->listenInfo.port, this->listenInfo.flags);
 			}
 			// NOTE: This is temporal to allow deprecated usage of worker port range.
@@ -99,7 +99,7 @@ namespace RTC
 			{
 				RTC::PortManager::PortRangeKey portRangeKey;
 
-				this->udpSocket = new RTC::UdpSocket(
+				this->udpSocket = std::make_unique<RTC::UdpSocket>(
 				  this,
 				  this->shared,
 				  this->listenInfo.ip,
@@ -133,12 +133,11 @@ namespace RTC
 			  /*channelRequestHandler*/ this,
 			  /*channelNotificationHandler*/ this);
 		}
-		catch (const MediaSoupError& error)
+		catch (const MediaSoupError&)
 		{
 			// Must delete everything since the destructor won't be called.
 
-			delete this->udpSocket;
-			this->udpSocket = nullptr;
+			this->udpSocket.reset();
 
 			throw;
 		}
@@ -154,17 +153,13 @@ namespace RTC
 
 		this->shared->GetChannelMessageRegistrator()->UnregisterHandler(this->id);
 
-		delete this->udpSocket;
-		this->udpSocket = nullptr;
+		this->udpSocket.reset();
 
-		delete this->tuple;
-		this->tuple = nullptr;
+		this->tuple.reset();
 
-		delete this->srtpSendSession;
-		this->srtpSendSession = nullptr;
+		this->srtpSendSession.reset();
 
-		delete this->srtpRecvSession;
-		this->srtpRecvSession = nullptr;
+		this->srtpRecvSession.reset();
 	}
 
 	flatbuffers::Offset<FBS::PipeTransport::DumpResponse> PipeTransport::FillBuffer(
@@ -298,7 +293,7 @@ namespace RTC
 				try
 				{
 					std::string ip;
-					uint16_t port{ 0u };
+					uint16_t port{ 0 };
 					std::string srtpKeyBase64;
 
 					const auto* body = request->data->body_as<FBS::PipeTransport::ConnectRequest>();
@@ -345,7 +340,7 @@ namespace RTC
 
 						try
 						{
-							this->srtpSendSession = new RTC::SrtpSession(
+							this->srtpSendSession = std::make_unique<RTC::SrtpSession>(
 							  RTC::SrtpSession::Type::OUTBOUND,
 							  PipeTransport::srtpCryptoSuite,
 							  srtpLocalKey,
@@ -361,7 +356,7 @@ namespace RTC
 
 						try
 						{
-							this->srtpRecvSession = new RTC::SrtpSession(
+							this->srtpRecvSession = std::make_unique<RTC::SrtpSession>(
 							  RTC::SrtpSession::Type::INBOUND,
 							  PipeTransport::srtpCryptoSuite,
 							  srtpRemoteKey,
@@ -438,8 +433,8 @@ namespace RTC
 					}
 
 					// Create the tuple.
-					this->tuple = new RTC::TransportTuple(
-					  this->udpSocket,
+					this->tuple = std::make_unique<RTC::TransportTuple>(
+					  this->udpSocket.get(),
 					  reinterpret_cast<struct sockaddr*>(std::addressof(this->remoteAddrStorage)));
 
 					if (!this->listenInfo.announcedAddress.empty())
@@ -447,16 +442,13 @@ namespace RTC
 						this->tuple->SetLocalAnnouncedAddress(this->listenInfo.announcedAddress);
 					}
 				}
-				catch (const MediaSoupError& error)
+				catch (const MediaSoupError&)
 				{
-					delete this->tuple;
-					this->tuple = nullptr;
+					this->tuple.reset();
 
-					delete this->srtpSendSession;
-					this->srtpSendSession = nullptr;
+					this->srtpSendSession.reset();
 
-					delete this->srtpRecvSession;
-					this->srtpRecvSession = nullptr;
+					this->srtpRecvSession.reset();
 
 					throw;
 				}
@@ -491,21 +483,21 @@ namespace RTC
 		RTC::Transport::HandleNotification(notification);
 	}
 
-	inline bool PipeTransport::IsConnected() const
+	bool PipeTransport::IsConnected() const
 	{
 		MS_TRACE();
 
 		return this->tuple ? true : false;
 	}
 
-	inline size_t PipeTransport::GetPacketOverhead() const
+	size_t PipeTransport::GetPacketOverhead() const
 	{
 		MS_TRACE();
 
 		return this->tuple ? this->tuple->GetPacketOverhead() : 0;
 	}
 
-	inline bool PipeTransport::HasSrtp() const
+	bool PipeTransport::HasSrtp() const
 	{
 		MS_TRACE();
 
@@ -557,6 +549,29 @@ namespace RTC
 
 		const uint8_t* data = packet->GetData();
 		auto len            = packet->GetSize();
+
+		if (HasSrtp() && !this->srtpSendSession->EncryptRtcp(std::addressof(data), std::addressof(len)))
+		{
+			return;
+		}
+
+		this->tuple->Send(data, len);
+
+		// Increase send transmission.
+		RTC::Transport::DataSent(len);
+	}
+
+	void PipeTransport::SendRtcpPacket(const RTC::NEW_RTCP::Packet* packet)
+	{
+		MS_TRACE();
+
+		if (!IsConnected())
+		{
+			return;
+		}
+
+		const uint8_t* data = packet->GetBuffer();
+		auto len            = packet->GetLength();
 
 		if (HasSrtp() && !this->srtpSendSession->EncryptRtcp(std::addressof(data), std::addressof(len)))
 		{
@@ -639,7 +654,7 @@ namespace RTC
 		}
 	}
 
-	inline void PipeTransport::OnPacketReceived(
+	void PipeTransport::OnPacketReceived(
 	  RTC::TransportTuple* tuple, const uint8_t* data, size_t len, size_t bufferLen, int64_t receivedAtUs)
 	{
 		MS_TRACE();
@@ -668,10 +683,21 @@ namespace RTC
 		}
 	}
 
-	inline void PipeTransport::OnRtpDataReceived(
+	void PipeTransport::OnRtpDataReceived(
 	  RTC::TransportTuple* tuple, const uint8_t* data, size_t len, size_t bufferLen, int64_t receivedAtUs)
 	{
 		MS_TRACE();
+
+		if (len > RTC::Consts::IncomingRtpPacketMaxSize)
+		{
+			MS_WARN_TAG(
+			  rtp,
+			  "ignoring RTP packet exceeding maximum size [len:%zu, max len:%zu]",
+			  len,
+			  RTC::Consts::IncomingRtpPacketMaxSize);
+
+			return;
+		}
 
 		if (!IsConnected())
 		{
@@ -728,10 +754,21 @@ namespace RTC
 		RTC::Transport::ReceiveRtpPacket(packet, receivedAtUs);
 	}
 
-	inline void PipeTransport::OnRtcpDataReceived(
+	void PipeTransport::OnRtcpDataReceived(
 	  RTC::TransportTuple* tuple, const uint8_t* data, size_t len, int64_t receivedAtUs)
 	{
 		MS_TRACE();
+
+		if (len > RTC::Consts::IncomingRtcpPacketMaxSize)
+		{
+			MS_WARN_TAG(
+			  rtcp,
+			  "ignoring RTCP packet exceeding maximum size [len:%zu, max len:%zu]",
+			  len,
+			  RTC::Consts::IncomingRtcpPacketMaxSize);
+
+			return;
+		}
 
 		if (!IsConnected())
 		{
@@ -765,7 +802,7 @@ namespace RTC
 		RTC::Transport::ReceiveRtcpPacket(packet, receivedAtUs);
 	}
 
-	inline void PipeTransport::OnSctpDataReceived(
+	void PipeTransport::OnSctpDataReceived(
 	  RTC::TransportTuple* tuple, const uint8_t* data, size_t len, int64_t receivedAtUs)
 	{
 		MS_TRACE();
@@ -787,7 +824,7 @@ namespace RTC
 		RTC::Transport::ReceiveSctpData(data, len, receivedAtUs);
 	}
 
-	inline void PipeTransport::OnUdpSocketPacketReceived(
+	void PipeTransport::OnUdpSocketPacketReceived(
 	  RTC::UdpSocket* socket,
 	  const uint8_t* data,
 	  size_t len,

@@ -1,6 +1,6 @@
 #include "common.hpp"
 #include "RTC/BWE/RembGenerator.hpp"
-#include "RTC/RTCP/FeedbackPsRemb.hpp"
+#include "RTC/NEW_RTCP/packet/RembPacket.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <vector>
 
@@ -8,15 +8,15 @@ SCENARIO("BWE RembGenerator", "[bwe][rembgenerator]")
 {
 	struct TestRemb
 	{
-		int64_t bitrate;
-		std::vector<uint32_t> ssrcs;
+		const int64_t bitrate;
+		const std::vector<uint32_t> ssrcs;
 	};
 
 	class TestRembGeneratorListener : public RTC::BWE::RembGenerator::Listener
 	{
 	public:
 		void OnRembGeneratorSendPacket(
-		  RTC::BWE::RembGenerator* /*rembGenerator*/, RTC::RTCP::FeedbackPsRembPacket* packet) override
+		  RTC::BWE::RembGenerator* /*rembGenerator*/, const RTC::NEW_RTCP::RembPacket* packet) override
 		{
 			this->rembs.push_back(TestRemb{ .bitrate = packet->GetBitrate(), .ssrcs = packet->GetSsrcs() });
 		}
@@ -281,5 +281,26 @@ SCENARIO("BWE RembGenerator", "[bwe][rembgenerator]")
 
 		REQUIRE(listener.rembs.size() == 4);
 		REQUIRE(listener.rembs.at(3).bitrate == 2000);
+	}
+
+	SECTION("more ssrcs than the packet can count are dropped")
+	{
+		TestRembGeneratorListener listener;
+		RTC::BWE::RembGenerator rembGenerator(std::addressof(listener));
+
+		// One more than fits, since the field that counts them is a single byte.
+		std::vector<uint32_t> manySsrcs;
+
+		manySsrcs.reserve(RTC::NEW_RTCP::RembPacket::MaxSsrcs + 1);
+
+		for (uint32_t ssrc{ 1 }; ssrc <= RTC::NEW_RTCP::RembPacket::MaxSsrcs + 1; ++ssrc)
+		{
+			manySsrcs.push_back(ssrc);
+		}
+
+		rembGenerator.OnReceiveBitrateChanged(BaseTimeMs, manySsrcs, 12345);
+
+		REQUIRE(listener.rembs.size() == 1);
+		REQUIRE(listener.rembs.at(0).ssrcs.size() == RTC::NEW_RTCP::RembPacket::MaxSsrcs);
 	}
 }

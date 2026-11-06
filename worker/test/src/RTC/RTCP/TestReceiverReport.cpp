@@ -100,6 +100,26 @@ SCENARIO("RTCP ReceiverReport", "[rtcp][receiver-report]")
 		verify(report.get());
 	}
 
+	SECTION("GetSize() matches the serialized size")
+	{
+		for (const size_t count : { 0, 1, 31, 32, 62, 63 })
+		{
+			RTC::RTCP::ReceiverReportPacket packet;
+
+			for (size_t i{ 1 }; i <= count; ++i)
+			{
+				auto* const report = new RTC::RTCP::ReceiverReport();
+
+				report->SetSsrc(i);
+				packet.AddReport(report);
+			}
+
+			alignas(4) uint8_t buffer[4096] = { 0 };
+
+			REQUIRE(packet.Serialize(buffer) == packet.GetSize());
+		}
+	}
+
 	SECTION("create RR packet with more than 31 reports")
 	{
 		const size_t count = 33;
@@ -111,13 +131,13 @@ SCENARIO("RTCP ReceiverReport", "[rtcp][receiver-report]")
 			// Create report and add to packet.
 			auto* report = new RTC::RTCP::ReceiverReport();
 
-			report->SetSsrc(i);
-			report->SetFractionLost(i);
-			report->SetTotalLost(i);
-			report->SetLastSeq(i);
-			report->SetJitter(i);
-			report->SetLastSenderReport(i);
-			report->SetDelaySinceLastSenderReport(i);
+			report->SetSsrc(static_cast<uint32_t>(i));
+			report->SetFractionLost(static_cast<uint8_t>(i));
+			report->SetTotalLost(static_cast<int32_t>(i));
+			report->SetLastSeq(static_cast<uint32_t>(i));
+			report->SetJitter(static_cast<float>(i));
+			report->SetLastSenderReport(static_cast<uint32_t>(i));
+			report->SetDelaySinceLastSenderReport(static_cast<uint32_t>(i));
 
 			packet.AddReport(report);
 		}
@@ -187,13 +207,13 @@ SCENARIO("RTCP ReceiverReport", "[rtcp][receiver-report]")
 		report1.SetLastSenderReport(lastSenderReport);
 		report1.SetDelaySinceLastSenderReport(delaySinceLastSenderReport);
 
-		verify(&report1);
+		verify(std::addressof(report1));
 
 		SECTION("create a report out of the existing one")
 		{
-			RTC::RTCP::ReceiverReport report2(&report1);
+			RTC::RTCP::ReceiverReport report2(std::addressof(report1));
 
-			verify(&report2);
+			verify(std::addressof(report2));
 		}
 	}
 }

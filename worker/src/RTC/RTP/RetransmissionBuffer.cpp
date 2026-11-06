@@ -12,23 +12,16 @@ namespace RTC
 	{
 		/* Class methods. */
 
-		RetransmissionBuffer::Item* RetransmissionBuffer::CreateItem(
-		  RTP::Packet* packet, const RTP::SharedPacket& sharedPacket, int64_t nowMs)
+		RetransmissionBuffer::Item* RetransmissionBuffer::CreateItem(RTP::Packet* packet, int64_t nowMs)
 		{
 			MS_TRACE();
 
-			// Store original packet and some extra info into the item.
+			// Store some extra info into the item.
 			//
-			// NOTE: sharedPacket could be empty at this point but it's ok since the
-			// Consumer will fill it.
-			//
-			// NOTE: Members are initialized here (rather than assigned after default
-			// constructing the item) so that `sharedPacket` is copy constructed and
-			// hence just shares the already existing shared state. Default
-			// constructing it would allocate a new shared state that would be
-			// immediately released by the assignment.
+			// NOTE: `sharedPacket` is left empty here. Insert() returns the item so
+			// that the Consumer fills it right after, once the packet has been
+			// restored to its original state.
 			return new Item{
-				.sharedPacket   = sharedPacket,
 				.encoder        = packet->GetPayloadEncoder(),
 				.ssrc           = packet->GetSsrc(),
 				.sequenceNumber = packet->GetSequenceNumber(),
@@ -46,7 +39,7 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			MS_ASSERT(maxItems > 0u, "maxItems must be greater than 0");
+			MS_ASSERT(maxItems > 0, "maxItems must be greater than 0");
 		}
 
 		RetransmissionBuffer::~RetransmissionBuffer()
@@ -119,9 +112,11 @@ namespace RTC
 		 * We discard the packet if too old and also discard it if its timestamp does
 		 * not properly fit (by ensuring that elements in the buffer are not only
 		 * ordered by increasing seq but also that their timestamp are incremental).
+		 *
+		 * @returns The inserted item (with no packet in it yet) or nullptr if the
+		 *   packet was not inserted.
 		 */
-		bool RetransmissionBuffer::Insert(
-		  RTP::Packet* packet, const RTP::SharedPacket& sharedPacket, int64_t nowMs)
+		RetransmissionBuffer::Item* RetransmissionBuffer::Insert(RTP::Packet* packet, int64_t nowMs)
 		{
 			MS_TRACE();
 
@@ -131,14 +126,18 @@ namespace RTC
 
 			MS_DEBUG_DEV("packet [seq:%" PRIu16 ", timestamp:%" PRIu32 "]", seq, timestamp);
 
+			Item* item{ nullptr };
+
 			// Buffer is empty, so just insert new item.
 			if (this->buffer.empty())
 			{
 				MS_DEBUG_DEV("buffer empty [seq:%" PRIu16 ", timestamp:%" PRIu32 "]", seq, timestamp);
 
-				this->buffer.push_back(RetransmissionBuffer::CreateItem(packet, sharedPacket, nowMs));
+				item = RetransmissionBuffer::CreateItem(packet, nowMs);
 
-				return true;
+				this->buffer.push_back(item);
+
+				return item;
 			}
 
 			auto* oldestItem = GetOldest();
@@ -160,9 +159,11 @@ namespace RTC
 
 				Clear();
 
-				this->buffer.push_back(RetransmissionBuffer::CreateItem(packet, sharedPacket, nowMs));
+				item = RetransmissionBuffer::CreateItem(packet, nowMs);
 
-				return true;
+				this->buffer.push_back(item);
+
+				return item;
 			}
 
 			// Clear too old packets in the buffer.
@@ -187,9 +188,11 @@ namespace RTC
 					  seq,
 					  timestamp);
 
-					this->buffer.push_back(RetransmissionBuffer::CreateItem(packet, sharedPacket, nowMs));
+					item = RetransmissionBuffer::CreateItem(packet, nowMs);
 
-					return true;
+					this->buffer.push_back(item);
+
+					return item;
 				}
 
 				oldestItem = GetOldest();
@@ -224,9 +227,11 @@ namespace RTC
 
 						Clear();
 
-						this->buffer.push_back(RetransmissionBuffer::CreateItem(packet, sharedPacket, nowMs));
+						item = RetransmissionBuffer::CreateItem(packet, nowMs);
 
-						return true;
+						this->buffer.push_back(item);
+
+						return item;
 					}
 
 					MS_WARN_TAG(
@@ -237,7 +242,7 @@ namespace RTC
 					  seq,
 					  timestamp);
 
-					return false;
+					return nullptr;
 				}
 
 				// Calculate how many blank slots it would be necessary to add when
@@ -262,7 +267,7 @@ namespace RTC
 						  seq,
 						  timestamp);
 
-						numBlankSlots = 0u;
+						numBlankSlots = 0;
 
 						Clear();
 					}
@@ -281,13 +286,15 @@ namespace RTC
 				}
 
 				// Push blank slots to the back.
-				for (uint16_t i{ 0u }; i < numBlankSlots; ++i)
+				for (uint16_t i{ 0 }; i < numBlankSlots; ++i)
 				{
 					this->buffer.push_back(nullptr);
 				}
 
 				// Push the packet, which becomes the newest one in the buffer.
-				this->buffer.push_back(RetransmissionBuffer::CreateItem(packet, sharedPacket, nowMs));
+				item = RetransmissionBuffer::CreateItem(packet, nowMs);
+
+				this->buffer.push_back(item);
 			}
 			// Packet arrived out order and its seq is less than seq of the oldest
 			// stored packet, so will become the oldest one in the buffer.
@@ -307,7 +314,7 @@ namespace RTC
 					  seq,
 					  timestamp);
 
-					return false;
+					return nullptr;
 				}
 
 				// Ensure that the timestamp of the packet is equal or less than the
@@ -322,7 +329,7 @@ namespace RTC
 					  seq,
 					  timestamp);
 
-					return false;
+					return nullptr;
 				}
 
 				// Calculate how many blank slots it would be necessary to add when
@@ -341,17 +348,19 @@ namespace RTC
 					  seq,
 					  timestamp);
 
-					return false;
+					return nullptr;
 				}
 
 				// Push blank slots to the front.
-				for (uint16_t i{ 0u }; i < numBlankSlots; ++i)
+				for (uint16_t i{ 0 }; i < numBlankSlots; ++i)
 				{
 					this->buffer.push_front(nullptr);
 				}
 
 				// Insert the packet, which becomes the oldest one in the buffer.
-				this->buffer.push_front(RetransmissionBuffer::CreateItem(packet, sharedPacket, nowMs));
+				item = RetransmissionBuffer::CreateItem(packet, nowMs);
+
+				this->buffer.push_front(item);
 			}
 			// Otherwise packet must be inserted between oldest and newest stored items
 			// so there is already an allocated slot for it.
@@ -365,16 +374,14 @@ namespace RTC
 
 				// Let's check if an item already exist in same position. If so, assume
 				// it's duplicated.
-				const auto* item = Get(seq);
-
-				if (item)
+				if (Get(seq))
 				{
 					MS_DEBUG_DEV(
 					  "packet already in the buffer, discarding [seq:%" PRIu16 ", timestamp:%" PRIu32 "]",
 					  seq,
 					  timestamp);
 
-					return false;
+					return nullptr;
 				}
 
 				// idx is the intended position of the received packet in the buffer.
@@ -407,7 +414,7 @@ namespace RTC
 						  seq,
 						  timestamp);
 
-						return false;
+						return nullptr;
 					}
 				}
 
@@ -438,12 +445,13 @@ namespace RTC
 						  seq,
 						  timestamp);
 
-						return false;
+						return nullptr;
 					}
 				}
 
 				// Store the packet.
-				this->buffer[idx] = RetransmissionBuffer::CreateItem(packet, sharedPacket, nowMs);
+				item              = RetransmissionBuffer::CreateItem(packet, nowMs);
+				this->buffer[idx] = item;
 			}
 
 			MS_ASSERT(
@@ -452,7 +460,9 @@ namespace RTC
 			  this->buffer.size(),
 			  this->maxItems);
 
-			return true;
+			MS_ASSERT(item != nullptr, "inserted item doesn't exist");
+
+			return item;
 		}
 
 		void RetransmissionBuffer::Clear()
@@ -528,7 +538,7 @@ namespace RTC
 
 			// Remove all nullptr elements from the beginning of the buffer.
 			// NOTE: Calling front on an empty container is undefined.
-			size_t numItemsRemoved{ 0u };
+			size_t numItemsRemoved{ 0 };
 
 			while (!this->buffer.empty() && this->buffer.front() == nullptr)
 			{

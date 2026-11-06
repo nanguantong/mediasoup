@@ -4,6 +4,7 @@
 #include "RTC/DtlsTransport.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
+#include "RTC/Consts.hpp"
 #include "Settings.hpp"
 #include "Utils.hpp"
 #include <openssl/err.h>
@@ -55,8 +56,8 @@ inline static void onSslInfo(const SSL* ssl, int where, int ret)
  * endpoint. Such a data could be a full DTLS message, various DTLS messages,
  * a DTLS message fragment, various DTLS message fragments or a combination of
  * these. It's guaranteed (by observation) that |len| argument corresponds to
- * the entire content of our BIO mem buffer |this->sslBioToNetwork| and it
- * never exceeds our |DtlsMtu| limit.
+ * the entire content of our BIO mem buffer |this->sslBioToNetwork| and, for
+ * handshake data, it never exceeds `RTC::Consts::OutgoingDtlsPacketMaxSize`.
  */
 inline static long onSslBioOut(
   BIO* bio,
@@ -70,7 +71,10 @@ inline static long onSslBioOut(
 {
 	MS_TRACE();
 
-	const long resultOfcallback = (operationType == BIO_CB_RETURN) ? static_cast<long>(ret) : 1;
+	// OpenSSL calls back after every operation with BIO_CB_RETURN or'ed into the
+	// operation type and takes what this returns as the operation's result, so
+	// it must be |ret| unchanged.
+	const long resultOfcallback = ((operationType & BIO_CB_RETURN) != 0) ? static_cast<long>(ret) : 1;
 
 	// This callback is called twice for write operations:
 	// - First one with operationType = BIO_CB_WRITE.
@@ -90,13 +94,13 @@ inline static unsigned int onSslDtlsTimer(SSL* /*ssl*/, unsigned int timerUs)
 {
 	MS_TRACE();
 
-	if (timerUs == 0u)
+	if (timerUs == 0)
 	{
-		return 100000u;
+		return 100000;
 	}
-	else if (timerUs >= 4000000u)
+	else if (timerUs >= 4000000)
 	{
-		return 4000000u;
+		return 4000000;
 	}
 	else
 	{
@@ -108,19 +112,18 @@ namespace RTC
 {
 	/* Static. */
 
-	static constexpr int DtlsMtu{ 1350 };
 	static constexpr int SslReadBufferSize{ 65536 };
 	// AES-HMAC: http://tools.ietf.org/html/rfc3711
-	static constexpr size_t SrtpMasterKeyLength{ 16u };
-	static constexpr size_t SrtpMasterSaltLength{ 14u };
+	static constexpr size_t SrtpMasterKeyLength{ 16 };
+	static constexpr size_t SrtpMasterSaltLength{ 14 };
 	static constexpr size_t SrtpMasterLength{ SrtpMasterKeyLength + SrtpMasterSaltLength };
 	// AES-GCM: http://tools.ietf.org/html/rfc7714
-	static constexpr size_t SrtpAesGcm256MasterKeyLength{ 32u };
-	static constexpr size_t SrtpAesGcm256MasterSaltLength{ 12u };
+	static constexpr size_t SrtpAesGcm256MasterKeyLength{ 32 };
+	static constexpr size_t SrtpAesGcm256MasterSaltLength{ 12 };
 	static constexpr size_t SrtpAesGcm256MasterLength{ SrtpAesGcm256MasterKeyLength +
 	                                                   SrtpAesGcm256MasterSaltLength };
-	static constexpr size_t SrtpAesGcm128MasterKeyLength{ 16u };
-	static constexpr size_t SrtpAesGcm128MasterSaltLength{ 12u };
+	static constexpr size_t SrtpAesGcm128MasterKeyLength{ 16 };
+	static constexpr size_t SrtpAesGcm128MasterSaltLength{ 12 };
 	static constexpr size_t SrtpAesGcm128MasterLength{ SrtpAesGcm128MasterKeyLength +
 	                                                   SrtpAesGcm128MasterSaltLength };
 
@@ -726,7 +729,9 @@ namespace RTC
 	/* Instance methods. */
 
 	DtlsTransport::DtlsTransport(Listener* listener, SharedInterface* shared)
-	  : listener(listener), shared(shared), ssl(SSL_new(DtlsTransport::sslCtx))
+	  : listener(listener),
+	    ssl(SSL_new(DtlsTransport::sslCtx)),
+	    timer(shared->CreateTimer(this, "dtls-transport"))
 	{
 		MS_TRACE();
 
@@ -765,8 +770,8 @@ namespace RTC
 
 		// Set the MTU so that we don't send packets that are too large with no
 		// fragmentation.
-		SSL_set_mtu(this->ssl, DtlsMtu);
-		DTLS_set_link_mtu(this->ssl, DtlsMtu);
+		SSL_set_mtu(this->ssl, static_cast<long>(RTC::Consts::OutgoingDtlsPacketMaxSize));
+		DTLS_set_link_mtu(this->ssl, static_cast<long>(RTC::Consts::OutgoingDtlsPacketMaxSize));
 
 		// We want to monitor OpenSSL write operations into our |sslBioToNetwork|
 		// buffer so we can immediately send those DTLS bytes (containing full DTLS
@@ -778,9 +783,6 @@ namespace RTC
 
 		// Set callback handler for setting DTLS timer interval.
 		DTLS_set_timer_cb(this->ssl, onSslDtlsTimer);
-
-		// Set the DTLS timer.
-		this->timer = this->shared->CreateTimer(this, "dtls-transport");
 
 		return;
 
@@ -826,9 +828,6 @@ namespace RTC
 			this->sslBioFromNetwork = nullptr;
 			this->sslBioToNetwork   = nullptr;
 		}
-
-		// Close the DTLS timer.
-		delete this->timer;
 	}
 
 	void DtlsTransport::Dump(int indentation) const
@@ -1286,7 +1285,7 @@ namespace RTC
 		{
 			MS_DEBUG_DEV("timeout is 0, calling OnTimer() callback directly");
 
-			OnTimer(this->timer);
+			OnTimer(this->timer.get());
 
 			return true;
 		}
@@ -1472,7 +1471,7 @@ namespace RTC
 
 		BIO_get_mem_ptr(bio, std::addressof(mem));
 
-		if (!mem || !mem->data || mem->length == 0u)
+		if (!mem || !mem->data || mem->length == 0)
 		{
 			LOG_OPENSSL_ERROR("BIO_get_mem_ptr() failed");
 

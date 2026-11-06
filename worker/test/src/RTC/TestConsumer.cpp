@@ -1,10 +1,10 @@
+#include "common.hpp"
 #include "FBS/rtpParameters.h"
 #include "FBS/transport.h"
 #include "RTC/Consumer.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RTP/RtpStream.hpp"
 #include "RTC/RTP/RtpStreamRecv.hpp"
-#include "RTC/RTP/SharedPacket.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "flatbuffers/buffer.h"
 #include "mocks/include/MockShared.hpp"
@@ -55,9 +55,6 @@ namespace
 		}
 		void OnConsumerKeyFrameRequested(RTC::Consumer* consumer, uint32_t mappedSsrc) final {};
 		void OnConsumerNeedBitrateChange(RTC::Consumer* consumer) final {};
-#ifndef MS_USE_BUILTIN_BWE
-		void OnConsumerNeedZeroBitrate(RTC::Consumer* consumer) final {};
-#endif
 		void OnConsumerProducerClosed(RTC::Consumer* consumer) final {};
 
 	public:
@@ -149,7 +146,7 @@ namespace
 		const auto* consumeRequest = flatbuffers::GetRoot<FBS::Transport::ConsumeRequest>(buf);
 
 		return std::make_unique<RTC::Consumer>(
-		  &shared,
+		  std::addressof(shared),
 		  consumeRequest->consumerId()->str(),
 		  consumeRequest->producerId()->str(),
 		  listener,
@@ -162,7 +159,7 @@ namespace
 		RTC::RTP::RtpStream::Params params;
 
 		return std::make_unique<RTC::RTP::RtpStreamRecv>(
-		  &streamRecvListener, std::addressof(shared), params, 0u, false);
+		  std::addressof(streamRecvListener), std::addressof(shared), params, 0, false);
 	}
 
 	/**
@@ -181,16 +178,16 @@ namespace
 			// there is no associated Producer).
 			const std::vector<uint8_t> scores{ 10 };
 
-			consumer->ProducerRtpStreamScores(&scores);
+			consumer->ProducerRtpStreamScores(std::addressof(scores));
 
 			// NOTE: mappedSsrc here MUST be 1234567890 (otherwise Consumer will crash).
 			// This is guaranteed by Producer class, however here we must do it manually.
 			consumer->ProducerNewRtpStream(rtpStream.get(), 1234567890);
 		}
 
-		std::unique_ptr<ConsumerListener> listener;
-		std::unique_ptr<RTC::Consumer> consumer;
-		std::unique_ptr<RTC::RTP::RtpStreamRecv> rtpStream;
+		const std::unique_ptr<ConsumerListener> listener;
+		const std::unique_ptr<RTC::Consumer> consumer;
+		const std::unique_ptr<RTC::RTP::RtpStreamRecv> rtpStream;
 	};
 } // namespace
 
@@ -248,7 +245,7 @@ SCENARIO("Consumer with SimpleProducerStreamManager", "[rtp][consumer]")
 	{
 		Fixture fixture;
 		auto* packet = RTC::RTP::Packet::Parse(buffer, originalPacketLength + 64);
-		RTC::RTP::SharedPacket sharedPacket(packet);
+		std::shared_ptr<RTC::RTP::Packet> sharedPacket{ nullptr };
 
 		packet->SetPayloadType(payloadType);
 
@@ -267,7 +264,7 @@ SCENARIO("Consumer with SimpleProducerStreamManager", "[rtp][consumer]")
 		dynamic_cast<RTC::Consumer*>(fixture.consumer.get())->TransportConnected();
 
 		auto* packet = RTC::RTP::Packet::Parse(buffer, originalPacketLength + 64);
-		RTC::RTP::SharedPacket sharedPacket(packet);
+		std::shared_ptr<RTC::RTP::Packet> sharedPacket{ nullptr };
 
 		packet->SetPayloadType(payloadType + 1);
 
@@ -285,7 +282,7 @@ SCENARIO("Consumer with SimpleProducerStreamManager", "[rtp][consumer]")
 		dynamic_cast<RTC::Consumer*>(fixture.consumer.get())->TransportConnected();
 
 		auto* packet = RTC::RTP::Packet::Parse(buffer, originalPacketLength + 0);
-		RTC::RTP::SharedPacket sharedPacket(packet);
+		std::shared_ptr<RTC::RTP::Packet> sharedPacket{ nullptr };
 
 		packet->SetPayloadType(payloadType + 1);
 
@@ -303,30 +300,32 @@ SCENARIO("Consumer with SimpleProducerStreamManager", "[rtp][consumer]")
 		dynamic_cast<RTC::Consumer*>(fixture.consumer.get())->TransportConnected();
 
 		auto* packet = RTC::RTP::Packet::Parse(buffer, originalPacketLength + 64);
-		RTC::RTP::SharedPacket sharedPacket(packet);
+		std::shared_ptr<RTC::RTP::Packet> sharedPacket{ nullptr };
 
 		uint16_t seq{ 1 };
 
+		// NOTE: The Router creates a new shared packet for every packet received
+		// from the Producer, so we must reset it before every send (the Consumer
+		// fills it with a clone of the packet if it stores it).
 		packet->SetSequenceNumber(seq++);
 		packet->SetPayloadType(payloadType);
-		sharedPacket.Assign(packet);
 
 		fixture.consumer->SendRtpPacket(packet, sharedPacket);
 
 		packet->SetSequenceNumber(seq++);
-		sharedPacket.Assign(packet);
+		sharedPacket.reset();
 
 		fixture.consumer->SendRtpPacket(packet, sharedPacket);
 
 		packet->SetSequenceNumber(seq++);
-		sharedPacket.Assign(packet);
+		sharedPacket.reset();
 
 		fixture.consumer->SendRtpPacket(packet, sharedPacket);
 
 		packet->SetSequenceNumber(seq++);
 		// Remove the payload so it won't be sent.
 		packet->RemovePayload();
-		sharedPacket.Assign(packet);
+		sharedPacket.reset();
 
 		fixture.consumer->SendRtpPacket(packet, sharedPacket);
 

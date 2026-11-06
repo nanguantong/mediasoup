@@ -1,11 +1,12 @@
 #include "common.hpp"
 #include "RTC/BWE/SenderTransportCongestionController.hpp"
 #include "RTC/Consts.hpp"
-#include "RTC/RTCP/FeedbackRtpTransport.hpp"
+#include "RTC/NEW_RTCP/packet/TransportWideCcPacket.hpp"
 #include "RTC/RTP/HeaderExtensionIds.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "Utils.hpp"
+#include "test/include/RTC/NEW_RTCP/rtcpCommon.hpp"
 #include "test/include/RTC/RTP/rtpCommon.hpp"
 #include "mocks/include/MockShared.hpp"
 #include <catch2/catch_test_macros.hpp>
@@ -43,10 +44,15 @@ SCENARIO("BWE SenderTransportCongestionController", "[bwe][sendertransportconges
 		void OnSenderTransportCongestionControllerSendRtpProbePacket(
 		  RTC::BWE::SenderTransportCongestionController* /*senderTransportCongestionController*/,
 		  RTC::RTP::Packet* packet,
-		  int64_t sequenceNumber) override
+		  std::optional<int64_t> sequenceNumber) override
 		{
+			REQUIRE(sequenceNumber.has_value());
+
+			// NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+			const int64_t sequenceNumberValue = sequenceNumber.value();
+
 			this->sentLengths.push_back(packet->GetLength());
-			this->sentSequenceNumbers.push_back(sequenceNumber);
+			this->sentSequenceNumbers.push_back(sequenceNumberValue);
 
 			// What goes on the wire has to be what we were handed, since that is what
 			// the remote endpoint will report back about.
@@ -55,7 +61,7 @@ SCENARIO("BWE SenderTransportCongestionController", "[bwe][sendertransportconges
 
 			this->sentWithExtensions.push_back(
 			  packet->ReadTransportWideCc01(wideSeqNumber) && packet->ReadAbsSendTime(absSendTime) &&
-			  wideSeqNumber == static_cast<uint16_t>(sequenceNumber));
+			  wideSeqNumber == static_cast<uint16_t>(sequenceNumberValue));
 		}
 
 	public:
@@ -80,6 +86,10 @@ SCENARIO("BWE SenderTransportCongestionController", "[bwe][sendertransportconges
 	  std::addressof(shared),
 	  { .startBitrate = StartBitrate, .minBitrate = MinBitrate, .maxBitrate = MaxBitrate });
 
+	// Every scenario below is written for a peer that negotiated transport-cc,
+	// which is what makes its packets worth taking note of.
+	senderTransportCongestionController.SetTransportCcFeedbackSupported(true);
+
 	// Builds a packet carrying both extensions with no value in either, which is
 	// what the sending side hands over.
 	//
@@ -101,7 +111,7 @@ SCENARIO("BWE SenderTransportCongestionController", "[bwe][sendertransportconges
 			{ RTC::RtpHeaderExtensionUri::Type::ABS_SEND_TIME,        AbsSendTimeId, /*len*/ 3, rtpCommon::DataBuffer }
 		};
 
-		packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions);
+		REQUIRE(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions) == true);
 
 		RTC::RTP::HeaderExtensionIds headerExtensionIds;
 
@@ -128,26 +138,31 @@ SCENARIO("BWE SenderTransportCongestionController", "[bwe][sendertransportconges
 
 	// Builds the feedback a receiver would send, reporting the given arrival
 	// times. The sequence numbers left out of them are reported as lost.
+	//
+	// NOTE: Every scenario reuses `rtcpCommon::FactoryBuffer`, so the returned
+	// feedback is only valid until the next call.
 	const auto createFeedback = [](
 	                              uint16_t baseSequenceNumber,
 	                              int64_t baseTimeUs,
 	                              const std::vector<std::pair<uint16_t, int64_t>>& receivedPackets)
-	  -> std::unique_ptr<RTC::RTCP::FeedbackRtpTransportPacket>
+	  -> std::unique_ptr<RTC::NEW_RTCP::TransportWideCcPacket>
 	{
 		constexpr uint32_t SenderSsrc{ 2222 };
 		constexpr uint32_t MediaSsrc{ 3333 };
 		constexpr size_t RtcpMtu{ 1200 };
 
-		auto feedback = std::make_unique<RTC::RTCP::FeedbackRtpTransportPacket>(SenderSsrc, MediaSsrc);
+		std::unique_ptr<RTC::NEW_RTCP::TransportWideCcPacket> feedback(
+		  RTC::NEW_RTCP::TransportWideCcPacket::Factory(
+		    rtcpCommon::FactoryBuffer, RtcpMtu, /*includeDeltas*/ true));
 
+		feedback->SetSenderSsrc(SenderSsrc);
+		feedback->SetMediaSsrc(MediaSsrc);
 		feedback->SetBase(baseSequenceNumber, baseTimeUs);
 
 		for (const auto& [sequenceNumber, receivedAtUs] : receivedPackets)
 		{
-			feedback->AddPacket(sequenceNumber, receivedAtUs, RtcpMtu);
+			REQUIRE(feedback->AddReceivedRtpPacket(sequenceNumber, receivedAtUs));
 		}
-
-		feedback->Finish();
 
 		return feedback;
 	};
@@ -228,6 +243,7 @@ SCENARIO("BWE SenderTransportCongestionController", "[bwe][sendertransportconges
 		  std::addressof(burstShared),
 		  { .startBitrate = StartBitrate, .minBitrate = MinBitrate, .maxBitrate = MaxBitrate });
 
+		burstController.SetTransportCcFeedbackSupported(true);
 		burstController.SetPacketOverhead(packetOverhead);
 
 		if (desiredBitrate != 0)

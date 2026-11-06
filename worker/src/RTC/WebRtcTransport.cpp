@@ -5,6 +5,7 @@
 #include "FBS/webRtcTransport.h"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
+#include "RTC/Consts.hpp"
 #include "RTC/PortManager.hpp"
 #include "Settings.hpp"
 #include "Utils.hpp"
@@ -50,7 +51,7 @@ namespace RTC
 		{
 			const auto* listenIndividual = options->listen_as<FBS::WebRtcTransport::ListenIndividual>();
 			const auto* listenInfos      = listenIndividual->listenInfos();
-			uint16_t iceLocalPreferenceDecrement{ 0u };
+			uint16_t iceLocalPreferenceDecrement{ 0 };
 
 			// Multiply by 2 to preallocate space in case |exposeInternalIp| is set.
 			this->iceCandidates.reserve(listenInfos->size() * 2);
@@ -234,7 +235,7 @@ namespace RTC
 			auto iceConsentTimeoutSec = options->iceConsentTimeout();
 
 			// Create a ICE server.
-			this->iceServer = new RTC::ICE::IceServer(
+			this->iceServer = std::make_unique<RTC::ICE::IceServer>(
 			  this,
 			  this->shared,
 			  Utils::Crypto::GetRandomString(32),
@@ -242,7 +243,7 @@ namespace RTC
 			  iceConsentTimeoutSec);
 
 			// Create a DTLS transport.
-			this->dtlsTransport = new RTC::DtlsTransport(this, this->shared);
+			this->dtlsTransport = std::make_unique<RTC::DtlsTransport>(this, this->shared);
 
 			// NOTE: This may throw.
 			this->shared->GetChannelMessageRegistrator()->RegisterHandler(
@@ -250,15 +251,13 @@ namespace RTC
 			  /*channelRequestHandler*/ this,
 			  /*channelNotificationHandler*/ this);
 		}
-		catch (const MediaSoupError& error)
+		catch (const MediaSoupError&)
 		{
 			// Must delete everything since the destructor won't be called.
 
-			delete this->dtlsTransport;
-			this->dtlsTransport = nullptr;
+			this->dtlsTransport.reset();
 
-			delete this->iceServer;
-			this->iceServer = nullptr;
+			this->iceServer.reset();
 
 			for (auto& kv : this->udpSockets)
 			{
@@ -311,7 +310,7 @@ namespace RTC
 			auto iceConsentTimeoutSec = options->iceConsentTimeout();
 
 			// Create a ICE server.
-			this->iceServer = new RTC::ICE::IceServer(
+			this->iceServer = std::make_unique<RTC::ICE::IceServer>(
 			  this,
 			  this->shared,
 			  Utils::Crypto::GetRandomString(32),
@@ -319,7 +318,7 @@ namespace RTC
 			  iceConsentTimeoutSec);
 
 			// Create a DTLS transport.
-			this->dtlsTransport = new RTC::DtlsTransport(this, this->shared);
+			this->dtlsTransport = std::make_unique<RTC::DtlsTransport>(this, this->shared);
 
 			// Notify the webRtcTransportListener.
 			this->webRtcTransportListener->OnWebRtcTransportCreated(this);
@@ -330,15 +329,13 @@ namespace RTC
 			  /*channelRequestHandler*/ this,
 			  /*channelNotificationHandler*/ this);
 		}
-		catch (const MediaSoupError& error)
+		catch (const MediaSoupError&)
 		{
 			// Must delete everything since the destructor won't be called.
 
-			delete this->dtlsTransport;
-			this->dtlsTransport = nullptr;
+			this->dtlsTransport.reset();
 
-			delete this->iceServer;
-			this->iceServer = nullptr;
+			this->iceServer.reset();
 
 			throw;
 		}
@@ -357,11 +354,9 @@ namespace RTC
 
 		// Must delete the DTLS transport first since it will generate a DTLS alert
 		// to be sent.
-		delete this->dtlsTransport;
-		this->dtlsTransport = nullptr;
+		this->dtlsTransport.reset();
 
-		delete this->iceServer;
-		this->iceServer = nullptr;
+		this->iceServer.reset();
 
 		for (auto& kv : this->udpSockets)
 		{
@@ -381,11 +376,9 @@ namespace RTC
 
 		this->iceCandidates.clear();
 
-		delete this->srtpSendSession;
-		this->srtpSendSession = nullptr;
+		this->srtpSendSession.reset();
 
-		delete this->srtpRecvSession;
-		this->srtpRecvSession = nullptr;
+		this->srtpRecvSession.reset();
 
 		// Notify the webRtcTransportListener.
 		if (this->webRtcTransportListener)
@@ -670,7 +663,7 @@ namespace RTC
 		this->iceServer->RemoveTuple(tuple);
 	}
 
-	inline bool WebRtcTransport::IsConnected() const
+	bool WebRtcTransport::IsConnected() const
 	{
 		MS_TRACE();
 
@@ -680,7 +673,7 @@ namespace RTC
 		  this->dtlsTransport->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED);
 	}
 
-	inline size_t WebRtcTransport::GetPacketOverhead() const
+	size_t WebRtcTransport::GetPacketOverhead() const
 	{
 		MS_TRACE();
 
@@ -844,6 +837,37 @@ namespace RTC
 		RTC::Transport::DataSent(len);
 	}
 
+	void WebRtcTransport::SendRtcpPacket(const RTC::NEW_RTCP::Packet* packet)
+	{
+		MS_TRACE();
+
+		if (!IsConnected())
+		{
+			return;
+		}
+
+		const uint8_t* data = packet->GetBuffer();
+		auto len            = packet->GetLength();
+
+		// Ensure there is sending SRTP session.
+		if (!this->srtpSendSession)
+		{
+			MS_WARN_DEV("ignoring RTCP packet due to non sending SRTP session");
+
+			return;
+		}
+
+		if (!this->srtpSendSession->EncryptRtcp(std::addressof(data), std::addressof(len)))
+		{
+			return;
+		}
+
+		this->iceServer->GetSelectedTuple()->Send(data, len);
+
+		// Increase send transmission.
+		RTC::Transport::DataSent(len);
+	}
+
 	void WebRtcTransport::SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet)
 	{
 		MS_TRACE();
@@ -919,7 +943,7 @@ namespace RTC
 		}
 	}
 
-	inline void WebRtcTransport::OnPacketReceived(
+	void WebRtcTransport::OnPacketReceived(
 	  RTC::TransportTuple* tuple, const uint8_t* data, size_t len, size_t bufferLen, int64_t receivedAtUs)
 	{
 		MS_TRACE();
@@ -953,7 +977,7 @@ namespace RTC
 		}
 	}
 
-	inline void WebRtcTransport::OnStunDataReceived(
+	void WebRtcTransport::OnStunDataReceived(
 	  RTC::TransportTuple* tuple, const uint8_t* data, size_t len, int64_t /*receivedAtUs*/)
 	{
 		MS_TRACE();
@@ -973,7 +997,7 @@ namespace RTC
 		delete packet;
 	}
 
-	inline void WebRtcTransport::OnDtlsDataReceived(
+	void WebRtcTransport::OnDtlsDataReceived(
 	  const RTC::TransportTuple* tuple, const uint8_t* data, size_t len, int64_t receivedAtUs)
 	{
 		MS_TRACE();
@@ -1006,10 +1030,21 @@ namespace RTC
 		}
 	}
 
-	inline void WebRtcTransport::OnRtpDataReceived(
+	void WebRtcTransport::OnRtpDataReceived(
 	  RTC::TransportTuple* tuple, const uint8_t* data, size_t len, size_t bufferLen, int64_t receivedAtUs)
 	{
 		MS_TRACE();
+
+		if (len > RTC::Consts::IncomingRtpPacketMaxSize)
+		{
+			MS_WARN_TAG(
+			  rtp,
+			  "ignoring RTP packet exceeding maximum size [len:%zu, max len:%zu]",
+			  len,
+			  RTC::Consts::IncomingRtpPacketMaxSize);
+
+			return;
+		}
 
 		// Ensure DTLS is connected.
 		if (this->dtlsTransport->GetState() != RTC::DtlsTransport::DtlsState::CONNECTED)
@@ -1075,10 +1110,21 @@ namespace RTC
 		RTC::Transport::ReceiveRtpPacket(packet, receivedAtUs);
 	}
 
-	inline void WebRtcTransport::OnRtcpDataReceived(
+	void WebRtcTransport::OnRtcpDataReceived(
 	  RTC::TransportTuple* tuple, const uint8_t* data, size_t len, int64_t receivedAtUs)
 	{
 		MS_TRACE();
+
+		if (len > RTC::Consts::IncomingRtcpPacketMaxSize)
+		{
+			MS_WARN_TAG(
+			  rtcp,
+			  "ignoring RTCP packet exceeding maximum size [len:%zu, max len:%zu]",
+			  len,
+			  RTC::Consts::IncomingRtcpPacketMaxSize);
+
+			return;
+		}
 
 		// Ensure DTLS is connected.
 		if (this->dtlsTransport->GetState() != RTC::DtlsTransport::DtlsState::CONNECTED)
@@ -1123,7 +1169,7 @@ namespace RTC
 		RTC::Transport::ReceiveRtcpPacket(packet, receivedAtUs);
 	}
 
-	inline void WebRtcTransport::OnUdpSocketPacketReceived(
+	void WebRtcTransport::OnUdpSocketPacketReceived(
 	  RTC::UdpSocket* socket,
 	  const uint8_t* data,
 	  size_t len,
@@ -1138,17 +1184,25 @@ namespace RTC
 		OnPacketReceived(std::addressof(tuple), data, len, bufferLen, receivedAtUs);
 	}
 
-	inline void WebRtcTransport::OnRtcTcpConnectionClosed(
+	void WebRtcTransport::OnRtcTcpConnectionClosed(
 	  RTC::TcpServer* /*tcpServer*/, RTC::TcpConnection* connection)
 	{
 		MS_TRACE();
+
+		// In standalone WebRtcTransport (without WebRtcServer), the IceServer
+		// destructor closes the TCP connections, which invokes this callback once
+		// the iceServer unique_ptr has already been reset.
+		if (!this->iceServer)
+		{
+			return;
+		}
 
 		RTC::TransportTuple tuple(connection);
 
 		this->iceServer->RemoveTuple(std::addressof(tuple));
 	}
 
-	inline void WebRtcTransport::OnTcpConnectionPacketReceived(
+	void WebRtcTransport::OnTcpConnectionPacketReceived(
 	  RTC::TcpConnection* connection, const uint8_t* data, size_t len, size_t bufferLen, int64_t receivedAtUs)
 	{
 		MS_TRACE();
@@ -1158,7 +1212,7 @@ namespace RTC
 		OnPacketReceived(std::addressof(tuple), data, len, bufferLen, receivedAtUs);
 	}
 
-	inline void WebRtcTransport::OnIceServerSendStunPacket(
+	void WebRtcTransport::OnIceServerSendStunPacket(
 	  const RTC::ICE::IceServer* /*iceServer*/,
 	  const RTC::ICE::StunPacket* packet,
 	  RTC::TransportTuple* tuple)
@@ -1172,7 +1226,7 @@ namespace RTC
 		RTC::Transport::DataSent(packet->GetLength());
 	}
 
-	inline void WebRtcTransport::OnIceServerLocalUsernameFragmentAdded(
+	void WebRtcTransport::OnIceServerLocalUsernameFragmentAdded(
 	  const RTC::ICE::IceServer* /*iceServer*/, const std::string& usernameFragment)
 	{
 		MS_TRACE();
@@ -1184,7 +1238,7 @@ namespace RTC
 		}
 	}
 
-	inline void WebRtcTransport::OnIceServerLocalUsernameFragmentRemoved(
+	void WebRtcTransport::OnIceServerLocalUsernameFragmentRemoved(
 	  const RTC::ICE::IceServer* /*iceServer*/, const std::string& usernameFragment)
 	{
 		MS_TRACE();
@@ -1196,7 +1250,7 @@ namespace RTC
 		}
 	}
 
-	inline void WebRtcTransport::OnIceServerTupleAdded(
+	void WebRtcTransport::OnIceServerTupleAdded(
 	  const RTC::ICE::IceServer* /*iceServer*/, RTC::TransportTuple* tuple)
 	{
 		MS_TRACE();
@@ -1207,7 +1261,7 @@ namespace RTC
 		}
 	}
 
-	inline void WebRtcTransport::OnIceServerTupleRemoved(
+	void WebRtcTransport::OnIceServerTupleRemoved(
 	  const RTC::ICE::IceServer* /*iceServer*/, RTC::TransportTuple* tuple)
 	{
 		MS_TRACE();
@@ -1224,7 +1278,7 @@ namespace RTC
 		}
 	}
 
-	inline void WebRtcTransport::OnIceServerSelectedTuple(
+	void WebRtcTransport::OnIceServerSelectedTuple(
 	  const RTC::ICE::IceServer* /*iceServer*/, RTC::TransportTuple* /*tuple*/)
 	{
 		MS_TRACE();
@@ -1250,9 +1304,13 @@ namespace RTC
 		  FBS::Notification::Event::WEBRTCTRANSPORT_ICE_SELECTED_TUPLE_CHANGE,
 		  FBS::Notification::Body::WebRtcTransport_IceSelectedTupleChangeNotification,
 		  notification);
+
+		// The selected tuple may change while connected, without going through
+		// ICE disconnected, so the parent class must be told here.
+		RTC::Transport::RouteChanged();
 	}
 
-	inline void WebRtcTransport::OnIceServerConnected(const RTC::ICE::IceServer* /*iceServer*/)
+	void WebRtcTransport::OnIceServerConnected(const RTC::ICE::IceServer* /*iceServer*/)
 	{
 		MS_TRACE();
 
@@ -1279,7 +1337,7 @@ namespace RTC
 		}
 	}
 
-	inline void WebRtcTransport::OnIceServerCompleted(const RTC::ICE::IceServer* /*iceServer*/)
+	void WebRtcTransport::OnIceServerCompleted(const RTC::ICE::IceServer* /*iceServer*/)
 	{
 		MS_TRACE();
 
@@ -1306,7 +1364,7 @@ namespace RTC
 		}
 	}
 
-	inline void WebRtcTransport::OnIceServerDisconnected(const RTC::ICE::IceServer* /*iceServer*/)
+	void WebRtcTransport::OnIceServerDisconnected(const RTC::ICE::IceServer* /*iceServer*/)
 	{
 		MS_TRACE();
 
@@ -1330,7 +1388,7 @@ namespace RTC
 		}
 	}
 
-	inline void WebRtcTransport::OnDtlsTransportConnecting(const RTC::DtlsTransport* /*dtlsTransport*/)
+	void WebRtcTransport::OnDtlsTransportConnecting(const RTC::DtlsTransport* /*dtlsTransport*/)
 	{
 		MS_TRACE();
 
@@ -1348,7 +1406,7 @@ namespace RTC
 		  dtlsStateChangeOffset);
 	}
 
-	inline void WebRtcTransport::OnDtlsTransportConnected(
+	void WebRtcTransport::OnDtlsTransportConnected(
 	  const RTC::DtlsTransport* /*dtlsTransport*/,
 	  RTC::SrtpSession::CryptoSuite srtpCryptoSuite,
 	  uint8_t* srtpLocalKey,
@@ -1362,15 +1420,13 @@ namespace RTC
 		MS_DEBUG_TAG(dtls, "DTLS connected");
 
 		// Close it if it was already set and update it.
-		delete this->srtpSendSession;
-		this->srtpSendSession = nullptr;
+		this->srtpSendSession.reset();
 
-		delete this->srtpRecvSession;
-		this->srtpRecvSession = nullptr;
+		this->srtpRecvSession.reset();
 
 		try
 		{
-			this->srtpSendSession = new RTC::SrtpSession(
+			this->srtpSendSession = std::make_unique<RTC::SrtpSession>(
 			  RTC::SrtpSession::Type::OUTBOUND, srtpCryptoSuite, srtpLocalKey, srtpLocalKeyLen);
 		}
 		catch (const MediaSoupError& error)
@@ -1380,7 +1436,7 @@ namespace RTC
 
 		try
 		{
-			this->srtpRecvSession = new RTC::SrtpSession(
+			this->srtpRecvSession = std::make_unique<RTC::SrtpSession>(
 			  RTC::SrtpSession::Type::INBOUND, srtpCryptoSuite, srtpRemoteKey, srtpRemoteKeyLen);
 
 			// Notify the Node WebRtcTransport.
@@ -1402,12 +1458,11 @@ namespace RTC
 		{
 			MS_ERROR("error creating SRTP receiving session: %s", error.what());
 
-			delete this->srtpSendSession;
-			this->srtpSendSession = nullptr;
+			this->srtpSendSession.reset();
 		}
 	}
 
-	inline void WebRtcTransport::OnDtlsTransportFailed(const RTC::DtlsTransport* /*dtlsTransport*/)
+	void WebRtcTransport::OnDtlsTransportFailed(const RTC::DtlsTransport* /*dtlsTransport*/)
 	{
 		MS_TRACE();
 
@@ -1425,7 +1480,7 @@ namespace RTC
 		  dtlsStateChangeOffset);
 	}
 
-	inline void WebRtcTransport::OnDtlsTransportClosed(const RTC::DtlsTransport* /*dtlsTransport*/)
+	void WebRtcTransport::OnDtlsTransportClosed(const RTC::DtlsTransport* /*dtlsTransport*/)
 	{
 		MS_TRACE();
 
@@ -1446,7 +1501,7 @@ namespace RTC
 		RTC::Transport::Disconnected();
 	}
 
-	inline void WebRtcTransport::OnDtlsTransportSendData(
+	void WebRtcTransport::OnDtlsTransportSendData(
 	  const RTC::DtlsTransport* /*dtlsTransport*/, const uint8_t* data, size_t len)
 	{
 		MS_TRACE();
@@ -1464,7 +1519,7 @@ namespace RTC
 		RTC::Transport::DataSent(len);
 	}
 
-	inline void WebRtcTransport::OnDtlsTransportApplicationDataReceived(
+	void WebRtcTransport::OnDtlsTransportApplicationDataReceived(
 	  const RTC::DtlsTransport* /*dtlsTransport*/, const uint8_t* data, size_t len, int64_t receivedAtUs)
 	{
 		MS_TRACE();

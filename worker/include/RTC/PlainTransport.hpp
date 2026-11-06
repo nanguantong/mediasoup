@@ -1,8 +1,10 @@
 #ifndef MS_RTC_PLAIN_TRANSPORT_HPP
 #define MS_RTC_PLAIN_TRANSPORT_HPP
 
+#include "common.hpp"
 #include "FBS/plainTransport.h"
 #include "handles/SendCallbacks.hpp"
+#include "RTC/NEW_RTCP/packet/Packet.hpp"
 #include "RTC/SrtpSession.hpp"
 #include "RTC/Transport.hpp"
 #include "RTC/TransportTuple.hpp"
@@ -47,6 +49,7 @@ namespace RTC
 		bool IsSrtpReady() const;
 		void SendRtpPacket(RTC::Consumer* consumer, RTC::RTP::Packet* packet, onSendCallback cb = {}) override;
 		void SendRtcpPacket(RTC::RTCP::Packet* packet) override;
+		void SendRtcpPacket(const RTC::NEW_RTCP::Packet* packet) override;
 		void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) override;
 		void SendMessage(
 		  RTC::DataConsumer* dataConsumer,
@@ -86,17 +89,17 @@ namespace RTC
 
 	private:
 		// Allocated by this.
-		RTC::UdpSocket* udpSocket{ nullptr };
-		RTC::UdpSocket* rtcpUdpSocket{ nullptr };
-		RTC::TransportTuple* tuple{ nullptr };
-		RTC::TransportTuple* rtcpTuple{ nullptr };
-		RTC::SrtpSession* srtpRecvSession{ nullptr };
-		RTC::SrtpSession* srtpSendSession{ nullptr };
+		std::unique_ptr<RTC::UdpSocket> udpSocket;
+		std::unique_ptr<RTC::UdpSocket> rtcpUdpSocket;
+		std::unique_ptr<RTC::TransportTuple> tuple;
+		std::unique_ptr<RTC::TransportTuple> rtcpTuple;
+		std::unique_ptr<RTC::SrtpSession> srtpRecvSession;
+		std::unique_ptr<RTC::SrtpSession> srtpSendSession;
 		// Others.
 		ListenInfo listenInfo;
 		ListenInfo rtcpListenInfo;
-		bool rtcpMux{ true };
-		bool comedia{ false };
+		const bool rtcpMux;
+		const bool comedia;
 		sockaddr_storage remoteAddrStorage{};
 		sockaddr_storage rtcpRemoteAddrStorage{};
 		RTC::SrtpSession::CryptoSuite srtpCryptoSuite{

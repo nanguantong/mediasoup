@@ -1,8 +1,10 @@
 #ifndef MS_RTC_PIPE_TRANSPORT_HPP
 #define MS_RTC_PIPE_TRANSPORT_HPP
 
+#include "common.hpp"
 #include "FBS/pipeTransport.h"
 #include "handles/SendCallbacks.hpp"
+#include "RTC/NEW_RTCP/packet/Packet.hpp"
 #include "RTC/SrtpSession.hpp"
 #include "RTC/Transport.hpp"
 #include "RTC/TransportTuple.hpp"
@@ -54,6 +56,7 @@ namespace RTC
 		bool HasSrtp() const;
 		void SendRtpPacket(RTC::Consumer* consumer, RTC::RTP::Packet* packet, onSendCallback cb = {}) override;
 		void SendRtcpPacket(RTC::RTCP::Packet* packet) override;
+		void SendRtcpPacket(const RTC::NEW_RTCP::Packet* packet) override;
 		void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) override;
 		void SendMessage(
 		  RTC::DataConsumer* dataConsumer,
@@ -91,14 +94,14 @@ namespace RTC
 
 	private:
 		// Allocated by this.
-		RTC::UdpSocket* udpSocket{ nullptr };
-		RTC::TransportTuple* tuple{ nullptr };
-		RTC::SrtpSession* srtpRecvSession{ nullptr };
-		RTC::SrtpSession* srtpSendSession{ nullptr };
+		std::unique_ptr<RTC::UdpSocket> udpSocket;
+		std::unique_ptr<RTC::TransportTuple> tuple;
+		std::unique_ptr<RTC::SrtpSession> srtpRecvSession;
+		std::unique_ptr<RTC::SrtpSession> srtpSendSession;
 		// Others.
 		ListenInfo listenInfo;
 		sockaddr_storage remoteAddrStorage{};
-		bool rtx{ false };
+		const bool rtx;
 		std::string srtpKey;
 		std::string srtpKeyBase64;
 	};

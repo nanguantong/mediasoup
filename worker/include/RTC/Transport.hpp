@@ -8,9 +8,13 @@
 #include "FBS/transport.h"
 #include "handles/SendCallbacks.hpp"
 #include "handles/TimerHandleInterface.hpp"
+#include "RTC/BWE/BitrateAllocator.hpp"
+#include "RTC/BWE/ReceiverTransportCongestionController.hpp"
+#include "RTC/BWE/SenderTransportCongestionController.hpp"
 #include "RTC/Consumer.hpp"
 #include "RTC/DataConsumer.hpp"
 #include "RTC/DataProducer.hpp"
+#include "RTC/NEW_RTCP/packet/Packet.hpp"
 #include "RTC/Producer.hpp"
 #include "RTC/RTCP/CompoundPacket.hpp"
 #include "RTC/RTCP/Packet.hpp"
@@ -25,14 +29,6 @@
 #include "RTC/SCTP/public/Message.hpp"
 #include "RTC/SCTP/public/SctpTypes.hpp"
 #include "RTC/SctpListener.hpp"
-#ifdef MS_USE_BUILTIN_BWE
-#include "RTC/BWE/BitrateAllocator.hpp"
-#include "RTC/BWE/ReceiverTransportCongestionController.hpp"
-#include "RTC/BWE/SenderTransportCongestionController.hpp"
-#else
-#include "RTC/TransportCongestionControlClient.hpp"
-#include "RTC/TransportCongestionControlServer.hpp"
-#endif
 #include "SharedInterface.hpp"
 #ifdef MS_RTC_LOGGER_SEND_BURST
 #include "RTC/RtcLogger/SendBurst.hpp"
@@ -49,13 +45,8 @@ namespace RTC
 	                  public RTC::DataConsumer::Listener,
 	                  public RTC::SCTP::AssociationListenerInterface,
 	                  public RTC::RttCalculator::Listener,
-#ifdef MS_USE_BUILTIN_BWE
 	                  public RTC::BWE::SenderTransportCongestionController::Listener,
 	                  public RTC::BWE::ReceiverTransportCongestionController::Listener,
-#else
-	                  public RTC::TransportCongestionControlClient::Listener,
-	                  public RTC::TransportCongestionControlServer::Listener,
-#endif
 	                  public Channel::ChannelSocket::RequestHandler,
 	                  public Channel::ChannelSocket::NotificationHandler,
 	                  public TimerHandleInterface::Listener
@@ -199,6 +190,7 @@ namespace RTC
 		virtual void SetDestroying() final;
 		virtual void Connected() final;
 		virtual void Disconnected() final;
+		virtual void RouteChanged() final;
 		virtual void DataReceived(size_t len) final
 		{
 			this->recvTransmission.Update(len, this->shared->GetTimeMs());
@@ -248,13 +240,13 @@ namespace RTC
 		virtual void HandleRtcpPacket(RTC::RTCP::Packet* packet, int64_t receivedAtUs) final;
 		virtual void SendRtcp(int64_t nowUs) final;
 		virtual void SendRtcpPacket(RTC::RTCP::Packet* packet)                 = 0;
+		virtual void SendRtcpPacket(const RTC::NEW_RTCP::Packet* packet)       = 0;
 		virtual void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) = 0;
 		virtual void SendMessage(
 		  RTC::DataConsumer* dataConsumer, RTC::SCTP::Message message, onMessageQueuedCallback cb = {}) = 0;
 		virtual bool SendData(const uint8_t* data, size_t len) = 0;
 		virtual void RecvStreamClosed(uint32_t ssrc)           = 0;
 		virtual void SendStreamClosed(uint32_t ssrc)           = 0;
-#ifdef MS_USE_BUILTIN_BWE
 		/**
 		 * Build the sender congestion controller if this Transport may run one, is
 		 * connected and has something to send, and tell it what depends on the
@@ -286,7 +278,6 @@ namespace RTC
 		 *   the caller that whatever only applies once has to be done now.
 		 */
 		virtual bool MayCreateReceiverTransportCongestionController() final;
-#endif
 		/**
 		 * Bring the bitrate bounds and the initial available outgoing bitrate into
 		 * a set of values that make sense together.
@@ -297,18 +288,9 @@ namespace RTC
 		 */
 		virtual void MayFixBweBitrateLimits() final;
 		virtual void DistributeAvailableOutgoingBitrate() final;
-#ifdef MS_USE_BUILTIN_BWE
 		virtual void ComputeOutgoingDesiredBitrate() final;
-#else
-		virtual void ComputeOutgoingDesiredBitrate(bool forceBitrate = false) final;
-#endif
 		virtual void EmitTraceEventProbationType(RTC::RTP::Packet* packet) const final;
-#ifdef MS_USE_BUILTIN_BWE
 		virtual void EmitTraceEventBweType() const final;
-#else
-		virtual void EmitTraceEventBweType(
-		  RTC::TransportCongestionControlClient::Bitrates& bitrates) const final;
-#endif
 
 		/* Pure virtual methods inherited from RTC::Producer::Listener. */
 	public:
@@ -350,9 +332,6 @@ namespace RTC
 		void OnConsumerRetransmitRtpPacket(RTC::Consumer* consumer, RTC::RTP::Packet* packet) override;
 		void OnConsumerKeyFrameRequested(RTC::Consumer* consumer, uint32_t mappedSsrc) override;
 		void OnConsumerNeedBitrateChange(RTC::Consumer* consumer) override;
-#ifndef MS_USE_BUILTIN_BWE
-		void OnConsumerNeedZeroBitrate(RTC::Consumer* consumer) override;
-#endif
 		void OnConsumerProducerClosed(RTC::Consumer* consumer) override;
 
 		/* Pure virtual methods inherited from RTC::DataProducer::Listener. */
@@ -404,7 +383,6 @@ namespace RTC
 	public:
 		void OnRttCalculatorRttUpdated(RTC::RttCalculator* rttCalculator, int64_t avgRttMs) override;
 
-#ifdef MS_USE_BUILTIN_BWE
 		/* Pure virtual methods inherited from RTC::BWE::SenderTransportCongestionController::Listener. */
 	public:
 		void OnSenderTransportCongestionControllerTargetBitrate(
@@ -413,29 +391,13 @@ namespace RTC
 		void OnSenderTransportCongestionControllerSendRtpProbePacket(
 		  RTC::BWE::SenderTransportCongestionController* senderTransportCongestionController,
 		  RTC::RTP::Packet* packet,
-		  int64_t sequenceNumber) override;
+		  std::optional<int64_t> sequenceNumber) override;
 
 		/* Pure virtual methods inherited from RTC::BWE::ReceiverTransportCongestionController::Listener. */
 	public:
 		void OnReceiverTransportCongestionControllerSendRtcpPacket(
 		  RTC::BWE::ReceiverTransportCongestionController* receiverTransportCongestionController,
-		  RTC::RTCP::Packet* packet) override;
-#else
-		/* Pure virtual methods inherited from RTC::TransportCongestionControlClient::Listener. */
-	public:
-		void OnTransportCongestionControlClientBitrates(
-		  RTC::TransportCongestionControlClient* tccClient,
-		  RTC::TransportCongestionControlClient::Bitrates& bitrates) override;
-		void OnTransportCongestionControlClientSendRtpPacket(
-		  RTC::TransportCongestionControlClient* tccClient,
-		  RTC::RTP::Packet* packet,
-		  const webrtc::PacedPacketInfo& pacingInfo) override;
-
-		/* Pure virtual methods inherited from RTC::TransportCongestionControlServer::Listener. */
-	public:
-		void OnTransportCongestionControlServerSendRtcpPacket(
-		  RTC::TransportCongestionControlServer* tccServer, RTC::RTCP::Packet* packet) override;
-#endif
+		  const RTC::NEW_RTCP::Packet* packet) override;
 
 		/* Pure virtual methods inherited from TimerHandleInterface::Listener. */
 	public:
@@ -443,14 +405,14 @@ namespace RTC
 
 	public:
 		// Passed by argument.
-		std::string id;
+		const std::string id;
 
 	protected:
-		SharedInterface* shared{ nullptr };
+		SharedInterface* shared;
 
 	private:
 		// Passed by argument.
-		Listener* listener{ nullptr };
+		Listener* const listener;
 		// Allocated by this.
 		ankerl::unordered_dense::map<std::string, RTC::Producer*> mapProducers;
 		ankerl::unordered_dense::map<std::string, RTC::Consumer*> mapConsumers;
@@ -463,11 +425,10 @@ namespace RTC
 		// its CNAME.
 		ankerl::unordered_dense::map<std::string, RTC::RemoteCaptureTimeEstimator>
 		  mapCnameRemoteCaptureTimeEstimator;
-		TimerHandleInterface* rtcpTimer{ nullptr };
+		const std::unique_ptr<TimerHandleInterface> rtcpTimer;
 		// Allocated by this.
 		std::unique_ptr<RTC::SCTP::AssociationInterface> sctpAssociation{ nullptr };
-		bool enableBwe{ false };
-#ifdef MS_USE_BUILTIN_BWE
+		const bool enableBwe;
 		// NOTE: Shared pointer rather than unique because the send callbacks hold a
 		// weak reference to it, since they may be invoked after this Transport is
 		// gone.
@@ -476,12 +437,8 @@ namespace RTC
 		};
 		std::unique_ptr<RTC::BWE::ReceiverTransportCongestionController>
 		  receiverTransportCongestionController{ nullptr };
-#else
-		std::shared_ptr<RTC::TransportCongestionControlClient> tccClient{ nullptr };
-		std::shared_ptr<RTC::TransportCongestionControlServer> tccServer{ nullptr };
-#endif
 		// Others.
-		bool direct{ false }; // Whether this Transport allows direct communication.
+		const bool direct; // Whether this Transport allows direct communication.
 		bool isDestroying{ false };
 		RTC::RTP::HeaderExtensionIds recvRtpHeaderExtensionIds;
 		RTC::RtpListener rtpListener;
@@ -493,16 +450,10 @@ namespace RTC
 		RTC::RtpDataCounter recvRtxTransmission;
 		RTC::RtpDataCounter sendRtxTransmission;
 		RTC::RtpDataCounter sendProbationTransmission;
-#ifdef MS_USE_BUILTIN_BWE
 		// Shares the available outgoing bitrate out among the Consumers.
 		RTC::BWE::BitrateAllocator bitrateAllocator;
-#endif
-
 		// Round trip time of this Transport, out of what its RTP streams measure.
 		RTC::RttCalculator rttCalculator;
-#ifndef MS_USE_BUILTIN_BWE
-		uint16_t transportWideCcSeq{ 0 };
-#endif
 		bool sendSupportsTransportCc{ false };
 		bool sendSupportsRemb{ false };
 		bool recvSupportsTransportCc{ false };
@@ -511,19 +462,15 @@ namespace RTC
 		int64_t maxIncomingBitrate{ 0 };
 		int64_t maxOutgoingBitrate{ 0 };
 		int64_t minOutgoingBitrate{ 0 };
-#ifdef MS_USE_BUILTIN_BWE
 		int64_t outgoingDesiredBitrate{ 0 };
-#endif
 		// For SCTP capable transports and for direct transport.
-		size_t maxSendMessageSize{ 0 };
-		size_t maxReceiveMessageSize{ 0 };
+		size_t maxSendMessageSize;
+		size_t maxReceiveMessageSize;
 		TraceEventTypes traceEventTypes;
-
 #ifdef MS_RTC_LOGGER_SEND_BURST
-	private:
 		RTC::RtcLogger::SendBurst sendBurstLogger;
 		// Allocated by this.
-		TimerHandleInterface* sendBurstLoggerTimer{ nullptr };
+		const std::unique_ptr<TimerHandleInterface> sendBurstLoggerTimer;
 #endif
 	};
 } // namespace RTC

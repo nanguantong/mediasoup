@@ -1,11 +1,13 @@
 #ifndef MS_RTC_WEBRTC_TRANSPORT_HPP
 #define MS_RTC_WEBRTC_TRANSPORT_HPP
 
+#include "common.hpp"
 #include "handles/SendCallbacks.hpp"
 #include "RTC/DtlsTransport.hpp"
 #include "RTC/ICE/IceCandidate.hpp"
 #include "RTC/ICE/IceServer.hpp"
 #include "RTC/ICE/StunPacket.hpp"
+#include "RTC/NEW_RTCP/packet/Packet.hpp"
 #include "RTC/SrtpSession.hpp"
 #include "RTC/TcpConnection.hpp"
 #include "RTC/TcpServer.hpp"
@@ -95,6 +97,7 @@ namespace RTC
 		void MayRunDtlsTransport();
 		void SendRtpPacket(RTC::Consumer* consumer, RTC::RTP::Packet* packet, onSendCallback cb = {}) override;
 		void SendRtcpPacket(RTC::RTCP::Packet* packet) override;
+		void SendRtcpPacket(const RTC::NEW_RTCP::Packet* packet) override;
 		void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) override;
 		void SendMessage(
 		  RTC::DataConsumer* dataConsumer,
@@ -188,13 +191,13 @@ namespace RTC
 		// Passed by argument.
 		WebRtcTransportListener* webRtcTransportListener{ nullptr };
 		// Allocated by this.
-		RTC::ICE::IceServer* iceServer{ nullptr };
+		std::unique_ptr<RTC::ICE::IceServer> iceServer;
 		// Map of UdpSocket/TcpServer and local announced address (if any).
 		ankerl::unordered_dense::map<RTC::UdpSocket*, std::string> udpSockets;
 		ankerl::unordered_dense::map<RTC::TcpServer*, std::string> tcpServers;
-		RTC::DtlsTransport* dtlsTransport{ nullptr };
-		RTC::SrtpSession* srtpRecvSession{ nullptr };
-		RTC::SrtpSession* srtpSendSession{ nullptr };
+		std::unique_ptr<RTC::DtlsTransport> dtlsTransport;
+		std::unique_ptr<RTC::SrtpSession> srtpRecvSession;
+		std::unique_ptr<RTC::SrtpSession> srtpSendSession;
 		// Others.
 		// Whether connect() was succesfully called.
 		bool connectCalled{ false };

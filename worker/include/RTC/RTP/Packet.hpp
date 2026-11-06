@@ -500,10 +500,12 @@ namespace RTC
 			 *
 			 * @see RFC 8285.
 			 *
-			 * @throw MediaSoupTypeError - If there is no space available for given
-			 *   extensions or if given extensions are invalid/wrong.
+			 * @return `false` if the packet buffer has no room for given extensions,
+			 *   in which case the packet is not modified.
+			 *
+			 * @throw MediaSoupTypeError - If given extensions are invalid/wrong.
 			 */
-			void SetExtensions(ExtensionsType type, const std::vector<Extension>& extensions);
+			[[nodiscard]] bool SetExtensions(ExtensionsType type, const std::vector<Extension>& extensions);
 
 			/**
 			 * Assign extension ids.
@@ -866,6 +868,24 @@ namespace RTC
 				this->captureAtUs = captureAtUs;
 			}
 
+			/**
+			 * Whether the packet is currently RTX encoded.
+			 */
+			bool IsRtx() const
+			{
+				return this->mediaSsrc.has_value();
+			}
+
+			/**
+			 * SSRC of the media stream the packet belongs to. Same as `GetSsrc()`
+			 * unless the packet is RTX encoded, in which case it is the SSRC that
+			 * `RtxEncode()` overwrote.
+			 */
+			uint32_t GetMediaSsrc() const
+			{
+				return this->mediaSsrc.value_or(GetSsrc());
+			}
+
 		private:
 			/**
 			 * @remarks
@@ -990,6 +1010,8 @@ namespace RTC
 			std::shared_ptr<Codecs::PayloadDescriptorHandler> payloadDescriptorHandler;
 			// Capture time of the packet.
 			std::optional<int64_t> captureAtUs;
+			// SSRC of the media stream while the packet is RTX encoded.
+			std::optional<uint32_t> mediaSsrc;
 		};
 	} // namespace RTP
 } // namespace RTC

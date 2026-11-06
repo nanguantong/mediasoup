@@ -108,14 +108,18 @@ namespace RTC
 			case Channel::ChannelNotification::Event::TRANSPORT_SEND_RTCP:
 			{
 				const auto* body = notification->data->body_as<FBS::Transport::SendRtcpNotification>();
-				auto len         = body->data()->size();
+				const size_t len = body->data()->size();
 
 				// Increase receive transmission.
 				RTC::Transport::DataReceived(len);
 
-				if (len > RTC::Consts::MtuSize + 100)
+				if (len > RTC::Consts::IncomingRtcpPacketMaxSize)
 				{
-					MS_WARN_TAG(rtp, "given RTCP packet exceeds maximum size [len:%i]", len);
+					MS_WARN_TAG(
+					  rtcp,
+					  "ignoring RTCP packet exceeding maximum size [len:%zu, max len:%zu]",
+					  len,
+					  RTC::Consts::IncomingRtcpPacketMaxSize);
 
 					return;
 				}
@@ -143,14 +147,14 @@ namespace RTC
 		}
 	}
 
-	inline bool DirectTransport::IsConnected() const
+	bool DirectTransport::IsConnected() const
 	{
 		MS_TRACE();
 
 		return true;
 	}
 
-	inline size_t DirectTransport::GetPacketOverhead() const
+	size_t DirectTransport::GetPacketOverhead() const
 	{
 		MS_TRACE();
 
@@ -216,6 +220,27 @@ namespace RTC
 
 		// Increase send transmission.
 		RTC::Transport::DataSent(packet->GetSize());
+	}
+
+	void DirectTransport::SendRtcpPacket(const RTC::NEW_RTCP::Packet* packet)
+	{
+		MS_TRACE();
+
+		// Notify the Node DirectTransport.
+		const auto data = this->shared->GetChannelNotifier()->GetBufferBuilder().CreateVector(
+		  packet->GetBuffer(), packet->GetLength());
+
+		auto notification = FBS::DirectTransport::CreateRtcpNotification(
+		  this->shared->GetChannelNotifier()->GetBufferBuilder(), data);
+
+		this->shared->GetChannelNotifier()->Emit(
+		  this->id,
+		  FBS::Notification::Event::DIRECTTRANSPORT_RTCP,
+		  FBS::Notification::Body::DirectTransport_RtcpNotification,
+		  notification);
+
+		// Increase send transmission.
+		RTC::Transport::DataSent(packet->GetLength());
 	}
 
 	void DirectTransport::SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet)

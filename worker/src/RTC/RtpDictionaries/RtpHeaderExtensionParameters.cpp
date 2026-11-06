@@ -20,7 +20,7 @@ namespace RTC
 		this->id = data->id();
 
 		// Don't allow id 0.
-		if (this->id == 0u)
+		if (this->id == 0)
 		{
 			MS_THROW_TYPE_ERROR("invalid id 0");
 		}
@@ -43,6 +43,10 @@ namespace RTC
 		auto parameters = this->parameters.FillBuffer(builder);
 
 		return FBS::RtpParameters::CreateRtpHeaderExtensionParametersDirect(
-		  builder, RTC::RtpHeaderExtensionUri::TypeToFbs(this->type), this->id, this->encrypt, &parameters);
+		  builder,
+		  RTC::RtpHeaderExtensionUri::TypeToFbs(this->type),
+		  this->id,
+		  this->encrypt,
+		  std::addressof(parameters));
 	}
 } // namespace RTC

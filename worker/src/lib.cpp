@@ -2,15 +2,11 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "lib.hpp"
-#include "common.hpp"
 #include "Channel/ChannelMessageRegistrator.hpp"
 #include "Channel/ChannelNotifier.hpp"
 #include "Channel/ChannelSocket.hpp"
 #include "DepLibSRTP.hpp"
 #include "DepLibUV.hpp"
-#ifndef MS_USE_BUILTIN_BWE
-#include "DepLibWebRTC.hpp"
-#endif
 #include "DepOpenSSL.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
@@ -20,8 +16,14 @@
 #include "Shared.hpp"
 #include "Utils.hpp"
 #include "Worker.hpp"
-#include <csignal> // sigaction()
+#ifdef MS_EXECUTABLE
+#include <cerrno>  // errno
+#include <cstring> // std::strerror()
 #include <string>
+#ifndef _WIN32
+#include <signal.h> // NOLINT(modernize-deprecated-headers) sigaction(), sigfillset()
+#endif
+#endif
 
 static void ignoreSignals();
 
@@ -152,9 +154,6 @@ extern "C" int mediasoup_worker_run(
 		// Initialize static stuff.
 		DepOpenSSL::ClassInit();
 		DepLibSRTP::ClassInit();
-#ifndef MS_USE_BUILTIN_BWE
-		DepLibWebRTC::ClassInit();
-#endif
 		Utils::Crypto::ClassInit();
 		RTC::DtlsTransport::ClassInit();
 		RTC::SrtpSession::ClassInit();
@@ -172,9 +171,6 @@ extern "C" int mediasoup_worker_run(
 		// Free static stuff.
 		DepLibSRTP::ClassDestroy();
 		Utils::Crypto::ClassDestroy();
-#ifndef MS_USE_BUILTIN_BWE
-		DepLibWebRTC::ClassDestroy();
-#endif
 		RTC::DtlsTransport::ClassDestroy();
 		DepLibUV::ClassDestroy();
 
@@ -220,7 +216,7 @@ static void ignoreSignals()
 
 	act.sa_handler = SIG_IGN; // NOLINT(cppcoreguidelines-pro-type-cstyle-cast)
 	act.sa_flags   = 0;
-	err            = sigfillset(&act.sa_mask);
+	err            = sigfillset(std::addressof(act.sa_mask));
 
 	if (err != 0)
 	{
@@ -232,7 +228,7 @@ static void ignoreSignals()
 		const auto& sigName = kv.first;
 		const int sigId     = kv.second;
 
-		err = sigaction(sigId, &act, nullptr);
+		err = sigaction(sigId, std::addressof(act), nullptr);
 
 		if (err != 0)
 		{
