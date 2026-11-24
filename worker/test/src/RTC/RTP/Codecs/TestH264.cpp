@@ -1,29 +1,392 @@
 #include "common.hpp"
 #include "RTC/RTP/Codecs/H264.hpp"
+#include "RTC/RTP/Packet.hpp"
+#include "test/include/RTC/RTP/rtpCommon.hpp"
 #include <catch2/catch_test_macros.hpp>
+#include <cstring> // std::memcpy()
+#include <vector>
+
+namespace
+{
+	constexpr uint8_t DependencyDescriptorId{ static_cast<uint8_t>(
+		RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR) };
+
+	// Single NAL unit packet holding an IDR.
+	// clang-format off
+	const uint8_t KeyFramePayload[] =
+	{
+		0x07, 0x80, 0x11, 0x00
+	};
+	// clang-format on
+} // namespace
 
 SCENARIO("H264 payload descriptor", "[rtp][codecs][h264]")
 {
+	// Creates an H264 packet carrying the given Dependency Descriptor in an RTP
+	// header extension `reservedLen` bytes long, which is the room the Producer
+	// makes in it for the Consumers to rewrite the descriptor.
+	const auto createPacket = [](const uint8_t* dependencyDescriptor, uint8_t len, uint8_t reservedLen)
+	  -> std::unique_ptr<RTC::RTP::Packet>
+	{
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(
+			rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)) };
+
+		REQUIRE(packet);
+
+		if (dependencyDescriptor)
+		{
+			uint8_t value[RTC::Consts::TwoByteRtpExtensionMaxLength]{};
+
+			std::memcpy(value, dependencyDescriptor, len);
+
+			const std::vector<RTC::RTP::Packet::Extension> extensions{
+				{ RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR,
+				 DependencyDescriptorId, reservedLen,
+				 value }
+			};
+
+			REQUIRE(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::Auto, extensions) == true);
+
+			// As the Producer does, tell the length the descriptor really has.
+			REQUIRE(packet->UpdateDependencyDescriptor(dependencyDescriptor, len));
+		}
+
+		packet->SetPayload(KeyFramePayload, sizeof(KeyFramePayload));
+
+		return packet;
+	};
+
 	SECTION("parse payload descriptor")
 	{
 		// clang-format off
-		uint8_t originalBuffer[] =
+		const uint8_t originalBuffer[] =
 		{
 			0x07, 0x80, 0x11, 0x00
 		};
 		// clang-format on
-		//
+
 		// Keep a copy of the original buffer for comparing.
 		uint8_t buffer[4] = { 0 };
 
 		std::memcpy(buffer, originalBuffer, sizeof(buffer));
 
-		RTC::RTP::Codecs::DependencyDescriptor* dependencyDescriptor{ nullptr };
-
-		std::unique_ptr<RTC::RTP::Codecs::H264::PayloadDescriptor> payloadDescriptor{
-			RTC::RTP::Codecs::H264::Parse(buffer, sizeof(buffer), dependencyDescriptor)
+		const std::unique_ptr<RTC::RTP::Codecs::H264::PayloadDescriptor> payloadDescriptor{
+			RTC::RTP::Codecs::H264::Parse(buffer, sizeof(buffer))
 		};
 
 		REQUIRE(payloadDescriptor);
+		REQUIRE(payloadDescriptor->isKeyFrame);
+	}
+
+	// The Dependency Descriptor tells the layers of the frame regardless of the
+	// codec, and it must be rewritten for the layers each Consumer is given, so
+	// it takes over whenever the packet carries one.
+	SECTION("the Dependency Descriptor takes over when the packet carries one")
+	{
+		// Key frame carrying the template dependency structure of an L1T2 stream.
+		// clang-format off
+		const uint8_t keyFrameDescriptor[] =
+		{
+			0x80, 0x00, 0xE8, 0x80,
+			0x01, 0x1E, 0xA8, 0x51,
+			0x41, 0x01, 0x0C, 0x13,
+			0xFC, 0x0B, 0x3C
+		};
+
+		// Mandatory fields only, so nothing tells about the active decode targets.
+		const uint8_t deltaFrameDescriptor[] =
+		{
+			0x00, 0x00, 0xE8
+		};
+		// clang-format on
+
+		RTC::RTP::Codecs::DependencyDescriptor::Context dependencyDescriptorContext;
+
+		// NOTE: Taken apart from any packet, just to get the structure that the
+		// delta frame below is parsed with.
+		const std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor> keyFrame{
+			RTC::RTP::Codecs::DependencyDescriptor::Parse(
+			  keyFrameDescriptor, sizeof(keyFrameDescriptor), dependencyDescriptorContext)
+		};
+
+		REQUIRE(keyFrame);
+		REQUIRE(dependencyDescriptorContext.templateDependencyStructure->decodeTargetCount == 2);
+
+		// Room for the active decode targets bitmask the Consumer writes.
+		const auto packet =
+		  createPacket(deltaFrameDescriptor, sizeof(deltaFrameDescriptor), /*reservedLen*/ 4);
+
+		RTC::RTP::Codecs::H264::ProcessRtpPacket(packet.get(), dependencyDescriptorContext);
+
+		// The H264 payload descriptor handler never reserves room for a rewritten
+		// Dependency Descriptor, so a non zero length tells that the Dependency
+		// Descriptor one took over.
+		REQUIRE(packet->GetDependencyDescriptorMaxLength() > 0);
+		REQUIRE(packet->GetSpatialLayer() == 0);
+		REQUIRE(packet->GetTemporalLayer() == 0);
+
+		// A Consumer that only wants the lowest temporal layer.
+		const RTC::RTP::Codecs::EncodingContext::Params params{ .spatialLayers              = 1,
+		                                                        .temporalLayers             = 2,
+		                                                        .preferDependencyDescriptor = true };
+
+		RTC::RTP::Codecs::H264::EncodingContext context(params);
+
+		context.SetCurrentSpatialLayer(0);
+		context.SetCurrentTemporalLayer(0);
+		context.SetTargetSpatialLayer(0);
+		context.SetTargetTemporalLayer(0);
+
+		bool marker{ false };
+
+		REQUIRE(packet->ProcessPayload(std::addressof(context), marker));
+
+		// And it's told that only decode target 0 is active.
+		std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor> forwarded;
+
+		packet->ReadDependencyDescriptor(forwarded, dependencyDescriptorContext);
+
+		REQUIRE(forwarded);
+		REQUIRE(forwarded->activeDecodeTargetsBitmask == 0b01);
+	}
+
+	// Nothing but the Dependency Descriptor tells the temporal layer of an H264
+	// packet, so a Consumer that did not negotiate the extension, and is hence
+	// served by the payload descriptor of the codec, must be filtered with the
+	// layer the descriptor carries all the same.
+	SECTION("a Consumer that did not negotiate the Dependency Descriptor still filters layers")
+	{
+		// Key frame carrying the template dependency structure of an L1T2 stream.
+		// clang-format off
+		const uint8_t keyFrameDescriptor[] =
+		{
+			0x80, 0x00, 0xE8, 0x80,
+			0x01, 0x1E, 0xA8, 0x51,
+			0x41, 0x01, 0x0C, 0x13,
+			0xFC, 0x0B, 0x3C
+		};
+
+		// Mandatory fields only, of the lowest temporal layer.
+		const uint8_t lowerFrameDescriptor[] =
+		{
+			0x00, 0x00, 0xE8
+		};
+
+		// The same of the upper temporal layer.
+		const uint8_t upperFrameDescriptor[] =
+		{
+			0x02, 0x00, 0xE9
+		};
+		// clang-format on
+
+		RTC::RTP::Codecs::DependencyDescriptor::Context dependencyDescriptorContext;
+
+		const std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor> keyFrame{
+			RTC::RTP::Codecs::DependencyDescriptor::Parse(
+			  keyFrameDescriptor, sizeof(keyFrameDescriptor), dependencyDescriptorContext)
+		};
+
+		REQUIRE(keyFrame);
+
+		// The frames this test needs, one per temporal layer.
+		const std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor> lowerFrame{
+			RTC::RTP::Codecs::DependencyDescriptor::Parse(
+			  lowerFrameDescriptor, sizeof(lowerFrameDescriptor), dependencyDescriptorContext)
+		};
+
+		REQUIRE(lowerFrame);
+		REQUIRE(lowerFrame->temporalLayer == 0);
+
+		const std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor> upperFrame{
+			RTC::RTP::Codecs::DependencyDescriptor::Parse(
+			  upperFrameDescriptor, sizeof(upperFrameDescriptor), dependencyDescriptorContext)
+		};
+
+		REQUIRE(upperFrame);
+		REQUIRE(upperFrame->temporalLayer == 1);
+
+		// A Consumer that did not negotiate the extension and only wants the
+		// lowest temporal layer.
+		const RTC::RTP::Codecs::EncodingContext::Params params{ .spatialLayers              = 1,
+		                                                        .temporalLayers             = 2,
+		                                                        .preferDependencyDescriptor = false };
+
+		RTC::RTP::Codecs::H264::EncodingContext context(params);
+
+		context.SetCurrentSpatialLayer(0);
+		context.SetCurrentTemporalLayer(0);
+		context.SetTargetSpatialLayer(0);
+		context.SetTargetTemporalLayer(0);
+
+		bool marker{ false };
+
+		// The frame of the lowest temporal layer is forwarded.
+		const auto lowerPacket =
+		  createPacket(lowerFrameDescriptor, sizeof(lowerFrameDescriptor), /*reservedLen*/ 4);
+
+		RTC::RTP::Codecs::H264::ProcessRtpPacket(lowerPacket.get(), dependencyDescriptorContext);
+
+		REQUIRE(lowerPacket->ProcessPayload(std::addressof(context), marker));
+
+		// The one above it is not, which only the Dependency Descriptor tells.
+		const auto upperPacket =
+		  createPacket(upperFrameDescriptor, sizeof(upperFrameDescriptor), /*reservedLen*/ 4);
+
+		RTC::RTP::Codecs::H264::ProcessRtpPacket(upperPacket.get(), dependencyDescriptorContext);
+
+		REQUIRE(!upperPacket->ProcessPayload(std::addressof(context), marker));
+	}
+
+	// A simulcast Consumer is given one of several streams, so its spatial layer
+	// is chosen by the ProducerStreamManager when it picks the stream and the
+	// target spatial layer of its encoding context is never set.
+	SECTION("the Dependency Descriptor of a simulcast Consumer filters temporal layers only")
+	{
+		// clang-format off
+		const uint8_t keyFrameDescriptor[] =
+		{
+			0x80, 0x00, 0xE8, 0x80,
+			0x01, 0x1E, 0xA8, 0x51,
+			0x41, 0x01, 0x0C, 0x13,
+			0xFC, 0x0B, 0x3C
+		};
+
+		const uint8_t deltaFrameDescriptor[] =
+		{
+			0x00, 0x00, 0xE8
+		};
+		// clang-format on
+
+		RTC::RTP::Codecs::DependencyDescriptor::Context dependencyDescriptorContext;
+
+		const std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor> keyFrame{
+			RTC::RTP::Codecs::DependencyDescriptor::Parse(
+			  keyFrameDescriptor, sizeof(keyFrameDescriptor), dependencyDescriptorContext)
+		};
+
+		REQUIRE(keyFrame);
+
+		const auto packet =
+		  createPacket(deltaFrameDescriptor, sizeof(deltaFrameDescriptor), /*reservedLen*/ 4);
+
+		RTC::RTP::Codecs::H264::ProcessRtpPacket(packet.get(), dependencyDescriptorContext);
+
+		const RTC::RTP::Codecs::EncodingContext::Params params{
+			.spatialLayers = 1, .temporalLayers = 2, .simulcast = true, .preferDependencyDescriptor = true
+		};
+
+		RTC::RTP::Codecs::H264::EncodingContext context(params);
+
+		// Just as SimulcastProducerStreamManager does: only the temporal layers
+		// are given to the context, so the spatial ones are left at -1.
+		context.SetTargetTemporalLayer(1);
+		context.SetCurrentTemporalLayer(1);
+
+		REQUIRE(context.GetTargetSpatialLayer() == -1);
+
+		bool marker{ false };
+
+		// It must be forwarded rather than aborting on the unset spatial layer.
+		REQUIRE(packet->ProcessPayload(std::addressof(context), marker));
+
+		// And every decode target of the stream is told active, since no spatial
+		// layer is being filtered out.
+		std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor> forwarded;
+
+		packet->ReadDependencyDescriptor(forwarded, dependencyDescriptorContext);
+
+		REQUIRE(forwarded);
+		REQUIRE(forwarded->activeDecodeTargetsBitmask == 0b11);
+	}
+
+	// H264 is the only codec mediasoup forwards the Dependency Descriptor of that
+	// can be simulcast, since `IsValidTypeForCodec()` allows SIMULCAST for VP8 and
+	// H264 alone and VP8 never gets the Dependency Descriptor handler. So this is
+	// the one path where the frames of a Consumer are really given the numbers of
+	// several encoders.
+	SECTION("the Dependency Descriptor of a simulcast Consumer goes on across a stream switch")
+	{
+		// Key frame of an L1T2 stream, numbered 232.
+		// clang-format off
+		const uint8_t keyFrameDescriptor[] =
+		{
+			0x80, 0x00, 0xE8, 0x80,
+			0x01, 0x1E, 0xA8, 0x51,
+			0x41, 0x01, 0x0C, 0x13,
+			0xFC, 0x0B, 0x3C
+		};
+		// clang-format on
+
+		constexpr uint16_t KeyFrameNumber{ 232 };
+
+		const RTC::RTP::Codecs::EncodingContext::Params params{
+			.spatialLayers = 1, .temporalLayers = 2, .simulcast = true, .preferDependencyDescriptor = true
+		};
+
+		RTC::RTP::Codecs::H264::EncodingContext context(params);
+
+		context.SetTargetTemporalLayer(1);
+		context.SetCurrentTemporalLayer(1);
+
+		// Each encoding of the Producer is parsed with a context of its own, as
+		// `RtpStreamRecv` holds one per incoming SSRC. Replaying the same key frame
+		// against a fresh one is a second encoder numbering its frames on its own.
+		RTC::RTP::Codecs::DependencyDescriptor::Context streamA;
+		RTC::RTP::Codecs::DependencyDescriptor::Context streamB;
+
+		// Runs a key frame all the way through the packet, so that the handler is
+		// chosen as it is for a real one, and gives back the frame number the
+		// endpoint ends up being told.
+		const auto forwardKeyFrame =
+		  [&](RTC::RTP::Codecs::DependencyDescriptor::Context& streamContext) -> uint16_t
+		{
+			const auto packet = createPacket(
+			  keyFrameDescriptor,
+			  sizeof(keyFrameDescriptor),
+			  /*reservedLen*/ sizeof(keyFrameDescriptor) + 1);
+
+			RTC::RTP::Codecs::H264::ProcessRtpPacket(packet.get(), streamContext);
+
+			bool marker{ false };
+
+			REQUIRE(packet->ProcessPayload(std::addressof(context), marker));
+
+			std::unique_ptr<RTC::RTP::Codecs::DependencyDescriptor> forwarded;
+
+			// NOTE: Into a copy, since reading a key frame back parses its structure
+			// again and would replace the one of the stream.
+			auto readContext = streamContext;
+
+			REQUIRE(packet->ReadDependencyDescriptor(forwarded, readContext));
+			REQUIRE(forwarded);
+
+			return forwarded->frameNumber;
+		};
+
+		context.SyncRequired();
+
+		// The first stream is given as it comes.
+		REQUIRE(forwardKeyFrame(streamA) == KeyFrameNumber);
+
+		// And the one switched to, whose key frame would otherwise repeat a frame
+		// number already given and be dropped by the endpoint for being older than
+		// the one that brought the structure it holds, follows it instead.
+		context.SyncRequired();
+
+		REQUIRE(forwardKeyFrame(streamB) == KeyFrameNumber + 1);
+	}
+
+	SECTION("the H264 payload descriptor is used when there is no Dependency Descriptor")
+	{
+		const auto packet = createPacket(nullptr, 0, 0);
+
+		RTC::RTP::Codecs::DependencyDescriptor::Context dependencyDescriptorContext;
+
+		RTC::RTP::Codecs::H264::ProcessRtpPacket(packet.get(), dependencyDescriptorContext);
+
+		// No Dependency Descriptor to rewrite, and the key frame is told by the
+		// NAL unit of the payload.
+		REQUIRE(packet->GetDependencyDescriptorMaxLength() == 0);
+		REQUIRE(packet->IsKeyFrame());
 	}
 }

@@ -1,5 +1,5 @@
 #include "fuzzer/include/RTC/RTP/FuzzerPacket.hpp"
-#include "RTC/RTP/HeaderExtensionIds.hpp"
+#include "RTC/RTP/ExtensionMapping.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "Utils.hpp"
@@ -24,7 +24,7 @@ void FuzzerRtcRtpPacket::Fuzz(const uint8_t* data, size_t len)
 	// below will try to write into packet memory.
 	//
 	// NOTE: Let's make the buffer bigger to test API that increases packet size.
-	const std::unique_ptr<uint8_t[]> buffer(new uint8_t[len + 512]);
+	const auto buffer = std::make_unique<uint8_t[]>(len + 512);
 
 	packet->Serialize(buffer.get(), len + 512);
 
@@ -43,6 +43,7 @@ void FuzzerRtcRtpPacket::Fuzz(const uint8_t* data, size_t len)
 	uint16_t wideSeqNumber;
 	std::string mid;
 	std::string rid;
+	std::string rrid;
 
 	packet->GetBuffer();
 	packet->GetBufferLength();
@@ -68,20 +69,19 @@ void FuzzerRtcRtpPacket::Fuzz(const uint8_t* data, size_t len)
 	packet->GetHeaderExtensionValueLength();
 	packet->HasExtensions();
 	packet->HasOneByteExtensions();
-	packet->HasTwoBytesExtensions();
+	packet->HasTwoByteExtensions();
 
-	RTC::RTP::HeaderExtensionIds headerExtensionIds{};
+	const RTC::RTP::ExtensionMapping extensionMapping{ .mid               = 5,
+	                                                   .rid               = 6,
+	                                                   .rrid              = 7,
+	                                                   .absSendTime       = 3,
+	                                                   .transportWideCc01 = 4,
+	                                                   .ssrcAudioLevel    = 1,
+	                                                   .videoOrientation  = 2,
+	                                                   .absCaptureTime    = 9,
+	                                                   .playoutDelay      = 8 };
 
-	headerExtensionIds.mid               = 5;
-	headerExtensionIds.rid               = 6;
-	headerExtensionIds.absSendTime       = 3;
-	headerExtensionIds.transportWideCc01 = 4;
-	headerExtensionIds.ssrcAudioLevel    = 1;
-	headerExtensionIds.videoOrientation  = 2;
-	headerExtensionIds.playoutDelay      = 8;
-	headerExtensionIds.absCaptureTime    = 9;
-
-	packet->AssignExtensionIds(headerExtensionIds);
+	packet->SetExtensionMapping(extensionMapping);
 
 	packet->HasExtension(5);
 	packet->GetExtensionValue(5, extenLen);
@@ -91,6 +91,10 @@ void FuzzerRtcRtpPacket::Fuzz(const uint8_t* data, size_t len)
 	packet->HasExtension(6);
 	packet->GetExtensionValue(6, extenLen);
 	packet->ReadRid(rid);
+
+	packet->HasExtension(7);
+	packet->GetExtensionValue(7, extenLen);
+	packet->ReadRrid(rrid);
 
 	packet->HasExtension(3);
 	packet->GetExtensionValue(3, extenLen);
@@ -148,15 +152,15 @@ void FuzzerRtcRtpPacket::Fuzz(const uint8_t* data, size_t len)
 	  value2                                           // value
 	);
 
-	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions));
-	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::TwoBytes, extensions));
-	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::Auto, extensions));
+	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::OneByte, extensions));
+	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::TwoByte, extensions));
+	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::Auto, extensions));
 
 	extensions.clear();
 
-	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::TwoBytes, extensions));
-	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions));
-	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::Auto, extensions));
+	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::TwoByte, extensions));
+	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::OneByte, extensions));
+	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::Auto, extensions));
 
 	uint8_t value3[] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
 	                     0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18 };
@@ -191,9 +195,9 @@ void FuzzerRtcRtpPacket::Fuzz(const uint8_t* data, size_t len)
 
 	// NOTE: Cannot use One-Byte extensions because we are using big ids and
 	// lengths.
-	// packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions);
-	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::TwoBytes, extensions));
-	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::Auto, extensions));
+	// packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::OneByte, extensions);
+	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::TwoByte, extensions));
+	static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::Auto, extensions));
 
 	packet->HasExtension(13);
 	packet->GetExtensionValue(13, extenLen);
@@ -261,7 +265,7 @@ void FuzzerRtcRtpPacket::Fuzz(const uint8_t* data, size_t len)
 	// packet->GetSpatialLayer();
 	// packet->GetTemporalLayer();
 
-	const std::unique_ptr<uint8_t[]> buffer2(new uint8_t[len + 512]);
+	const auto buffer2 = std::make_unique<uint8_t[]>(len + 512);
 
 	packet.reset(packet->Clone(buffer2.get(), len + 512));
 
@@ -276,10 +280,11 @@ void FuzzerRtcRtpPacket::Fuzz(const uint8_t* data, size_t len)
 	// the fixed code must return false without writing out of bounds; when it
 	// fits it must succeed. AddressSanitizer will catch any regression here.
 	{
-		constexpr size_t BufferLenght{ 512 };
-		static thread_local uint8_t buffer[BufferLenght];
+		constexpr size_t BufferLength{ 512 };
 
-		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(buffer, BufferLenght) };
+		static thread_local uint8_t buffer[BufferLength];
+
+		std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Factory(buffer, BufferLength) };
 
 		if (!packet)
 		{
@@ -301,15 +306,15 @@ void FuzzerRtcRtpPacket::Fuzz(const uint8_t* data, size_t len)
 				extenValue
 			}
 		};
-		// clang-format off
+		// clang-format on
 
-		static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions));
+		static_cast<void>(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::OneByte, extensions));
 
 		// Call UpdateDependencyDescriptor() with the full fuzzer input as
 		// the replacement bytes. This covers:
-		//   len > slotLen  → no OOB write (was the bug).
-		//   len <= slotLen → in-place update.
-		//   len == 0       → must not crash.
+		//   len > slotLen  -> no OOB write (was the bug).
+		//   len <= slotLen -> in-place update.
+		//   len == 0       -> must not crash.
 		packet->UpdateDependencyDescriptor(data, len);
 	}
 }

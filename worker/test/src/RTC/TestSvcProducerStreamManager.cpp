@@ -1,5 +1,6 @@
 #include "common.hpp"
 #include "RTC/ConsumerTypes.hpp"
+#include "RTC/RTCP/packet/Packet.hpp"
 #include "RTC/RTP/Codecs/PayloadDescriptorHandler.hpp"
 #include "RTC/RTP/RtpStreamRecv.hpp"
 #include "RTC/SvcProducerStreamManager.hpp"
@@ -8,11 +9,14 @@
 #include "mocks/include/MockShared.hpp"
 #include <catch2/catch_test_macros.hpp>
 
-namespace
+SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 {
-	using RtpPacketProcessResult = RTC::ProducerStreamManager::RtpPacketProcessResult;
-
 	constexpr uint32_t MappedSsrc = 1234567890;
+
+	// Milliseconds between the packets fed by feedRtpStreamRecv() below.
+	constexpr int64_t PacketSpacingMs{ 1 };
+
+	using RtpPacketProcessResult = RTC::ProducerStreamManager::RtpPacketProcessResult;
 
 	class MockListener : public RTC::ProducerStreamManager::Listener
 	{
@@ -63,7 +67,7 @@ namespace
 		}
 
 		void OnRtpStreamSendRtcpPacket(
-		  RTC::RTP::RtpStreamRecv* /*rtpStream*/, RTC::RTCP::Packet* /*packet*/) override
+		  RTC::RTP::RtpStreamRecv* /*rtpStream*/, const RTC::RTCP::Packet* /*packet*/) override
 		{
 		}
 
@@ -76,6 +80,15 @@ namespace
 		  RTC::RTP::RtpStreamRecv* /*rtpStream*/, uint8_t /*spatialLayer*/, bool /*isActive*/) override
 		{
 		}
+
+		void OnRtpStreamRestarted(
+		  RTC::RTP::RtpStreamRecv* /*rtpStream*/, const RTC::RTP::Packet* /*packet*/) override
+		{
+		}
+
+		void OnRtpStreamKeyFrameRequired(RTC::RTP::RtpStreamRecv* /*rtpStream*/) override
+		{
+		}
 	};
 
 	class MockEncodingContext : public RTC::RTP::Codecs::EncodingContext
@@ -83,48 +96,39 @@ namespace
 	public:
 		explicit MockEncodingContext(uint8_t spatialLayers = 3, uint8_t temporalLayers = 3, bool ksvc = false)
 		  : RTC::RTP::Codecs::EncodingContext(
-		      MockEncodingContext::BuildParams(spatialLayers, temporalLayers, ksvc))
-		{
-		}
-		void SyncRequired() override
+		      MockEncodingContext::BuildParams(spatialLayers, temporalLayers, ksvc),
+		      RTC::RTP::Codecs::DependencyDescriptor::FrameIdLength)
 		{
 		}
 
 	private:
-		static RTC::RTP::Codecs::EncodingContext::Params& BuildParams(
+		static RTC::RTP::Codecs::EncodingContext::Params BuildParams(
 		  uint8_t spatialLayers, uint8_t temporalLayers, bool ksvc)
 		{
-			// Use a thread-local so each call gets its own params instance.
-			// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-			static thread_local RTC::RTP::Codecs::EncodingContext::Params params;
-			params.spatialLayers  = spatialLayers;
-			params.temporalLayers = temporalLayers;
-			params.ksvc           = ksvc;
-			return params;
+			return { .spatialLayers = spatialLayers, .temporalLayers = temporalLayers, .ksvc = ksvc };
 		}
 	};
 
 	class MockPayloadDescriptorHandler : public RTC::RTP::Codecs::PayloadDescriptorHandler
 	{
 	public:
-		explicit MockPayloadDescriptorHandler()  = default;
+		MockPayloadDescriptorHandler()           = default;
 		~MockPayloadDescriptorHandler() override = default;
 		void Dump(int /*indentation*/) const override
 		{
 		}
 		bool Process(
-		  RTC::RTP::Codecs::EncodingContext* /*context*/,
-		  RTC::RTP::Packet* /*packet*/,
-		  bool& /*marker*/) override
+		  RTC::RTP::Codecs::EncodingContext* context, RTC::RTP::Packet* /*packet*/, bool& /*marker*/) override
 		{
+			// Mimics a frame that moves the layers and may then be filtered out, which
+			// is what a K-SVC switch point of a spatial layer below the forwarded one
+			// does.
+			if (this->temporalLayerToSet >= 0)
+			{
+				context->SetCurrentTemporalLayer(this->temporalLayerToSet);
+			}
+
 			return this->processResult;
-		}
-		void RtpPacketChanged(RTC::RTP::Packet* /*packet*/) override
-		{
-		}
-		std::unique_ptr<RTC::RTP::Codecs::PayloadDescriptor::Encoder> GetEncoder() const override
-		{
-			return nullptr;
 		}
 		void Encode(
 		  RTC::RTP::Packet* /*packet*/, RTC::RTP::Codecs::PayloadDescriptor::Encoder* /*encoder*/) override
@@ -151,32 +155,31 @@ namespace
 		uint8_t temporalLayer{ 0 };
 		bool isKeyFrame{ false };
 		bool processResult{ true };
+		// Current temporal layer that Process() moves the context to, or -1 to leave
+		// it alone.
+		int16_t temporalLayerToSet{ -1 };
 	};
 
 	// RtpStreamRecvListener must outlive the RtpStreamRecv.
-	RtpStreamRecvListener streamRecvListener; // NOLINT(readability-identifier-naming)
-
-	// Milliseconds between the packets fed by feedRtpStreamRecv() below.
-	constexpr int64_t PacketSpacingMs{ 1 };
+	RtpStreamRecvListener streamRecvListener;
 
 	// Current time, which the helpers below move so that traffic spans a period
 	// instead of happening all at once.
-	// NOLINTNEXTLINE(readability-identifier-naming)
 	int64_t nowUs{ 1000000000000 };
 
-	// NOLINTNEXTLINE(readability-identifier-naming)
 	mocks::MockShared shared(/*getTimeUs*/
-	                         []() -> int64_t
+	                         [&nowUs]() -> int64_t
 	                         {
 		                         return nowUs;
 	                         });
 
-	std::unique_ptr<RTC::SvcProducerStreamManager> createManager(
-	  MockListener* listener,
-	  RTC::ConsumerTypes::VideoLayers preferredLayers                    = { 2, 2 },
-	  bool keyFrameSupported                                             = true,
-	  RTC::Media::Kind kind                                              = RTC::Media::Kind::VIDEO,
-	  std::unique_ptr<RTC::RTP::Codecs::EncodingContext> encodingContext = nullptr)
+	const auto createManager = [&shared](
+	                             MockListener* listener,
+	                             RTC::ConsumerTypes::VideoLayers preferredLayers = { 2, 2 },
+	                             bool keyFrameSupported                          = true,
+	                             RTC::Media::Kind kind = RTC::Media::Kind::VIDEO,
+	                             std::unique_ptr<RTC::RTP::Codecs::EncodingContext> encodingContext =
+	                               nullptr) -> std::unique_ptr<RTC::SvcProducerStreamManager>
 	{
 		RTC::RtpEncodingParameters encoding;
 		encoding.ssrc = MappedSsrc;
@@ -200,10 +203,13 @@ namespace
 		manager->SetBweManaged(true);
 
 		return manager;
-	}
+	};
 
-	std::unique_ptr<RTC::RTP::RtpStreamRecv> createRtpStreamRecv(
-	  uint32_t ssrc = MappedSsrc, uint8_t spatialLayers = 3, uint8_t temporalLayers = 3)
+	const auto createRtpStreamRecv = [&streamRecvListener, &shared](
+	                                   uint32_t ssrc,
+	                                   uint8_t spatialLayers = 3,
+	                                   uint8_t temporalLayers =
+	                                     3) -> std::unique_ptr<RTC::RTP::RtpStreamRecv>
 	{
 		RTC::RTP::RtpStream::Params params;
 
@@ -214,12 +220,14 @@ namespace
 
 		return std::make_unique<RTC::RTP::RtpStreamRecv>(
 		  std::addressof(streamRecvListener), std::addressof(shared), params, 0, false);
-	}
+	};
 
 	// Feed packets into the RtpStreamRecv so GetBitrate() returns non-zero. They
 	// are spread in time because a bitrate is measured over the period its samples
 	// span, and samples taken all at once span none.
-	void feedRtpStreamRecv(RTC::RTP::RtpStreamRecv* rtpStream, RTC::RTP::Packet* packet, uint16_t count)
+	const auto feedRtpStreamRecv =
+	  [&nowUs,
+		 &shared](RTC::RTP::RtpStreamRecv* rtpStream, RTC::RTP::Packet* packet, uint16_t count) -> void
 	{
 		auto firstSeq = static_cast<uint16_t>(packet->GetSequenceNumber() + 1);
 		auto lastSeq  = static_cast<uint16_t>(firstSeq + count);
@@ -247,11 +255,8 @@ namespace
 		  0.5));
 
 		REQUIRE(rtpStream->GetBitrate(shared.GetTimeMs()) == expectedBitrate);
-	}
-} // namespace
+	};
 
-SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
-{
 	std::unique_ptr<RTC::RTP::Packet> packet(
 	  RTC::RTP::Packet::Factory(rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)));
 
@@ -284,13 +289,14 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 
 	// Make the stream receive packets of the given layers in turn, so each of
 	// them brings bitrate.
-	const auto feedLayers = [&packet](
+	const auto feedLayers = [&nowUs, &shared, &packet](
 	                          RTC::RTP::RtpStreamRecv* rtpStream,
 	                          const std::vector<RTC::ConsumerTypes::VideoLayers>& layers) -> void
 	{
-		auto* handler = new MockPayloadDescriptorHandler();
+		auto ownedHandler   = std::make_unique<MockPayloadDescriptorHandler>();
+		auto* const handler = ownedHandler.get();
 
-		packet->SetPayloadDescriptorHandler(handler);
+		packet->SetPayloadDescriptorHandler(std::move(ownedHandler));
 
 		for (size_t idx{ 0 }; idx < 300; ++idx)
 		{
@@ -310,7 +316,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 
@@ -326,7 +332,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 
@@ -344,7 +350,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(0, 0);
@@ -368,7 +374,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(0, 0);
@@ -384,9 +390,9 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		packet->SetSequenceNumber(seq);
 
 		// packet->SetPayloadDescriptorHandler() takes ownership.
-		auto* handler       = new MockPayloadDescriptorHandler();
+		auto handler        = std::make_unique<MockPayloadDescriptorHandler>();
 		handler->isKeyFrame = true;
-		packet->SetPayloadDescriptorHandler(handler);
+		packet->SetPayloadDescriptorHandler(std::move(handler));
 
 		auto result = manager->ProcessRtpPacket(
 		  packet.get(), /*lastSentPacketHasMarker*/ false, /*clockRate*/ 90000, /*maxPacketTs*/ 0);
@@ -406,7 +412,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		  std::addressof(listener),
 		  /*preferredLayers*/ { 2, 2 },
 		  /*keyFrameSupported*/ false);
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(0, 0);
@@ -428,9 +434,9 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		const uint16_t seq{ 100 };
 		packet->SetSequenceNumber(seq);
 
-		auto* handler       = new MockPayloadDescriptorHandler();
+		auto handler        = std::make_unique<MockPayloadDescriptorHandler>();
 		handler->isKeyFrame = true;
-		packet->SetPayloadDescriptorHandler(handler);
+		packet->SetPayloadDescriptorHandler(std::move(handler));
 
 		result = manager->ProcessRtpPacket(
 		  packet.get(), /*lastSentPacketHasMarker*/ false, /*clockRate*/ 90000, /*maxPacketTs*/ 0);
@@ -449,7 +455,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		  std::addressof(listener),
 		  /*preferredLayers*/ { 2, 2 },
 		  /*keyFrameSupported*/ false);
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(0, 0);
@@ -460,9 +466,9 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 
 		// Complete sync with a keyframe (SVC always requires keyframe for sync).
 		packet->SetSequenceNumber(1);
-		auto* handler       = new MockPayloadDescriptorHandler();
+		auto handler        = std::make_unique<MockPayloadDescriptorHandler>();
 		handler->isKeyFrame = true;
-		packet->SetPayloadDescriptorHandler(handler);
+		packet->SetPayloadDescriptorHandler(std::move(handler));
 		manager->ProcessRtpPacket(
 		  packet.get(), /*lastSentPacketHasMarker*/ false, /*clockRate*/ 90000, /*maxPacketTs*/ 0);
 
@@ -485,7 +491,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		  /*keyFrameSupported*/ false,
 		  RTC::Media::Kind::VIDEO,
 		  std::move(encodingContext));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(0, 0);
@@ -496,22 +502,65 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 
 		// Complete sync with a keyframe (SVC always requires keyframe for sync).
 		packet->SetSequenceNumber(1);
-		auto* handler       = new MockPayloadDescriptorHandler();
+		auto handler        = std::make_unique<MockPayloadDescriptorHandler>();
 		handler->isKeyFrame = true;
-		packet->SetPayloadDescriptorHandler(handler);
+		packet->SetPayloadDescriptorHandler(std::move(handler));
 		manager->ProcessRtpPacket(
 		  packet.get(), /*lastSentPacketHasMarker*/ false, /*clockRate*/ 90000, /*maxPacketTs*/ 0);
 
 		// Set a handler whose Process() returns false.
 		packet->SetSequenceNumber(2);
-		handler                = new MockPayloadDescriptorHandler();
+		handler                = std::make_unique<MockPayloadDescriptorHandler>();
 		handler->processResult = false;
-		packet->SetPayloadDescriptorHandler(handler);
+		packet->SetPayloadDescriptorHandler(std::move(handler));
 
 		auto result = manager->ProcessRtpPacket(
 		  packet.get(), /*lastSentPacketHasMarker*/ false, /*clockRate*/ 90000, /*maxPacketTs*/ 0);
 
 		REQUIRE(result.type == RtpPacketProcessResult::Type::DROP);
+	}
+
+	// Layer switching watches every frame of the stream, so the layers may well
+	// move in one that is not forwarded. In K-SVC the switch points of the decode
+	// target being sent are frames of a lower spatial layer, which the Consumer
+	// is never given, so a change made there must be reported all the same.
+	SECTION("ProcessRtpPacket() reports a layer change made in a dropped packet")
+	{
+		MockListener listener;
+		auto encodingContext = std::make_unique<MockEncodingContext>();
+		auto manager         = createManager(
+		  std::addressof(listener),
+		  /*preferredLayers*/ { 2, 2 },
+		  /*keyFrameSupported*/ false,
+		  RTC::Media::Kind::VIDEO,
+		  std::move(encodingContext));
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
+
+		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
+		manager->UpdateTargetLayers(0, 0);
+
+		manager->OnTransportConnected();
+		manager->UpdateTargetLayers(0, 0);
+
+		packet->SetSequenceNumber(1);
+		auto handler        = std::make_unique<MockPayloadDescriptorHandler>();
+		handler->isKeyFrame = true;
+		packet->SetPayloadDescriptorHandler(std::move(handler));
+		manager->ProcessRtpPacket(
+		  packet.get(), /*lastSentPacketHasMarker*/ false, /*clockRate*/ 90000, /*maxPacketTs*/ 0);
+
+		// A frame that moves the temporal layer and is then filtered out.
+		packet->SetSequenceNumber(2);
+		handler                     = std::make_unique<MockPayloadDescriptorHandler>();
+		handler->processResult      = false;
+		handler->temporalLayerToSet = 2;
+		packet->SetPayloadDescriptorHandler(std::move(handler));
+
+		auto result = manager->ProcessRtpPacket(
+		  packet.get(), /*lastSentPacketHasMarker*/ false, /*clockRate*/ 90000, /*maxPacketTs*/ 0);
+
+		REQUIRE(result.type == RtpPacketProcessResult::Type::DROP);
+		REQUIRE(result.temporalLayerChanged);
 	}
 
 	SECTION("ProcessRtpPacket() returns FORWARD for normal packets after sync")
@@ -521,7 +570,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		  std::addressof(listener),
 		  /*preferredLayers*/ { 2, 2 },
 		  /*keyFrameSupported*/ false);
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(0, 0);
@@ -532,9 +581,9 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 
 		// Complete sync with a keyframe (SVC always requires keyframe for sync).
 		packet->SetSequenceNumber(1);
-		auto* handler       = new MockPayloadDescriptorHandler();
+		auto handler        = std::make_unique<MockPayloadDescriptorHandler>();
 		handler->isKeyFrame = true;
-		packet->SetPayloadDescriptorHandler(handler);
+		packet->SetPayloadDescriptorHandler(std::move(handler));
 		manager->ProcessRtpPacket(
 		  packet.get(), /*lastSentPacketHasMarker*/ false, /*clockRate*/ 90000, /*maxPacketTs*/ 0);
 
@@ -556,7 +605,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		  std::addressof(listener),
 		  /*preferredLayers*/ { 2, 2 },
 		  /*keyFrameSupported*/ false);
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(0, 0);
@@ -567,9 +616,9 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 
 		// Sync with a keyframe — SVC always requires one.
 		packet->SetSequenceNumber(1);
-		auto* handler       = new MockPayloadDescriptorHandler();
+		auto handler        = std::make_unique<MockPayloadDescriptorHandler>();
 		handler->isKeyFrame = true;
-		packet->SetPayloadDescriptorHandler(handler);
+		packet->SetPayloadDescriptorHandler(std::move(handler));
 		auto result = manager->ProcessRtpPacket(
 		  packet.get(), /*lastSentPacketHasMarker*/ false, /*clockRate*/ 90000, /*maxPacketTs*/ 0);
 
@@ -589,7 +638,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(1, 1);
@@ -608,7 +657,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 
@@ -623,7 +672,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 
@@ -643,7 +692,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 
@@ -656,7 +705,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 
@@ -667,7 +716,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(0, 0);
@@ -683,7 +732,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		listener.isActive = false;
 
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 
@@ -703,7 +752,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(0, 0);
@@ -719,7 +768,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(1, 0);
@@ -738,7 +787,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		  std::addressof(listener),
 		  /*preferredLayers*/ { 2, 2 },
 		  /*keyFrameSupported*/ false);
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(0, 0);
@@ -762,7 +811,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		  std::addressof(listener),
 		  /*preferredLayers*/ { 2, 2 },
 		  /*keyFrameSupported*/ false);
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(0, 0);
@@ -772,9 +821,9 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		manager->UpdateTargetLayers(0, 0);
 
 		packet->SetSequenceNumber(1);
-		auto* handler       = new MockPayloadDescriptorHandler();
+		auto handler        = std::make_unique<MockPayloadDescriptorHandler>();
 		handler->isKeyFrame = true;
-		packet->SetPayloadDescriptorHandler(handler);
+		packet->SetPayloadDescriptorHandler(std::move(handler));
 		manager->ProcessRtpPacket(
 		  packet.get(), /*lastSentPacketHasMarker*/ false, /*clockRate*/ 90000, /*maxPacketTs*/ 0);
 
@@ -816,7 +865,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(1, 1);
@@ -834,7 +883,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(2, 2);
@@ -890,7 +939,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		  std::addressof(listener),
 		  /*preferredLayers*/ { 2, 2 },
 		  /*keyFrameSupported*/ false);
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(0, 0);
@@ -900,9 +949,9 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		manager->UpdateTargetLayers(0, 0);
 
 		packet->SetSequenceNumber(1);
-		auto* handler       = new MockPayloadDescriptorHandler();
+		auto handler        = std::make_unique<MockPayloadDescriptorHandler>();
 		handler->isKeyFrame = true;
-		packet->SetPayloadDescriptorHandler(handler);
+		packet->SetPayloadDescriptorHandler(std::move(handler));
 		manager->ProcessRtpPacket(
 		  packet.get(), /*lastSentPacketHasMarker*/ false, /*clockRate*/ 90000, /*maxPacketTs*/ 0);
 
@@ -920,9 +969,9 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 
 		// SVC requires a keyframe to complete sync.
 		packet->SetSequenceNumber(3);
-		handler             = new MockPayloadDescriptorHandler();
+		handler             = std::make_unique<MockPayloadDescriptorHandler>();
 		handler->isKeyFrame = true;
-		packet->SetPayloadDescriptorHandler(handler);
+		packet->SetPayloadDescriptorHandler(std::move(handler));
 		result = manager->ProcessRtpPacket(
 		  packet.get(), /*lastSentPacketHasMarker*/ false, /*clockRate*/ 90000, /*maxPacketTs*/ 0);
 
@@ -934,7 +983,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager    = createManager(std::addressof(listener));
-		auto rtpStream0 = createRtpStreamRecv();
+		auto rtpStream0 = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream0.get(), MappedSsrc);
 
@@ -942,7 +991,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		// gone before creating the one replacing it.
 		rtpStream0.reset();
 
-		auto rtpStream1 = createRtpStreamRecv();
+		auto rtpStream1 = createRtpStreamRecv(MappedSsrc);
 
 		// Replace with a new stream.
 		manager->ProducerNewRtpStream(rtpStream1.get(), MappedSsrc);
@@ -957,7 +1006,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 		manager->UpdateTargetLayers(1, 1);
@@ -984,7 +1033,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 
@@ -1071,7 +1120,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 
@@ -1316,7 +1365,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 	{
 		MockListener listener;
 		auto manager   = createManager(std::addressof(listener));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 
@@ -1339,7 +1388,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		  /*keyFrameSupported*/ true,
 		  RTC::Media::Kind::VIDEO,
 		  std::move(encodingContext));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 
@@ -1365,7 +1414,7 @@ SCENARIO("SvcProducerStreamManager", "[rtp][producerstreammanager][svc]")
 		  /*keyFrameSupported*/ true,
 		  RTC::Media::Kind::VIDEO,
 		  std::move(encodingContext));
-		auto rtpStream = createRtpStreamRecv();
+		auto rtpStream = createRtpStreamRecv(MappedSsrc);
 
 		manager->ProducerRtpStream(rtpStream.get(), MappedSsrc);
 

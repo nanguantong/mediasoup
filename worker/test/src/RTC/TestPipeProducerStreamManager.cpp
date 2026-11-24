@@ -6,13 +6,13 @@
 #include "mocks/include/MockShared.hpp"
 #include <catch2/catch_test_macros.hpp>
 
-namespace
+SCENARIO("PipeProducerStreamManager", "[rtp][producerstreammanager][pipe]")
 {
-	using RtpPacketProcessResult = RTC::ProducerStreamManager::RtpPacketProcessResult;
-
 	constexpr uint32_t MappedSsrc0 = 1000;
 	constexpr uint32_t MappedSsrc1 = 2000;
 	constexpr uint32_t MappedSsrc2 = 3000;
+
+	using RtpPacketProcessResult = RTC::ProducerStreamManager::RtpPacketProcessResult;
 
 	class MockListener : public RTC::ProducerStreamManager::Listener
 	{
@@ -46,14 +46,14 @@ namespace
 
 	public:
 		bool isActive{ true };
-		int keyFrameRequestCount{ 0 };
+		uint32_t keyFrameRequestCount{ 0 };
 		std::vector<uint32_t> keyFrameRequestedSsrcs;
 	};
 
 	class MockPayloadDescriptorHandler : public RTC::RTP::Codecs::PayloadDescriptorHandler
 	{
 	public:
-		explicit MockPayloadDescriptorHandler()  = default;
+		MockPayloadDescriptorHandler()           = default;
 		~MockPayloadDescriptorHandler() override = default;
 		void Dump(int /*indentation*/) const override
 		{
@@ -64,13 +64,6 @@ namespace
 		  bool& /*marker*/) override
 		{
 			return true;
-		}
-		void RtpPacketChanged(RTC::RTP::Packet* /*packet*/) override
-		{
-		}
-		std::unique_ptr<RTC::RTP::Codecs::PayloadDescriptor::Encoder> GetEncoder() const override
-		{
-			return nullptr;
 		}
 		void Encode(
 		  RTC::RTP::Packet* /*packet*/, RTC::RTP::Codecs::PayloadDescriptor::Encoder* /*encoder*/) override
@@ -96,18 +89,19 @@ namespace
 		bool isKeyFrame{ false };
 	};
 
-	// NOLINTNEXTLINE(readability-identifier-naming)
 	mocks::MockShared shared(/*getTimeUs*/
 	                         []() -> int64_t
 	                         {
 		                         return DepLibUV::GetTimeUs();
 	                         });
 
-	std::unique_ptr<RTC::PipeProducerStreamManager> createManager(
-	  MockListener* listener,
-	  const std::vector<uint32_t>& ssrcs = { MappedSsrc0, MappedSsrc1, MappedSsrc2 },
-	  bool keyFrameSupported             = true,
-	  RTC::Media::Kind kind              = RTC::Media::Kind::VIDEO)
+	const auto createManager =
+	  [&shared](
+	    MockListener* listener,
+	    const std::vector<uint32_t>& ssrcs,
+	    bool keyFrameSupported = true,
+	    RTC::Media::Kind kind =
+	      RTC::Media::Kind::VIDEO) -> std::unique_ptr<RTC::PipeProducerStreamManager>
 	{
 		std::vector<RTC::RtpEncodingParameters> consumableRtpEncodings;
 
@@ -128,11 +122,8 @@ namespace
 		  keyFrameSupported,
 		  listener,
 		  std::addressof(shared));
-	}
-} // namespace
+	};
 
-SCENARIO("PipeProducerStreamManager", "[rtp][producerstreammanager][pipe]")
-{
 	std::unique_ptr<RTC::RTP::Packet> packet(
 	  RTC::RTP::Packet::Factory(rtpCommon::FactoryBuffer, sizeof(rtpCommon::FactoryBuffer)));
 
@@ -143,7 +134,7 @@ SCENARIO("PipeProducerStreamManager", "[rtp][producerstreammanager][pipe]")
 	SECTION("IsActive() returns listener state")
 	{
 		MockListener listener;
-		auto manager = createManager(std::addressof(listener));
+		auto manager = createManager(std::addressof(listener), { MappedSsrc0, MappedSsrc1, MappedSsrc2 });
 
 		REQUIRE(manager->IsActive() == true);
 
@@ -184,7 +175,7 @@ SCENARIO("PipeProducerStreamManager", "[rtp][producerstreammanager][pipe]")
 	SECTION("ProcessRtpPacket() returns BUFFER when sync required and packet is not a key frame")
 	{
 		MockListener listener;
-		auto manager = createManager(std::addressof(listener));
+		auto manager = createManager(std::addressof(listener), { MappedSsrc0, MappedSsrc1, MappedSsrc2 });
 
 		manager->OnTransportConnected();
 
@@ -238,16 +229,16 @@ SCENARIO("PipeProducerStreamManager", "[rtp][producerstreammanager][pipe]")
 	SECTION("ProcessRtpPacket() returns FORWARD with sendBufferedPackets on key frame sync")
 	{
 		MockListener listener;
-		auto manager = createManager(std::addressof(listener));
+		auto manager = createManager(std::addressof(listener), { MappedSsrc0, MappedSsrc1, MappedSsrc2 });
 
 		manager->OnTransportConnected();
 
 		packet->SetSsrc(MappedSsrc0);
 		packet->SetSequenceNumber(50);
 
-		auto* handler       = new MockPayloadDescriptorHandler();
+		auto handler        = std::make_unique<MockPayloadDescriptorHandler>();
 		handler->isKeyFrame = true;
-		packet->SetPayloadDescriptorHandler(handler);
+		packet->SetPayloadDescriptorHandler(std::move(handler));
 
 		auto result = manager->ProcessRtpPacket(packet.get(), false, 0, 0);
 
@@ -339,7 +330,7 @@ SCENARIO("PipeProducerStreamManager", "[rtp][producerstreammanager][pipe]")
 	{
 		MockListener listener;
 		listener.isActive = false;
-		auto manager      = createManager(std::addressof(listener));
+		auto manager = createManager(std::addressof(listener), { MappedSsrc0, MappedSsrc1, MappedSsrc2 });
 
 		manager->OnTransportConnected();
 
@@ -405,7 +396,7 @@ SCENARIO("PipeProducerStreamManager", "[rtp][producerstreammanager][pipe]")
 
 		manager->OnTransportConnected();
 
-		const int countBefore = listener.keyFrameRequestCount;
+		const uint32_t countBefore = listener.keyFrameRequestCount;
 
 		manager->OnResumed();
 
@@ -448,7 +439,7 @@ SCENARIO("PipeProducerStreamManager", "[rtp][producerstreammanager][pipe]")
 	SECTION("RecalculateTargetLayers() always returns false")
 	{
 		MockListener listener;
-		auto manager = createManager(std::addressof(listener));
+		auto manager = createManager(std::addressof(listener), { MappedSsrc0, MappedSsrc1, MappedSsrc2 });
 
 		RTC::ConsumerTypes::VideoLayers newTargetLayers;
 
@@ -458,7 +449,7 @@ SCENARIO("PipeProducerStreamManager", "[rtp][producerstreammanager][pipe]")
 	SECTION("GetBitrateOptions() offers a single point of 0 while no Producer stream has arrived")
 	{
 		MockListener listener;
-		auto manager = createManager(std::addressof(listener));
+		auto manager = createManager(std::addressof(listener), { MappedSsrc0, MappedSsrc1, MappedSsrc2 });
 
 		const auto bitrateOptions = manager->GetBitrateOptions(DepLibUV::GetTimeMs());
 

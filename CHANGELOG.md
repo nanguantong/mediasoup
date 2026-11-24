@@ -2,7 +2,47 @@
 
 ### NEXT
 
-- New RTCP: Use new RTCP stack for generated BWE RTCP packets ([PR #2039](https://github.com/versatica/mediasoup/pull/2039)).
+- Worker: Complete Dependency Descriptor implementation ([PR #2015](https://github.com/versatica/mediasoup/pull/2015)).
+- Worker: Don’t take a template dependency structure older than the one in use ([PR #2047](https://github.com/versatica/mediasoup/pull/2047)).
+- New RTCP stack ([task #2049](https://github.com/versatica/mediasoup/issues/2049)).
+- Worker: Rewrite the Dependency Descriptor frame numbers across stream switches ([PR #2048](https://github.com/versatica/mediasoup/pull/2048)).
+- Modernize C++ code ([PR #2060](https://github.com/versatica/mediasoup/pull/2060), [PR #2063](https://github.com/versatica/mediasoup/pull/2063), [PR #2064](https://github.com/versatica/mediasoup/pull/2064)):
+  - Use `unique_ptr` instead of holding raw pointers.
+  - `WebRtcTransport` and `WebRtcServer`: Use `announcedAddress` (it was missing).
+  - Fix crash in `Producer.cpp`: An RTP packet with SSRC 0 matched encodings without `ssrc` (0 means "no SSRC") and hit an `MS_ASSERT` in `CreateRtpStream()`.
+  - Fix crash in `PlainTransport` with comedia and SRTP: An SCTP packet received before `connect()` set the tuple and the next sent RTP packet dereferenced a null SRTP send session.
+  - Fix crash (use-after-free) in `Transport` when the remote SCTP peer resets the same stream id twice in a single request (the same `DataConsumer` was closed twice).
+  - Fix crash in `Producer` when an encoding has both `ssrc` and `rid` and a packet with that `rid` but another SSRC arrives before one with the encoding `ssrc`.
+  - Fix `RTC::RtpParameters::Parameters`: RTP parameters with an array of integers value were stored as a boolean `true`.
+  - Fix `RTC::Parameters`: Boolean parameters were missing in dumps.
+  - Fix `Producer`: RTX packets were discarded forever if the stream of their encoding was created via RID with a SSRC other than the encoding one, or could be bound to the wrong stream if several encodings had no SSRC.
+  - Fix `PlainTransport`: A failed `connect()` with SRTP left the SRTP crypto suite and local key changed.
+  - Fix `PlainTransport`: With comedia, `connect()` notified the transport as connected before having a tuple, and again once the first packet set it.
+  - Validate that `rtcMinPort` and any port range never start at port 0.
+  - Fix `ICE::StunPacket::CheckAuthentication()`: The username fragment was compared as a null terminated C string instead of by its length.
+  - Fix `ICE::StunPacket::IsStun()`: Packets whose first byte is 3 were not considered STUN (RFC 7983).
+  - Fix `ICE::IceServer`: In 'completed' state, a Binding request with USE-CANDIDATE and a nomination not higher than the current one changed the selected tuple (ICE renomination).
+  - Fix `ICE::IceServer`: A Binding request with ICE-CONTROLLED and a tie-breaker of 0 was not rejected with a 487 (role conflict).
+  - SCTP: Fix receiver window wrapping around after sending with a zero receiver window.
+  - SCTP: Fix SACK acking unreceived TSNs more than 65535 ahead of the cumulative TSN ack.
+  - SCTP: Fix inverted handling of unknown chunk types, which stopped processing the packet when it had to skip the chunk and continue, and vice versa.
+  - SCTP: Fix complete received messages not being delivered when they follow a message larger than `maxReceiveMessageSize`.
+  - SCTP: Fix worker crash when a COOKIE-ECHO matching the association arrives while it is shutting down.
+  - SCTP: Fix worker crash when a restarted peer sends a COOKIE-ECHO in SHUTDOWN_SENT state.
+  - SCTP: Fix worker crash and association being re-established when a COOKIE-ECHO of a restarted peer or of simultaneous associations arrives while it is shutting down.
+  - SCTP: Fix closed association being reopened by a received COOKIE-ECHO.
+  - SCTP: Fix chunks bundled after an invalid or mismatching COOKIE-ECHO being processed without verification tag validation.
+  - SCTP: Fix association being closed by an INIT with zero outbound or inbound streams, which must only be discarded and answered with an ABORT as per RFC 9260.
+  - SCTP: Fix association closure being notified again when already closed.
+  - SCTP: Fix expired chunks being retransmitted instead of abandoned.
+  - SCTP: Fix "connecting" SCTP state being notified twice when the association is opened by mediasoup.
+  - SCTP: Fix OUTGOING-SSN-RESET-REQUEST and INCOMING-SSN-RESET-REQUEST parameters with odd length being accepted.
+  - SCTP: Performance: Run expensive internal consistency checks only in test builds, since they walk every outstanding chunk, stream and queued message on each send and SACK.
+- Worker: `SeqManager` fixes ([PR #2068](https://github.com/versatica/mediasoup/pull/2068)):
+  - `maxForwarded` was not updated when the forwarded input was lower than a dropped one, so a later drop lower than it was accounted and the next outputs repeated or went back, credits to @mstyura.
+  - `Sync()` did not reset `maxForwarded`, so a drop lower than the sync point was accounted (repeating an already emitted output) while an out of order drop above it was not (leaving an unnecessary gap).
+- Consumer: Drop RTP packet if `SeqManager.Input()` returns `false` ([PR #2068](https://github.com/versatica/mediasoup/pull/2068)).
+- BWE: Fix Transport-CC feedback reporting missing RTP packets twice ([PR #2073](https://github.com/versatica/mediasoup/pull/2073)).
 
 ### 3.32.2
 

@@ -1,6 +1,7 @@
 /**
- * NOTE: This code cannot log to the Channel since this is the base code of the
- * Channel.
+ * @remarks
+ * - This code cannot log to the Channel since this is the base code of the
+ *   Channel.
  */
 
 #define MS_CLASS "UnixStreamSocketHandle"
@@ -10,15 +11,19 @@
 #include "DepLibUV.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
+#include <cstdlib> // std::abort()
 #include <cstring> // std::memcpy()
+#include <exception>
 
 /* Static methods for UV callbacks. */
 
+// libuv imposes the callback signature.
+// NOLINTNEXTLINE(misc-const-correctness)
 inline static void onAlloc(uv_handle_t* handle, size_t suggestedSize, uv_buf_t* buf)
 {
 	MS_TRACE_STD();
 
-	auto* socket = static_cast<UnixStreamSocketHandle*>(handle->data);
+	auto* const socket = static_cast<UnixStreamSocketHandle*>(handle->data);
 
 	if (socket)
 	{
@@ -26,11 +31,13 @@ inline static void onAlloc(uv_handle_t* handle, size_t suggestedSize, uv_buf_t* 
 	}
 }
 
+// libuv imposes the callback signature.
+// NOLINTNEXTLINE(misc-const-correctness)
 inline static void onRead(uv_stream_t* handle, ssize_t nread, const uv_buf_t* buf)
 {
 	MS_TRACE_STD();
 
-	auto* socket = static_cast<UnixStreamSocketHandle*>(handle->data);
+	auto* const socket = static_cast<UnixStreamSocketHandle*>(handle->data);
 
 	if (socket)
 	{
@@ -38,13 +45,15 @@ inline static void onRead(uv_stream_t* handle, ssize_t nread, const uv_buf_t* bu
 	}
 }
 
+// libuv imposes the callback signature.
+// NOLINTNEXTLINE(misc-const-correctness)
 inline static void onWrite(uv_write_t* req, int status)
 {
 	MS_TRACE_STD();
 
-	auto* writeData = static_cast<UnixStreamSocketHandle::UvWriteData*>(req->data);
-	auto* handle    = req->handle;
-	auto* socket    = static_cast<UnixStreamSocketHandle*>(handle->data);
+	const auto* const writeData     = static_cast<UnixStreamSocketHandle::UvWriteData*>(req->data);
+	const uv_stream_t* const handle = req->handle;
+	auto* const socket              = static_cast<UnixStreamSocketHandle*>(handle->data);
 
 	// Just notify the UnixStreamSocketHandle when error.
 	if (socket && status != 0)
@@ -65,11 +74,13 @@ inline static void onClosePipe(uv_handle_t* handle)
 	delete reinterpret_cast<uv_pipe_t*>(handle);
 }
 
+// libuv imposes the callback signature.
+// NOLINTNEXTLINE(misc-const-correctness)
 inline static void onShutdown(uv_shutdown_t* req, int /*status*/)
 {
 	MS_TRACE_STD();
 
-	auto* handle = req->handle;
+	uv_stream_t* const handle = req->handle;
 
 	delete req;
 
@@ -133,13 +144,22 @@ UnixStreamSocketHandle::~UnixStreamSocketHandle()
 
 	if (!this->closed)
 	{
-		Close();
+		try
+		{
+			Close();
+		}
+		// NOTE: MS_ABORT() throws in the lib build, and an exception cannot leave
+		// a destructor.
+		catch (const std::exception&)
+		{
+			std::abort();
+		}
 	}
 
 	delete[] this->buffer;
 }
 
-// NOTE: In UnixStreamSocketHandle we need a poublic Close() method and cannot
+// NOTE: In UnixStreamSocketHandle we need a public Close() method and cannot
 // just rely on the destructor plus a private InternalClose() method.
 void UnixStreamSocketHandle::Close()
 {
@@ -164,14 +184,7 @@ void UnixStreamSocketHandle::Close()
 
 		if (err != 0)
 		{
-			try
-			{
-				MS_ABORT("uv_read_stop() failed: %s", uv_strerror(err));
-			}
-			catch (const std::exception& e)
-			{
-				MS_ERROR("%s", e.what());
-			}
+			MS_ABORT("uv_read_stop() failed: %s", uv_strerror(err));
 		}
 	}
 
@@ -179,21 +192,16 @@ void UnixStreamSocketHandle::Close()
 	if (this->role == UnixStreamSocketHandle::Role::PRODUCER && !this->hasError && !this->isClosedByPeer)
 	{
 		// Use uv_shutdown() so pending data to be written will be sent to the peer before closing.
-		auto* req = new uv_shutdown_t;
+		auto* const req = new uv_shutdown_t;
+
 		req->data = static_cast<void*>(this);
-		err       = uv_shutdown(
+
+		err = uv_shutdown(
 		  req, reinterpret_cast<uv_stream_t*>(this->uvHandle), static_cast<uv_shutdown_cb>(onShutdown));
 
 		if (err != 0)
 		{
-			try
-			{
-				MS_ABORT("uv_shutdown() failed: %s", uv_strerror(err));
-			}
-			catch (const std::exception& e)
-			{
-				MS_ERROR("%s", e.what());
-			}
+			MS_ABORT("uv_shutdown() failed: %s", uv_strerror(err));
 		}
 	}
 	// Otherwise directly close the socket.
@@ -225,7 +233,7 @@ void UnixStreamSocketHandle::Write(const uint8_t* data, size_t len)
 	  uv_try_write(reinterpret_cast<uv_stream_t*>(this->uvHandle), std::addressof(buffer), 1);
 
 	// All the data was written. Done.
-	if (written == static_cast<int>(len))
+	if (std::cmp_equal(written, len))
 	{
 		return;
 	}
@@ -245,7 +253,8 @@ void UnixStreamSocketHandle::Write(const uint8_t* data, size_t len)
 	}
 
 	const size_t pendingLen = len - written;
-	auto* writeData         = new UvWriteData(pendingLen);
+
+	auto* const writeData = new UvWriteData(pendingLen);
 
 	writeData->req.data = static_cast<void*>(writeData);
 	std::memcpy(writeData->store, data + written, pendingLen);
@@ -263,16 +272,17 @@ void UnixStreamSocketHandle::Write(const uint8_t* data, size_t len)
 	{
 		MS_ERROR_STD("uv_write() failed: %s", uv_strerror(err));
 
-		// Delete the UvSendData struct.
+		// Delete the UvWriteData struct.
 		delete writeData;
 	}
 }
 
 uint32_t UnixStreamSocketHandle::GetSendBufferSize() const
 {
-	MS_TRACE();
+	MS_TRACE_STD();
 
 	int size{ 0 };
+
 	const int err =
 	  uv_send_buffer_size(reinterpret_cast<uv_handle_t*>(this->uvHandle), std::addressof(size));
 
@@ -286,7 +296,7 @@ uint32_t UnixStreamSocketHandle::GetSendBufferSize() const
 
 void UnixStreamSocketHandle::SetSendBufferSize(uint32_t size)
 {
-	MS_TRACE();
+	MS_TRACE_STD();
 
 	auto sizeInt = static_cast<int>(size);
 
@@ -306,9 +316,10 @@ void UnixStreamSocketHandle::SetSendBufferSize(uint32_t size)
 
 uint32_t UnixStreamSocketHandle::GetRecvBufferSize() const
 {
-	MS_TRACE();
+	MS_TRACE_STD();
 
 	int size{ 0 };
+
 	const int err =
 	  uv_recv_buffer_size(reinterpret_cast<uv_handle_t*>(this->uvHandle), std::addressof(size));
 
@@ -322,7 +333,7 @@ uint32_t UnixStreamSocketHandle::GetRecvBufferSize() const
 
 void UnixStreamSocketHandle::SetRecvBufferSize(uint32_t size)
 {
-	MS_TRACE();
+	MS_TRACE_STD();
 
 	auto sizeInt = static_cast<int>(size);
 

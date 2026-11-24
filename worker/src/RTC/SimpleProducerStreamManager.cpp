@@ -91,13 +91,13 @@ namespace RTC
 	}
 
 	void SimpleProducerStreamManager::ProducerRtpStreamScore(
-	  RTC::RTP::RtpStreamRecv* /*rtpStream*/, uint8_t /*score*/, uint8_t /*previousScore*/)
+	  const RTC::RTP::RtpStreamRecv* /*rtpStream*/, uint8_t /*score*/, uint8_t /*previousScore*/)
 	{
 		MS_TRACE();
 	}
 
 	void SimpleProducerStreamManager::ProducerRtcpSenderReport(
-	  RTC::RTP::RtpStreamRecv* /*rtpStream*/, bool /*first*/)
+	  const RTC::RTP::RtpStreamRecv* /*rtpStream*/, bool /*first*/)
 	{
 		MS_TRACE();
 
@@ -237,6 +237,13 @@ namespace RTC
 		result.marker              = marker;
 		result.sendBufferedPackets = sendBufferedPackets;
 
+		if (this->encodingContext)
+		{
+			// Take the payload encoder for this Consumer, so that its retransmissions
+			// are rewritten the very same way.
+			result.encoder = std::move(this->encodingContext->encoder);
+		}
+
 		return result;
 	}
 
@@ -249,7 +256,8 @@ namespace RTC
 			return;
 		}
 
-		auto mappedSsrc = this->consumableRtpEncodings[0].ssrc;
+		// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+		const auto mappedSsrc = this->consumableRtpEncodings[0].ssrc;
 
 		this->listener->OnProducerStreamManagerKeyFrameRequested(mappedSsrc);
 	}

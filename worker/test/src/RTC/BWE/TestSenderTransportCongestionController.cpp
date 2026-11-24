@@ -1,12 +1,12 @@
 #include "common.hpp"
 #include "RTC/BWE/SenderTransportCongestionController.hpp"
 #include "RTC/Consts.hpp"
-#include "RTC/NEW_RTCP/packet/TransportWideCcPacket.hpp"
-#include "RTC/RTP/HeaderExtensionIds.hpp"
+#include "RTC/RTCP/packet/TransportWideCcPacket.hpp"
+#include "RTC/RTP/ExtensionMapping.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "Utils.hpp"
-#include "test/include/RTC/NEW_RTCP/rtcpCommon.hpp"
+#include "test/include/RTC/RTCP/rtcpCommon.hpp"
 #include "test/include/RTC/RTP/rtpCommon.hpp"
 #include "mocks/include/MockShared.hpp"
 #include <catch2/catch_test_macros.hpp>
@@ -111,14 +111,14 @@ SCENARIO("BWE SenderTransportCongestionController", "[bwe][sendertransportconges
 			{ RTC::RtpHeaderExtensionUri::Type::ABS_SEND_TIME,        AbsSendTimeId, /*len*/ 3, rtpCommon::DataBuffer }
 		};
 
-		REQUIRE(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions) == true);
+		REQUIRE(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::OneByte, extensions) == true);
 
-		RTC::RTP::HeaderExtensionIds headerExtensionIds;
+		RTC::RTP::ExtensionMapping extensionMapping;
 
-		headerExtensionIds.transportWideCc01 = TransportWideCc01Id;
-		headerExtensionIds.absSendTime       = AbsSendTimeId;
+		extensionMapping.transportWideCc01 = TransportWideCc01Id;
+		extensionMapping.absSendTime       = AbsSendTimeId;
 
-		packet->AssignExtensionIds(headerExtensionIds);
+		packet->SetExtensionMapping(extensionMapping);
 		packet->SetPayloadLength(PayloadSize);
 
 		return packet;
@@ -145,14 +145,14 @@ SCENARIO("BWE SenderTransportCongestionController", "[bwe][sendertransportconges
 	                              uint16_t baseSequenceNumber,
 	                              int64_t baseTimeUs,
 	                              const std::vector<std::pair<uint16_t, int64_t>>& receivedPackets)
-	  -> std::unique_ptr<RTC::NEW_RTCP::TransportWideCcPacket>
+	  -> std::unique_ptr<RTC::RTCP::TransportWideCcPacket>
 	{
 		constexpr uint32_t SenderSsrc{ 2222 };
 		constexpr uint32_t MediaSsrc{ 3333 };
 		constexpr size_t RtcpMtu{ 1200 };
 
-		std::unique_ptr<RTC::NEW_RTCP::TransportWideCcPacket> feedback(
-		  RTC::NEW_RTCP::TransportWideCcPacket::Factory(
+		std::unique_ptr<RTC::RTCP::TransportWideCcPacket> feedback(
+		  RTC::RTCP::TransportWideCcPacket::Factory(
 		    rtcpCommon::FactoryBuffer, RtcpMtu, /*includeDeltas*/ true));
 
 		feedback->SetSenderSsrc(SenderSsrc);
@@ -456,12 +456,12 @@ SCENARIO("BWE SenderTransportCongestionController", "[bwe][sendertransportconges
 
 		audioPacket->SetSsrc(Ssrc);
 
-		RTC::RTP::HeaderExtensionIds headerExtensionIds;
+		RTC::RTP::ExtensionMapping extensionMapping;
 
-		headerExtensionIds.transportWideCc01 = TransportWideCc01Id;
-		headerExtensionIds.absSendTime       = AbsSendTimeId;
+		extensionMapping.transportWideCc01 = TransportWideCc01Id;
+		extensionMapping.absSendTime       = AbsSendTimeId;
 
-		audioPacket->AssignExtensionIds(headerExtensionIds);
+		audioPacket->SetExtensionMapping(extensionMapping);
 		audioPacket->SetPayloadLength(PayloadSize);
 
 		const auto audioSequenceNumber = senderTransportCongestionController.OnRtpPacketToBeSent(

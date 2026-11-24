@@ -93,6 +93,12 @@ namespace RTC
 			 */
 			static DataChunk* Factory(uint8_t* buffer, size_t bufferLength);
 
+			/**
+			 * Length (in bytes) of a DataChunk carrying a user data payload of the
+			 * given length, padding included.
+			 */
+			static size_t ComputeLengthFor(size_t userDataPayloadLength);
+
 		private:
 			/**
 			 * Parse a DataChunk.
@@ -215,7 +221,19 @@ namespace RTC
 				return GetVariableLengthValueLength();
 			}
 
-			void SetUserDataPayload(const uint8_t* userDataPayload, uint16_t userDataPayloadLength);
+			/**
+			 * @param userDataPayload - User data payload to copy into the chunk.
+			 * @param userDataPayloadLength - Length of the user data payload.
+			 *
+			 * @remarks
+			 * - The maximum `userDataPayloadLength` is 65519, that is, 65535 (the
+			 *   maximum value of the 16 bits Length field) minus
+			 *   `DataChunk::DataChunkHeaderLength`.
+			 * - Throws `MediaSoupError` if `userDataPayloadLength` is bigger than
+			 *   that or if the buffer has no room for it, and leaves the chunk
+			 *   untouched.
+			 */
+			void SetUserDataPayload(const uint8_t* userDataPayload, size_t userDataPayloadLength);
 
 			UserData MakeUserData() const final
 			{

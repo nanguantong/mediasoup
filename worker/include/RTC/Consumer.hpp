@@ -4,23 +4,22 @@
 #include "common.hpp"
 #include "Channel/ChannelRequest.hpp"
 #include "Channel/ChannelSocket.hpp"
-#include "FBS/consumer.h"
-#include "FBS/transport.h"
 #include "RTC/BWE/BitrateAllocator.hpp"
 #include "RTC/ConsumerTypes.hpp"
 #include "RTC/ProducerStreamManager.hpp"
-#include "RTC/RTCP/CompoundPacket.hpp"
-#include "RTC/RTCP/Feedback.hpp"
-#include "RTC/RTCP/FeedbackRtpNack.hpp"
-#include "RTC/RTCP/ReceiverReport.hpp"
-#include "RTC/RTCP/XrReceiverReferenceTime.hpp"
-#include "RTC/RTP/HeaderExtensionIds.hpp"
+#include "RTC/RTCP/packet/AnyPayloadSpecificFeedbackPacket.hpp"
+#include "RTC/RTCP/packet/AnyReportPacket.hpp"
+#include "RTC/RTCP/packet/NackPacket.hpp"
+#include "RTC/RTP/ExtensionMapping.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RTP/RtpStreamRecv.hpp"
 #include "RTC/RTP/RtpStreamSend.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "RTC/SeqManager.hpp"
 #include "SharedInterface.hpp"
+#include "Utils.hpp"
+#include <FBS/consumer.h>
+#include <FBS/transport.h>
 #include <ankerl/unordered_dense.h>
 #include <bitset>
 #include <map>
@@ -34,6 +33,7 @@ namespace RTC
 	                 public RTC::BWE::BitrateAllocator::Candidate,
 	                 public RTC::ProducerStreamManager::Listener
 	{
+	private:
 		using RetransmissionBuffer =
 		  std::map<uint16_t, std::shared_ptr<RTC::RTP::Packet>, RTC::SeqManager<uint16_t>::SeqLowerThan>;
 
@@ -78,6 +78,7 @@ namespace RTC
 		  const std::string& producerId,
 		  RTC::Consumer::Listener* listener,
 		  const FBS::Transport::ConsumeRequest* data);
+
 		~Consumer() override;
 
 		flatbuffers::Offset<FBS::Consumer::DumpResponse> FillBuffer(
@@ -102,9 +103,19 @@ namespace RTC
 			return this->rtpParameters;
 		}
 
-		const RTC::RTP::HeaderExtensionIds& GetRtpHeaderExtensionIds() const
+		const RTC::RTP::ExtensionMapping& GetRtpExtensionMapping() const
 		{
-			return this->rtpHeaderExtensionIds;
+			return this->rtpExtensionMapping;
+		}
+
+		/**
+		 * Whether this Consumer negotiated the Dependency Descriptor header
+		 * extension. Only then is the payload descriptor made out of it
+		 * used for this Consumer.
+		 */
+		bool PrefersDependencyDescriptor() const
+		{
+			return this->rtpExtensionMapping.dependencyDescriptor != 0;
 		}
 
 		RTC::RtpParameters::Type GetType() const
@@ -117,11 +128,11 @@ namespace RTC
 		 * the RTP header extension and the RTCP feedback.
 		 */
 		bool SupportsTransportCc() const;
+
 		/**
 		 * Whether this Consumer was negotiated with REMB, whose RTP header extension
 		 * is abs-send-time.
 		 */
-
 		bool SupportsRemb() const;
 
 		RTC::ConsumerTypes::VideoLayers GetPreferredLayers() const
@@ -137,6 +148,20 @@ namespace RTC
 		const std::vector<uint32_t>& GetRtxSsrcs() const
 		{
 			return this->rtxSsrcs;
+		}
+
+		std::vector<RTC::RTP::RtpStreamSend*> GetRtpStreams() const
+		{
+			std::vector<RTC::RTP::RtpStreamSend*> rtpStreams;
+
+			rtpStreams.reserve(this->rtpStreams.size());
+
+			for (const auto& rtpStream : this->rtpStreams)
+			{
+				rtpStreams.push_back(rtpStream.get());
+			}
+
+			return rtpStreams;
 		}
 
 		bool IsActive() const override
@@ -175,12 +200,13 @@ namespace RTC
 
 		void ProducerRtpStreamScores(const std::vector<uint8_t>* scores);
 
-		void ProducerRtpStreamScore(RTC::RTP::RtpStreamRecv* rtpStream, uint8_t score, uint8_t previousScore);
+		void ProducerRtpStreamScore(
+		  const RTC::RTP::RtpStreamRecv* rtpStream, uint8_t score, uint8_t previousScore);
 
-		void ProducerRtcpSenderReport(RTC::RTP::RtpStreamRecv* rtpStream, bool first);
+		void ProducerRtcpSenderReport(const RTC::RTP::RtpStreamRecv* rtpStream, bool first);
 
 		void ProducerSpatialLayerActivityChanged(
-		  RTC::RTP::RtpStreamRecv* rtpStream, uint8_t spatialLayer, bool isActive);
+		  const RTC::RTP::RtpStreamRecv* rtpStream, uint8_t spatialLayer, bool isActive);
 
 		void ProducerClosed();
 
@@ -192,11 +218,7 @@ namespace RTC
 		 * - While it is false there is nobody to answer a round, so nothing about
 		 *   bitrate or layers is told to the Transport.
 		 */
-		void SetBweManaged(bool bweManaged)
-		{
-			this->bweManaged = bweManaged;
-			this->producerStreamManager->SetBweManaged(bweManaged);
-		}
+		void SetBweManaged(bool bweManaged);
 
 		const std::string& GetBitrateAllocationId() const override;
 
@@ -211,29 +233,38 @@ namespace RTC
 		void SendRtpPacket(RTC::RTP::Packet* packet, std::shared_ptr<RTC::RTP::Packet>& sharedPacket);
 
 		/**
-		 * What each RTP stream of this Consumer reports in a RTCP compound packet,
-		 * if it is time to report.
+		 * Whether it is time for the RTP streams of this Consumer to report in a
+		 * RTCP compound packet.
 		 */
-		std::vector<RTC::RTCP::CompoundPacket::SendStreamItems> GetRtcp(int64_t nowUs);
+		[[nodiscard]] bool IsRtcpDue(int64_t nowUs) const
+		{
+			const int64_t elapsedMs = Utils::Time::TimeUsToMs(nowUs - this->lastRtcpSentAtUs);
+
+			return static_cast<float>(elapsedMs * 1.15) >= this->maxRtcpIntervalMs;
+		}
+
+		/**
+		 * Record the instant at which the RTP streams of this Consumer last
+		 * reported in a RTCP compound packet.
+		 */
+		void SetRtcpSentAtUs(int64_t sentAtUs);
 
 		/**
 		 * Worst remote fraction lost among the RTP streams of this Consumer.
 		 */
 		uint8_t GetWorstRemoteFractionLost(uint32_t mappedSsrc) const;
 
-		void ReceiveNack(RTC::RTCP::FeedbackRtpNackPacket* nackPacket);
+		void ReceiveRtcpNackPacket(const RTC::RTCP::NackPacket* nackPacket);
 
-		void ReceiveKeyFrameRequest(RTC::RTCP::FeedbackPs::MessageType messageType, uint32_t ssrc);
+		void ReceiveRtcpKeyFrameRequest(
+		  RTC::RTCP::AnyPayloadSpecificFeedbackPacket::MessageType messageType, uint32_t ssrc);
 
 		/**
-		 * @returns What this Receiver Report says about the link to the remote
+		 * @returns What this report block says about the link to the remote
 		 *   endpoint.
 		 */
-		RTC::RTP::RtpStreamSend::ReceiverReportResult ReceiveRtcpReceiverReport(
-		  RTC::RTCP::ReceiverReport* report, int64_t receivedAtUs);
-
-		void ReceiveRtcpXrReceiverReferenceTime(
-		  RTC::RTCP::ReceiverReferenceTime* report, int64_t receivedAtUs);
+		RTC::RTP::RtpStreamSend::ReceiverReportResult ReceiveRtcpReportBlock(
+		  const RTC::RTCP::AnyReportPacket::ReportBlock& reportBlock, int64_t receivedAtUs);
 
 		int64_t GetTransmissionRate(int64_t nowMs);
 
@@ -250,13 +281,13 @@ namespace RTC
 	private:
 		void EmitTraceEventRtpAndKeyFrameTypes(const RTC::RTP::Packet* packet, bool isRtx = false) const;
 
-		void EmitTraceEventPliType(uint32_t ssrc) const;
+		void EmitTraceEventRtcpPliType(uint32_t ssrc) const;
 
-		void EmitTraceEventFirType(uint32_t ssrc) const;
+		void EmitTraceEventRtcpFirType(uint32_t ssrc) const;
 
-		void EmitTraceEventNackType() const;
+		void EmitTraceEventRtcpNackType() const;
 
-		void EmitTraceEvent(flatbuffers::Offset<FBS::Consumer::TraceNotification>& notification) const;
+		void EmitTraceEvent(const flatbuffers::Offset<FBS::Consumer::TraceNotification>& notification) const;
 
 		void EmitScore() const;
 
@@ -306,12 +337,12 @@ namespace RTC
 		RTC::RtpParameters rtpParameters;
 		RTC::RtpParameters::Type type;
 		std::vector<RTC::RtpEncodingParameters> consumableRtpEncodings;
-		RTC::RTP::HeaderExtensionIds rtpHeaderExtensionIds;
+		RTC::RTP::ExtensionMapping rtpExtensionMapping;
 		const std::vector<uint8_t>* producerRtpStreamScores{ nullptr };
 		// Others.
 		std::bitset<128> supportedCodecPayloadTypes;
 		int64_t lastRtcpSentAtUs{ 0 };
-		int64_t maxRtcpIntervalMs{ 0 };
+		int64_t maxRtcpIntervalMs;
 		// Whether a bitrate allocation is running for this Transport. While it is
 		// false nobody would answer a round, so this one is told nothing about
 		// bitrate and its manager applies the layers it works out.
@@ -320,7 +351,7 @@ namespace RTC
 		TraceEventTypes traceEventTypes;
 		const bool pipe;
 		// Others.
-		std::vector<RTC::RTP::RtpStreamSend*> rtpStreams;
+		std::vector<std::unique_ptr<RTC::RTP::RtpStreamSend>> rtpStreams;
 		ankerl::unordered_dense::map<uint32_t, uint32_t> mapMappedSsrcSsrc;
 		ankerl::unordered_dense::map<uint32_t, RTC::RTP::RtpStreamSend*> mapSsrcRtpStream;
 		ankerl::unordered_dense::map<RTC::RTP::RtpStreamSend*, RTC::SeqManager<uint16_t>> mapRtpStreamRtpSeqManager;

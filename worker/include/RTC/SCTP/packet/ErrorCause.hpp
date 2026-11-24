@@ -45,7 +45,9 @@ namespace RTC
 		public:
 			/**
 			 * Error Cause Code.
-			 * NOTE: This field MUST be 2 bytes long.
+			 *
+			 * @remarks
+			 * - This field MUST be 2 bytes long.
 			 */
 			// NOLINTNEXTLINE(performance-enum-size)
 			enum class ErrorCauseCode : uint16_t
@@ -136,6 +138,7 @@ namespace RTC
 
 			virtual ErrorCauseCode GetCode() const final
 			{
+				// NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
 				return static_cast<ErrorCauseCode>(ntohs(static_cast<uint16_t>(GetHeaderPointer()->code)));
 			}
 
@@ -191,8 +194,9 @@ namespace RTC
 
 		private:
 			/**
-			 * NOTE: Return ErrorCauseHeader* instead of const ErrorCauseHeader*
-			 * since we may want to modify its fields.
+			 * @remarks
+			 * - Return ErrorCauseHeader* instead of const ErrorCauseHeader* since
+			 *   we may want to modify its fields.
 			 */
 			virtual ErrorCauseHeader* GetHeaderPointer() const final
 			{

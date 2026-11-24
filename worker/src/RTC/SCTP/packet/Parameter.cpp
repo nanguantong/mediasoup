@@ -12,6 +12,7 @@ namespace RTC
 		/* Class variables. */
 
 		// clang-format off
+		// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 		const ankerl::unordered_dense::map<Parameter::ParameterType, std::string> Parameter::ParameterType2String =
 		{
 			{ Parameter::ParameterType::HEARTBEAT_INFO,               "HEARTBEAT-INFO"               },
@@ -29,7 +30,7 @@ namespace RTC
 			{ Parameter::ParameterType::RECONFIGURATION_RESPONSE,     "RECONFIGURATION-RESPONSE"     },
 			{ Parameter::ParameterType::ADD_OUTGOING_STREAMS_REQUEST, "ADD-OUTGOING-STREAMS-REQUEST" },
 			{ Parameter::ParameterType::ADD_INCOMING_STREAMS_REQUEST, "ADD-INCOMING-STREAMS-REQUEST" },
-			{ Parameter::ParameterType::ZERO_CHECKSUM_ACCEPTABLE,     "ZERO-CHECKSUM-ACCEPTABLE"     },
+			{ Parameter::ParameterType::ZERO_CHECKSUM_ACCEPTABLE,     "ZERO-CHECKSUM-ACCEPTABLE"     }
 		};
 		// clang-format on
 
@@ -41,14 +42,16 @@ namespace RTC
 
 			static const std::string Unknown("UNKNOWN");
 
-			auto it = Parameter::ParameterType2String.find(parameterType);
+			const auto it = Parameter::ParameterType2String.find(parameterType);
 
 			if (it == Parameter::ParameterType2String.end())
 			{
 				return Unknown;
 			}
 
-			return it->second;
+			const std::string& parameterTypeString = it->second;
+
+			return parameterTypeString;
 		}
 
 		bool Parameter::IsParameter(

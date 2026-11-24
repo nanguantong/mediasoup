@@ -5,6 +5,7 @@
 #include "handles/BackoffTimerHandleInterface.hpp"
 #include "handles/TimerHandle.hpp"
 #include "handles/TimerHandleInterface.hpp"
+#include <string>
 
 // Forward declaration.
 class Shared;
@@ -51,7 +52,7 @@ public:
 		return this->running;
 	}
 
-	const std::string GetLabel() const override
+	const std::string& GetLabel() const override
 	{
 		return this->label;
 	}

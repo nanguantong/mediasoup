@@ -14,6 +14,9 @@ namespace RTC
 {
 	class NackGenerator : public TimerHandleInterface::Listener
 	{
+	private:
+		static constexpr int64_t DefaultRttMs{ 100 };
+
 	public:
 		class Listener
 		{
@@ -22,13 +25,14 @@ namespace RTC
 
 		public:
 			virtual void OnNackGeneratorNackRequired(const std::vector<uint16_t>& seqNumbers) = 0;
-			virtual void OnNackGeneratorKeyFrameRequired()                                    = 0;
+
+			virtual void OnNackGeneratorKeyFrameRequired() = 0;
 		};
 
 	private:
 		struct NackInfo
 		{
-			explicit NackInfo(int64_t createdAtMs, uint16_t seq, uint16_t sendAtSeq)
+			NackInfo(int64_t createdAtMs, uint16_t seq, uint16_t sendAtSeq)
 			  : createdAtMs(createdAtMs), seq(seq), sendAtSeq(sendAtSeq)
 			{
 			}
@@ -40,34 +44,52 @@ namespace RTC
 			uint8_t retries{ 0 };
 		};
 
+	private:
 		enum class NackFilter : uint8_t
 		{
 			SEQ,
 			TIME
 		};
 
-	private:
-		static constexpr int64_t DefaultRttMs{ 100 };
-
 	public:
-		explicit NackGenerator(Listener* listener, SharedInterface* shared, int64_t sendNackDelayMs);
+		NackGenerator(Listener* listener, SharedInterface* shared, int64_t sendNackDelayMs);
+
 		~NackGenerator() override;
 
 		bool ReceivePacket(const RTC::RTP::Packet* packet, bool isRecovered);
+
 		size_t GetNackListLength() const
 		{
 			return this->nackList.size();
 		}
-		void UpdateRttMs(int64_t rttMs)
+
+		/**
+		 * Whether the packet with the given sequence number is being requested, or
+		 * was requested and is no longer pending (so any copy of it that comes later
+		 * is a retransmission).
+		 */
+		bool IsNacked(uint16_t seq) const
 		{
-			this->rttMs = rttMs;
+			return this->nackList.contains(seq) || this->requestedList.contains(seq);
 		}
+
+		void UpdateRttMs(int64_t rttMs);
+
 		void Reset();
+
+		/**
+		 * Same as `Reset()` but keeps the sequence numbers of the requested packets,
+		 * so `IsNacked()` still returns true for a late retransmission of any of them.
+		 */
+		void Pause();
 
 	private:
 		void AddPacketsToNackList(uint16_t seqStart, uint16_t seqEnd);
+
 		bool RemoveNackItemsUntilKeyFrame();
+
 		std::vector<uint16_t> GetNackBatch(NackFilter filter);
+
 		void MayRunTimer() const;
 
 		/* Pure virtual methods inherited from TimerHandleInterface::Listener. */
@@ -85,6 +107,8 @@ namespace RTC
 		std::map<uint16_t, NackInfo, RTC::SeqManager<uint16_t>::SeqLowerThan> nackList;
 		std::set<uint16_t, RTC::SeqManager<uint16_t>::SeqLowerThan> keyFrameList;
 		std::set<uint16_t, RTC::SeqManager<uint16_t>::SeqLowerThan> recoveredList;
+		// Requested packets that are no longer pending, whether they arrived or not.
+		std::set<uint16_t, RTC::SeqManager<uint16_t>::SeqLowerThan> requestedList;
 		bool started{ false };
 		uint16_t lastSeq{ 0 }; // Seq number of last valid packet.
 		int64_t rttMs{ DefaultRttMs };

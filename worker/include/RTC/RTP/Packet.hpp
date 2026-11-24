@@ -2,13 +2,13 @@
 #define MS_RTC_RTP_PACKET_HPP
 
 #include "common.hpp"
-#include "FBS/rtpPacket.h"
 #include "RTC/RTP/Codecs/DependencyDescriptor.hpp"
 #include "RTC/RTP/Codecs/PayloadDescriptorHandler.hpp"
-#include "RTC/RTP/HeaderExtensionIds.hpp"
+#include "RTC/RTP/ExtensionMapping.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "RTC/Serializable.hpp"
 #include "Utils.hpp"
+#include <FBS/rtpPacket.h>
 #ifdef MS_RTC_LOGGER_RTP
 #include "RTC/RtcLogger/RtpPacket.hpp"
 #endif
@@ -27,7 +27,7 @@ namespace RTC
 		 *
 		 * @see RFC 3550.
 		 */
-		class Packet : public Serializable, public Codecs::DependencyDescriptor::Listener
+		class Packet : public Serializable
 		{
 		public:
 			/**
@@ -53,7 +53,7 @@ namespace RTC
 			 */
 			struct FixedHeader
 			{
-#if defined(MS_LITTLE_ENDIAN)
+#ifdef MS_LITTLE_ENDIAN
 				uint8_t csrcCount : 4;
 				uint8_t extension : 1;
 				uint8_t padding : 1;
@@ -81,7 +81,7 @@ namespace RTC
 			/**
 			 * RTP Header Extension.
 			 *
-			 * @see RFC 3350.
+			 * @see RFC 3550.
 			 *
 			 *  0                   1                   2                   3
 			 *  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -110,19 +110,19 @@ namespace RTC
 
 		public:
 			/**
-			 * One-Byte and Two-Bytes Extension types.
+			 * One-Byte and Two-Byte header forms of extensions.
 			 *
 			 * @see RFC 8285.
 			 */
-			enum class ExtensionsType : uint8_t
+			enum class ExtensionsForm : uint8_t
 			{
 				/**
-				 * Auto means that One-Byte or Two-Bytes is choosen based on given
+				 * Auto means that One-Byte or Two-Byte is chosen based on given
 				 * extensions.
 				 */
-				Auto     = 0,
-				OneByte  = 1,
-				TwoBytes = 2
+				Auto    = 0,
+				OneByte = 1,
+				TwoByte = 2
 			};
 
 #ifdef MS_TEST
@@ -136,7 +136,7 @@ namespace RTC
 			 */
 			struct OneByteExtension
 			{
-#if defined(MS_LITTLE_ENDIAN)
+#ifdef MS_LITTLE_ENDIAN
 				uint8_t len : 4;
 				uint8_t id : 4;
 #elif defined(MS_BIG_ENDIAN)
@@ -155,7 +155,7 @@ namespace RTC
 			 * @remarks
 			 * - This struct is guaranteed to be aligned to 1 byte.
 			 */
-			struct TwoBytesExtension
+			struct TwoByteExtension
 			{
 				uint8_t id;
 				uint8_t len;
@@ -174,7 +174,9 @@ namespace RTC
 			struct Extension
 			{
 				Extension(RTC::RtpHeaderExtensionUri::Type type, uint8_t id, uint8_t len, uint8_t* value)
-				  : type(type), id(id), len(len), value(value) {};
+				  : type(type), id(id), len(len), value(value)
+				{
+				}
 
 				RTC::RtpHeaderExtensionUri::Type type;
 				uint8_t id;
@@ -294,7 +296,7 @@ namespace RTC
 
 			bool HasHeaderExtension() const
 			{
-				return (GetFixedHeaderPointer()->extension);
+				return GetFixedHeaderPointer()->extension;
 			}
 
 			/**
@@ -304,7 +306,7 @@ namespace RTC
 			 * - This method doesn't validate whether there is indeed space for the
 			 *   announced header extension.
 			 * - This method is guaranteed to return valid value once @ref Validate()
-			 *   was succesfully called.
+			 *   was successfully called.
 			 */
 			uint16_t GetHeaderExtensionId() const
 			{
@@ -324,11 +326,11 @@ namespace RTC
 			 * - This method doesn't validate whether there is indeed space for the
 			 *   announced header extension.
 			 * - This method is guaranteed to return valid value once @ref Validate()
-			 *   was succesfully called.
+			 *   was successfully called.
 			 */
 			uint8_t* GetHeaderExtensionValue() const
 			{
-				auto headerExtensionValueLength = GetHeaderExtensionValueLength();
+				const auto headerExtensionValueLength = GetHeaderExtensionValueLength();
 
 				if (headerExtensionValueLength == 0)
 				{
@@ -358,13 +360,13 @@ namespace RTC
 			void RemoveHeaderExtension();
 
 			/**
-			 * Whether the packet has One-Byte or Two-Bytes extensions.
+			 * Whether the packet has One-Byte or Two-Byte extensions.
 			 *
 			 * @see RFC 8285.
 			 */
 			bool HasExtensions() const
 			{
-				return HasOneByteExtensions() || HasTwoBytesExtensions();
+				return HasOneByteExtensions() || HasTwoByteExtensions();
 			}
 
 			/**
@@ -378,17 +380,17 @@ namespace RTC
 			}
 
 			/**
-			 * Whether the packet has Two-Bytes extensions.
+			 * Whether the packet has Two-Byte extensions.
 			 *
 			 * @see RFC 8285.
 			 */
-			bool HasTwoBytesExtensions() const
+			bool HasTwoByteExtensions() const
 			{
 				return (GetHeaderExtensionId() & 0b1111111111110000) == 0b0001000000000000;
 			}
 
 			/**
-			 * Whether the One-Byte or Two-Bytes extension with given `id` exists in
+			 * Whether the One-Byte or Two-Byte extension with given `id` exists in
 			 * the packet.
 			 *
 			 * @see RFC 8285.
@@ -415,9 +417,9 @@ namespace RTC
 
 					return offset != -1;
 				}
-				else if (HasTwoBytesExtensions())
+				else if (HasTwoByteExtensions())
 				{
-					return this->twoBytesExtensions.find(id) != this->twoBytesExtensions.end();
+					return this->twoByteExtensions.contains(id);
 				}
 				else
 				{
@@ -426,7 +428,7 @@ namespace RTC
 			}
 
 			/**
-			 * Get a pointer to the value of the the One-Byte or Two-Bytes extension
+			 * Get a pointer to the value of the the One-Byte or Two-Byte extension
 			 * with given `id` and set its value length into given `len`.
 			 *
 			 * @see RFC 8285.
@@ -461,18 +463,19 @@ namespace RTC
 						return nullptr;
 					}
 
-					auto* extension = reinterpret_cast<OneByteExtension*>(GetHeaderExtensionValue() + offset);
+					auto* const extension =
+					  reinterpret_cast<OneByteExtension*>(GetHeaderExtensionValue() + offset);
 
 					// In One-Byte extensions value length 0 means 1.
 					len = extension->len + 1;
 
 					return extension->value;
 				}
-				else if (HasTwoBytesExtensions())
+				else if (HasTwoByteExtensions())
 				{
-					const auto it = this->twoBytesExtensions.find(id);
+					const auto it = this->twoByteExtensions.find(id);
 
-					if (it == this->twoBytesExtensions.end())
+					if (it == this->twoByteExtensions.end())
 					{
 						len = 0;
 
@@ -481,7 +484,8 @@ namespace RTC
 
 					const auto offset = it->second;
 
-					auto* extension = reinterpret_cast<TwoBytesExtension*>(GetHeaderExtensionValue() + offset);
+					auto* const extension =
+					  reinterpret_cast<TwoByteExtension*>(GetHeaderExtensionValue() + offset);
 
 					len = extension->len;
 
@@ -505,20 +509,30 @@ namespace RTC
 			 *
 			 * @throw MediaSoupTypeError - If given extensions are invalid/wrong.
 			 */
-			[[nodiscard]] bool SetExtensions(ExtensionsType type, const std::vector<Extension>& extensions);
+			[[nodiscard]] bool SetExtensions(ExtensionsForm form, const std::vector<Extension>& extensions);
 
 			/**
-			 * Assign extension ids.
+			 * Set the extension mapping.
 			 *
 			 * @see RFC 8285.
 			 */
-			void AssignExtensionIds(RTP::HeaderExtensionIds& headerExtensionIds);
+			void SetExtensionMapping(const RTP::ExtensionMapping& extensionMapping);
 
 			bool ReadMid(std::string& mid) const;
 
 			bool UpdateMid(const std::string& mid);
 
 			bool ReadRid(std::string& rid) const;
+
+			/**
+			 * Read the RRID extension alone.
+			 *
+			 * @remarks
+			 * - Only meant to tell what the packet carries, as in `Dump()` and
+			 *   `FillBuffer()`. To get the RID of the stream of a packet use
+			 *   `ReadRid()`, which falls back to the RRID extension of a RTX packet.
+			 */
+			bool ReadRrid(std::string& rrid) const;
 
 			/**
 			 * @remarks
@@ -543,8 +557,7 @@ namespace RTC
 
 			bool ReadDependencyDescriptor(
 			  std::unique_ptr<Codecs::DependencyDescriptor>& dependencyDescriptor,
-			  std::unique_ptr<Codecs::DependencyDescriptor::TemplateDependencyStructure>&
-			    templateDependencyStructure) const;
+			  Codecs::DependencyDescriptor::Context& dependencyDescriptorContext) const;
 
 			bool UpdateDependencyDescriptor(const uint8_t* data, size_t len);
 
@@ -574,7 +587,7 @@ namespace RTC
 			 * - This method doesn't validate whether the padding length announced in
 			 *   the last byte of the packet is valid.
 			 * - This method is guaranteed to return valid value once @ref Validate()
-			 *   was succesfully called.
+			 *   was successfully called.
 			 */
 			bool HasPayload() const
 			{
@@ -589,13 +602,13 @@ namespace RTC
 			 * - This method doesn't validate whether the padding length announced in
 			 *   the last byte of the packet is valid.
 			 * - This method is guaranteed to return valid value once @ref Validate()
-			 *   was succesfully called.
-			 * - This method doens't take into account padding, so in a padding-only
+			 *   was successfully called.
+			 * - This method doesn't take into account padding, so in a padding-only
 			 *   packet this method returns `nullptr` with `len` 0.
 			 */
 			uint8_t* GetPayload(size_t& len) const
 			{
-				auto* payloadPointer = GetPayloadPointer();
+				auto* const payloadPointer = GetPayloadPointer();
 				const size_t availablePayloadAndPaddingLength = GetLength() - (payloadPointer - GetBuffer());
 				const auto paddingLength = GetPaddingLength();
 
@@ -624,8 +637,8 @@ namespace RTC
 			 * - This method doesn't validate whether the padding length announced in
 			 *   the last byte of the packet is valid.
 			 * - This method is guaranteed to return valid value once @ref Validate()
-			 *   was succesfully called.
-			 * - This method doens't take into account padding, so in a padding-only
+			 *   was successfully called.
+			 * - This method doesn't take into account padding, so in a padding-only
 			 *   packet this method returns `nullptr`.
 			 */
 			uint8_t* GetPayload() const
@@ -642,7 +655,7 @@ namespace RTC
 			 * - This method doesn't validate whether the padding length announced in
 			 *   the last byte of the packet is valid.
 			 * - This method is guaranteed to return valid value once @ref Validate()
-			 *   was succesfully called.
+			 *   was successfully called.
 			 */
 			size_t GetPayloadLength() const
 			{
@@ -714,7 +727,7 @@ namespace RTC
 			 */
 			bool HasPadding() const
 			{
-				return (GetFixedHeaderPointer()->padding);
+				return GetFixedHeaderPointer()->padding;
 			}
 
 			/**
@@ -724,7 +737,7 @@ namespace RTC
 			 * - This method doesn't validate whether the padding length announced in
 			 *   the last byte of the packet is valid.
 			 * - This method is guaranteed to return valid value once @ref Validate()
-			 *   was succesfully called.
+			 *   was successfully called.
 			 */
 			uint8_t GetPaddingLength() const
 			{
@@ -781,7 +794,7 @@ namespace RTC
 			/**
 			 * Decode the RTX packet into a regular RTP packet.
 			 *
-			 * @return `true` if RTX decoding iwas done.
+			 * @return `true` if RTX decoding was done.
 			 *
 			 * @remarks
 			 * - This method removes existing padding (if any).
@@ -789,9 +802,28 @@ namespace RTC
 			bool RtxDecode(uint8_t payloadType, uint32_t ssrc);
 
 			/**
-			 * Set payload descritor handler.
+			 * Set payload descriptor handler.
+			 *
+			 * @remarks
+			 * - The packet takes ownership of the handler, which it shares with its
+			 *   clones, and replaces (and frees if nobody else holds it) any handler
+			 *   it had.
 			 */
-			void SetPayloadDescriptorHandler(Codecs::PayloadDescriptorHandler* payloadDescriptorHandler);
+			void SetPayloadDescriptorHandler(
+			  std::unique_ptr<Codecs::PayloadDescriptorHandler> payloadDescriptorHandler);
+
+			/**
+			 * Set the payload descriptor handler made out of the Dependency
+			 * Descriptor this packet carries, which serves the Consumers that
+			 * negotiated the extension. The rest are served by the one of the codec.
+			 *
+			 * @remarks
+			 * - The packet takes ownership of the handler, which it shares with its
+			 *   clones, and replaces (and frees if nobody else holds it) any handler
+			 *   it had.
+			 */
+			void SetDependencyDescriptorPayloadDescriptorHandler(
+			  std::unique_ptr<Codecs::PayloadDescriptorHandler> payloadDescriptorHandler);
 
 			/**
 			 * Process the payload.
@@ -799,31 +831,33 @@ namespace RTC
 			bool ProcessPayload(Codecs::EncodingContext* context, bool& marker);
 
 			/**
-			 * Get the payload encoder.
-			 */
-			std::unique_ptr<Codecs::PayloadDescriptor::Encoder> GetPayloadEncoder() const;
-
-			/**
-			 * Encode the payload.
+			 * Encode the payload, with the handler the encoder was made by.
 			 */
 			void EncodePayload(Codecs::PayloadDescriptor::Encoder* encoder);
 
 			/**
 			 * Restore the payload.
 			 */
-			void RestorePayload();
+			void RestorePayload(bool preferDependencyDescriptor);
 
 			/**
 			 * Whether the payload contains a video keyframe.
+			 *
+			 * @remarks
+			 * - The ones below tell about the packet rather than about what a given
+			 *   Consumer is given, so they prefer the Dependency Descriptor, which is
+			 *   where the codecs carrying it keep this.
 			 */
 			bool IsKeyFrame() const
 			{
-				if (!this->payloadDescriptorHandler)
+				auto* const payloadDescriptorHandler = GetPayloadDescriptorHandler(true);
+
+				if (!payloadDescriptorHandler)
 				{
 					return false;
 				}
 
-				return this->payloadDescriptorHandler->IsKeyFrame();
+				return payloadDescriptorHandler->IsKeyFrame();
 			}
 
 			/**
@@ -831,12 +865,14 @@ namespace RTC
 			 */
 			uint8_t GetSpatialLayer() const
 			{
-				if (!this->payloadDescriptorHandler)
+				auto* const payloadDescriptorHandler = GetPayloadDescriptorHandler(true);
+
+				if (!payloadDescriptorHandler)
 				{
 					return 0;
 				}
 
-				return this->payloadDescriptorHandler->GetSpatialLayer();
+				return payloadDescriptorHandler->GetSpatialLayer();
 			}
 
 			/**
@@ -844,12 +880,30 @@ namespace RTC
 			 */
 			uint8_t GetTemporalLayer() const
 			{
-				if (!this->payloadDescriptorHandler)
+				auto* const payloadDescriptorHandler = GetPayloadDescriptorHandler(true);
+
+				if (!payloadDescriptorHandler)
 				{
 					return 0;
 				}
 
-				return this->payloadDescriptorHandler->GetTemporalLayer();
+				return payloadDescriptorHandler->GetTemporalLayer();
+			}
+
+			/**
+			 * Bytes that the Dependency Descriptor of this packet may take once a
+			 * Consumer filtering layers rewrites it, or 0 if it's never rewritten.
+			 */
+			uint8_t GetDependencyDescriptorMaxLength() const
+			{
+				auto* const payloadDescriptorHandler = GetPayloadDescriptorHandler(true);
+
+				if (!payloadDescriptorHandler)
+				{
+					return 0;
+				}
+
+				return payloadDescriptorHandler->GetDependencyDescriptorMaxLength();
 			}
 
 			/**
@@ -888,6 +942,13 @@ namespace RTC
 
 		private:
 			/**
+			 * The handler that serves a Consumer, which is the one of the Dependency
+			 * Descriptor when it negotiated the extension and this packet carries it,
+			 * and the one of the codec otherwise.
+			 */
+			Codecs::PayloadDescriptorHandler* GetPayloadDescriptorHandler(bool preferDependencyDescriptor) const;
+
+			/**
 			 * @remarks
 			 * - Returns FixedHeader* instead of const FixedHeader* since we may want
 			 *   to modify its fields.
@@ -906,15 +967,15 @@ namespace RTC
 			}
 
 			/**
-			 * Number of entries in the CSRC list.
+			 * Length (in bytes) of the CSRC list.
 			 *
 			 * @remarks
 			 * - This method doesn't validate whether there is indeed space for the
 			 *   announced CSRC list.
 			 * - This method is guaranteed to return valid value once @ref Validate()
-			 *   was succesfully called.
+			 *   was successfully called.
 			 */
-			size_t GetCsrcCount() const
+			size_t GetCsrcsLength() const
 			{
 				return GetFixedHeaderPointer()->csrcCount * sizeof(GetFixedHeaderPointer()->ssrc);
 			}
@@ -924,7 +985,7 @@ namespace RTC
 			 */
 			HeaderExtension* GetHeaderExtensionPointer() const
 			{
-				return reinterpret_cast<HeaderExtension*>(GetCsrcsPointer() + GetCsrcCount());
+				return reinterpret_cast<HeaderExtension*>(GetCsrcsPointer() + GetCsrcsLength());
 			}
 
 			/**
@@ -934,7 +995,7 @@ namespace RTC
 			 * - This method doesn't validate whether there is indeed space for the
 			 *   announced header extension.
 			 * - This method is guaranteed to return valid value once @ref Validate()
-			 *   was succesfully called.
+			 *   was successfully called.
 			 */
 			size_t GetHeaderExtensionLength() const
 			{
@@ -985,10 +1046,6 @@ namespace RTC
 			 */
 			void SetExtensionLength(uint8_t id, uint8_t len);
 
-			/* Pure virtual methods inherited from Codecs::DependencyDescriptor::Listener. */
-		public:
-			void OnDependencyDescriptorUpdated(const uint8_t* data, size_t len) override;
-
 #ifdef MS_RTC_LOGGER_RTP
 		public:
 			RtcLogger::RtpPacket logger;
@@ -1000,14 +1057,20 @@ namespace RTC
 			// extension value to the beginning of the extension.
 			std::array<ssize_t, 14> oneByteExtensions{ -1, -1, -1, -1, -1, -1, -1,
 			                                           -1, -1, -1, -1, -1, -1, -1 };
-			// Ordered map of Two Bytes Extensions. Key is the id 1 of the extension,
+			// Ordered map of Two-Byte Extensions. Key is the id 1 of the extension,
 			// each entry is the offset (in bytes) from the beginning of the header
 			// extension value to the beginning of the extension.
-			std::map<uint8_t, ssize_t> twoBytesExtensions;
+			std::map<uint8_t, ssize_t> twoByteExtensions;
 			// Extension ids.
-			RTP::HeaderExtensionIds headerExtensionIds{};
+			RTP::ExtensionMapping extensionMapping;
 			// Codec related.
 			std::shared_ptr<Codecs::PayloadDescriptorHandler> payloadDescriptorHandler;
+			/**
+			 * Both are kept because the packet is handed to every Consumer of the
+			 * Producer, and whether the Dependency Descriptor may be used is a
+			 * property of each of them rather than of the packet.
+			 */
+			std::shared_ptr<Codecs::PayloadDescriptorHandler> dependencyDescriptorPayloadDescriptorHandler;
 			// Capture time of the packet.
 			std::optional<int64_t> captureAtUs;
 			// SSRC of the media stream while the packet is RTX encoded.

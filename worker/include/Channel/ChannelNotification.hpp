@@ -2,7 +2,7 @@
 #define MS_CHANNEL_NOTIFICATION_HPP
 
 #include "common.hpp"
-#include "FBS/notification.h"
+#include <FBS/notification.h>
 #include <string>
 
 namespace Channel
@@ -14,6 +14,7 @@ namespace Channel
 
 	public:
 		ChannelNotification(const FBS::Notification::Notification* notification, int64_t receivedAtUs);
+
 		~ChannelNotification() = default;
 
 	public:
@@ -22,7 +23,7 @@ namespace Channel
 		const int64_t receivedAtUs;
 		// Others.
 		const char* eventCStr;
-		std::string handlerId;
+		const std::string handlerId;
 	};
 } // namespace Channel
 

@@ -151,6 +151,7 @@ namespace RTC
 
 			virtual ParameterType GetType() const final
 			{
+				// NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
 				return static_cast<ParameterType>(ntohs(static_cast<uint16_t>(GetHeaderPointer()->type)));
 			}
 
@@ -194,8 +195,9 @@ namespace RTC
 
 		private:
 			/**
-			 * NOTE: Return ParameterHeader* instead of const ParameterHeader* since
-			 * we may want to modify its fields.
+			 * @remarks
+			 * - Return ParameterHeader* instead of const ParameterHeader* since we
+			 *   may want to modify its fields.
 			 */
 			virtual ParameterHeader* GetHeaderPointer() const final
 			{

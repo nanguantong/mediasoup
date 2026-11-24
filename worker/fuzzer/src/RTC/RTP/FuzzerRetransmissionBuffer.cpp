@@ -7,13 +7,13 @@
 
 void FuzzerRtcRtpRetransmissionBuffer::Fuzz(const uint8_t* data, size_t len)
 {
-	const uint16_t maxItems{ 2500 };
-	const int64_t maxRetransmissionDelayMs{ 2000 };
-	const uint32_t clockRate{ 90000 };
+	constexpr uint16_t MaxItems{ 2500 };
+	constexpr int64_t MaxRetransmissionDelayMs{ 2000 };
+	constexpr uint32_t ClockRate{ 90000 };
 
-	// Trick to initialize our stuff just once (use static).
-	static RTC::RTP::RetransmissionBuffer retransmissionBuffer(
-	  maxItems, maxRetransmissionDelayMs, clockRate);
+	// Initialize our stuff just once.
+	static thread_local RTC::RTP::RetransmissionBuffer retransmissionBuffer(
+	  MaxItems, MaxRetransmissionDelayMs, ClockRate);
 
 	// clang-format off
 	uint8_t buffer[] =
@@ -25,9 +25,10 @@ void FuzzerRtcRtpRetransmissionBuffer::Fuzz(const uint8_t* data, size_t len)
 	// clang-format on
 
 	// Create base RtpPacket instance.
-	auto* packet = RTC::RTP::Packet::Parse(buffer, 12);
+	const std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Parse(buffer, 12) };
+
 	size_t offset{ 0 };
-	int64_t nowMs = DepLibUV::GetTimeMs();
+	int64_t nowMs{ DepLibUV::GetTimeMs() };
 
 	while (len >= 4)
 	{
@@ -35,9 +36,9 @@ void FuzzerRtcRtpRetransmissionBuffer::Fuzz(const uint8_t* data, size_t len)
 		packet->SetSequenceNumber(Utils::Byte::Get2Bytes(data, offset));
 		packet->SetTimestamp(Utils::Byte::Get4Bytes(data, offset));
 
-		if (auto* item = retransmissionBuffer.Insert(packet, nowMs))
+		if (RTC::RTP::RetransmissionBuffer::Item* const item = retransmissionBuffer.Insert(packet.get(), nowMs))
 		{
-			item->sharedPacket = RTC::RTP::PacketUtils::ClonePacket(packet);
+			item->sharedPacket = RTC::RTP::PacketUtils::ClonePacket(packet.get());
 		}
 
 		// Let some 'random' time pass and check whether the packet is too old.
@@ -54,6 +55,4 @@ void FuzzerRtcRtpRetransmissionBuffer::Fuzz(const uint8_t* data, size_t len)
 		len -= 4;
 		offset += 4;
 	}
-
-	delete packet;
 }

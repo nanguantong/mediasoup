@@ -82,7 +82,7 @@ namespace RTC
 			/**
 			 * Handles an expired retransmission timer.
 			 */
-			void HandleT3RtxTimerExpiry();
+			void HandleT3RtxTimerExpiry(int64_t nowUs);
 
 			bool HasDataToBeFastRetransmitted() const
 			{
@@ -93,7 +93,8 @@ namespace RTC
 			 * Returns a list of chunks to "fast retransmit" that would fit in
 			 * `maxLength` (bytes). The current value of `cwnd` is ignored.
 			 */
-			std::vector<std::pair<uint32_t /*tsn*/, UserData>> GetChunksForFastRetransmit(size_t maxLength);
+			std::vector<std::pair<uint32_t /*tsn*/, UserData>> GetChunksForFastRetransmit(
+			  int64_t nowUs, size_t maxLength);
 
 			/**
 			 * Returns a list of chunks to send that would fit in `maxLength`
@@ -308,6 +309,8 @@ namespace RTC
 			const SctpOptions sctpOptions;
 			// If the peer supports RFC3758 "SCTP Partial Reliability Extension".
 			const bool supportsPartialReliability;
+			// Whether I-DATA chunks are used instead of DATA chunks.
+			const bool useMessageInterleaving;
 			// The length of the data chunk (DATA/I-DATA) header that is used.
 			const size_t dataChunkHeaderLength;
 			// The retransmission timer.
@@ -328,7 +331,7 @@ namespace RTC
 			uint64_t rtxBytesCount{ 0 };
 			// If set, fast recovery is enabled until this TSN has been cumulative
 			// acked.
-			std::optional<Types::UnwrappedTsn> fastRecoveryExitTsn{ std::nullopt };
+			std::optional<Types::UnwrappedTsn> fastRecoveryExitTsn;
 			// The send queue.
 			SendQueueInterface& sendQueue;
 			// All the outstanding data chunks that are in-flight and that have not

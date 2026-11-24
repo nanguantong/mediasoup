@@ -6,7 +6,6 @@
 #include "RTC/SCTP/packet/Chunk.hpp"
 #include "RTC/SCTP/packet/Parameter.hpp"
 #include "RTC/SCTP/packet/parameters/ReconfigurationResponseParameter.hpp"
-#include "Utils.hpp"
 
 namespace RTC
 {
@@ -34,8 +33,7 @@ namespace RTC
 		        .baseTimeoutMs       = 0,
 		        .backoffAlgorithm    = BackoffTimerHandleInterface::BackoffAlgorithm::EXPONENTIAL,
 		        .maxBackoffTimeoutMs = std::nullopt,
-		        .maxRestarts         = std::nullopt,
-		      })),
+		        .maxRestarts         = std::nullopt })),
 		    nextOutgoingReqSeqNbr(tcbContext->GetLocalInitialTsn()),
 		    lastProcessedReqSeqNbr(
 		      this->incomingReConfigRequestSnUnwrapper.Unwrap(tcbContext->GetRemoteInitialTsn() - 1)),
@@ -76,30 +74,28 @@ namespace RTC
 			MS_ASSERT(ShouldSendStreamResetRequest(), "should not send a stream reset request");
 
 			// The RE-CONFIG chunk carries an Outgoing SSN Reset Request parameter
-			// with 2 bytes per stream, padded to 4 bytes. It must fit in the packet
-			// before anything is changed, since preparing the request already marks
-			// the streams as being reset.
-			const size_t reConfigChunkLength =
-			  Chunk::ChunkHeaderLength +
-			  Utils::Byte::PadTo4Bytes(
-			    OutgoingSsnResetRequestParameter::OutgoingSsnResetRequestParameterHeaderLength +
-			    (this->retransmissionQueue->GetNumberOfStreamsReadyToBeReset() * 2));
+			// with the streams to reset. It must fit in the packet before anything is
+			// changed, since preparing the request already marks the streams as being
+			// reset.
+			const size_t reConfigChunkLength = ReConfigChunk::ComputeLengthFor(
+			  OutgoingSsnResetRequestParameter::ComputeLengthFor(
+			    this->retransmissionQueue->GetNumberOfStreamsReadyToBeReset()));
 
 			if (reConfigChunkLength > packet->GetAvailableLength())
 			{
 				// NOTE: Don't create a packet to measure this, since it would reuse the
 				// buffer of the given one.
-				const size_t maxReConfigChunkLength = packet->GetBufferLength() - Packet::CommonHeaderLength;
+				const size_t reConfigPacketLength = Packet::ComputeLengthFor(reConfigChunkLength);
 
 				// If it does not fit even in an empty packet it never will, so the reset
 				// of those streams is cancelled.
-				if (reConfigChunkLength > maxReConfigChunkLength)
+				if (reConfigPacketLength > packet->GetBufferLength())
 				{
 					MS_WARN_TAG(
 					  sctp,
 					  "stream reset request too large to be sent, cancelling it [len:%zu, max len:%zu]",
-					  reConfigChunkLength,
-					  maxReConfigChunkLength);
+					  reConfigPacketLength,
+					  packet->GetBufferLength());
 
 					const auto streamIds = this->retransmissionQueue->CancelResetStreams();
 
@@ -312,7 +308,7 @@ namespace RTC
 			if (!this->currentRequest->HasBeenSent())
 			{
 				this->currentRequest->PrepareToSend(this->nextOutgoingReqSeqNbr);
-				this->nextOutgoingReqSeqNbr = uint32_t{ this->nextOutgoingReqSeqNbr + 1 };
+				this->nextOutgoingReqSeqNbr = this->nextOutgoingReqSeqNbr + 1;
 			}
 
 			auto* reConfigChunk = packet->BuildChunkInPlace<ReConfigChunk>();
@@ -460,7 +456,7 @@ namespace RTC
 					this->deferredIncomingRequest = DeferredIncomingRequest{
 						.senderLastAssignedTsn =
 						  receivedOutgoingSsnResetRequestParameter->GetSenderLastAssignedTsn(),
-						.streamIds = receivedOutgoingSsnResetRequestParameter->GetStreamIds(),
+						.streamIds = receivedOutgoingSsnResetRequestParameter->GetStreamIds()
 					};
 				}
 
@@ -554,6 +550,21 @@ namespace RTC
 		{
 			MS_TRACE();
 
+			// An unknown result is a parse failure. The request is left as it is, so
+			// the timer keeps running and retransmits it.
+			if (receivedReconfigurationResponseParameter->HasUnknownResult())
+			{
+				MS_DEBUG_TAG(
+				  sctp,
+				  "invalid Reconfiguration Response result [result:%" PRIu32 "]",
+				  static_cast<uint32_t>(receivedReconfigurationResponseParameter->GetResult()));
+
+				this->associationListenerDeferrer.OnAssociationError(
+				  Types::ErrorKind::PARSE_FAILED, "invalid Reconfiguration Response result");
+
+				return;
+			}
+
 			if (
 			  this->currentRequest.has_value() && this->currentRequest->HasBeenSent() &&
 			  receivedReconfigurationResponseParameter->GetReconfigurationResponseSequenceNumber() ==
@@ -602,8 +613,9 @@ namespace RTC
 					{
 						MS_WARN_TAG(
 						  sctp,
-						  "reset stream error [reqSeqNbr:%" PRIu32 ", result:%s]",
+						  "reset stream error [reqSeqNbr:%" PRIu32 ", result:%" PRIu32 " (%s)]",
 						  this->currentRequest->GetReqSeqNbr(),
+						  static_cast<uint32_t>(receivedReconfigurationResponseParameter->GetResult()),
 						  ReconfigurationResponseParameter::ResultToString(
 						    receivedReconfigurationResponseParameter->GetResult())
 						    .c_str());
@@ -668,7 +680,7 @@ namespace RTC
 				// in retrying the request (but with a new `reqSeqNbr`) after a while.
 			}
 
-			auto packet = this->tcbContext->CreatePacket();
+			const auto packet = this->tcbContext->CreatePacket();
 
 			AddReConfigChunk(packet.get());
 

@@ -4,7 +4,6 @@
 #include "RTC/SCTP/association/Association.hpp"
 #include "Logger.hpp"
 #include "RTC/SCTP/association/Capabilities.hpp"
-#include "RTC/SCTP/packet/ErrorCause.hpp"
 #include "RTC/SCTP/packet/errorCauses/CookieReceivedWhileShuttingDownErrorCause.hpp"
 #include "RTC/SCTP/packet/errorCauses/NoUserDataErrorCause.hpp"
 #include "RTC/SCTP/packet/errorCauses/OutOfResourceErrorCause.hpp"
@@ -17,7 +16,7 @@
 #include "RTC/SCTP/packet/parameters/SupportedExtensionsParameter.hpp"
 #include "RTC/SCTP/packet/parameters/ZeroChecksumAcceptableParameter.hpp"
 #include "Utils.hpp"
-#include <limits>  // std::numeric_limits()
+#include <limits>  // std::numeric_limits
 #include <sstream> // std::ostringstream
 #include <string>
 #include <type_traits> // std::is_same_v
@@ -64,8 +63,7 @@ namespace RTC
 		        .baseTimeoutMs       = sctpOptions.t1InitTimeoutMs,
 		        .backoffAlgorithm    = BackoffTimerHandleInterface::BackoffAlgorithm::EXPONENTIAL,
 		        .maxBackoffTimeoutMs = sctpOptions.timerMaxBackoffTimeoutMs,
-		        .maxRestarts         = sctpOptions.maxInitRetransmissions,
-		      })),
+		        .maxRestarts         = sctpOptions.maxInitRetransmissions })),
 		    t1CookieTimer(this->shared->CreateBackoffTimer(
 		      BackoffTimerHandleInterface::BackoffTimerHandleOptions{
 		        .listener            = this,
@@ -108,7 +106,7 @@ namespace RTC
 			MS_TRACE();
 
 			const auto stateStringView = Association::StateToString(this->state);
-			const auto associationStateStringView = Types::associationStateToString(GetAssociationState());
+			const auto associationStateStringView = Types::AssociationStateToString(GetAssociationState());
 
 			MS_DUMP_CLEAN(indentation, "<SCTP::Association>");
 
@@ -377,7 +375,7 @@ namespace RTC
 				.usesPartialReliability       = this->privateMetrics.usesPartialReliability,
 				.usesMessageInterleaving      = this->privateMetrics.usesMessageInterleaving,
 				.usesReConfig                 = this->privateMetrics.usesReConfig,
-				.usesZeroChecksum             = this->privateMetrics.usesZeroChecksum,
+				.usesZeroChecksum             = this->privateMetrics.usesZeroChecksum
 
 			};
 
@@ -545,15 +543,13 @@ namespace RTC
 
 // For debugging purposes.
 #if MS_LOG_DEV_LEVEL == 3
-			const auto* packet = RTC::SCTP::Packet::Parse(data, len);
+			const std::unique_ptr<const RTC::SCTP::Packet> packet{ RTC::SCTP::Packet::Parse(data, len) };
 
 			if (packet)
 			{
 				MS_DUMP("<<< received SCTP packet:");
 
 				packet->Dump();
-
-				delete packet;
 			}
 			else
 			{
@@ -665,6 +661,11 @@ namespace RTC
 		void Association::InternalClose(Types::ErrorKind errorKind, const std::string_view& message)
 		{
 			MS_TRACE();
+
+			if (this->state == State::CLOSED)
+			{
+				return;
+			}
 
 			if (this->state != State::NEW && this->state != State::CLOSED)
 			{
@@ -800,7 +801,7 @@ namespace RTC
 			  tieTag,
 			  negotiatedCapabilities,
 			  this->maxPacketLength,
-			  [this]()
+			  [this]() -> bool
 			  {
 				  return this->state == State::ESTABLISHED;
 			  });
@@ -888,6 +889,32 @@ namespace RTC
 			shutdownAckChunk->Consolidate();
 
 			this->packetSender.SendPacket(packet.get());
+		}
+
+		void Association::SendCookieReceivedWhileShuttingDown(uint32_t verificationTag)
+		{
+			MS_TRACE();
+
+			const auto packet = CreatePacketWithVerificationTag(verificationTag);
+
+			if (this->state == State::SHUTDOWN_ACK_SENT)
+			{
+				const auto* const shutdownAckChunk = packet->BuildChunkInPlace<ShutdownAckChunk>();
+
+				shutdownAckChunk->Consolidate();
+			}
+
+			auto* const operationErrorChunk = packet->BuildChunkInPlace<OperationErrorChunk>();
+			const auto* const cookieReceivedWhileShuttingDownErrorCause =
+			  operationErrorChunk->BuildErrorCauseInPlace<CookieReceivedWhileShuttingDownErrorCause>();
+
+			cookieReceivedWhileShuttingDownErrorCause->Consolidate();
+			operationErrorChunk->Consolidate();
+
+			this->packetSender.SendPacket(packet.get());
+
+			this->associationListenerDeferrer.OnAssociationError(
+			  Types::ErrorKind::WRONG_SEQUENCE, "received COOKIE-ECHO while shutting down");
 		}
 
 		void Association::MaySendShutdownOrShutdownAckChunk()
@@ -1011,7 +1038,7 @@ namespace RTC
 					  message->GetPayloadLength(),
 					  this->sctpOptions.maxReceiveMessageSize);
 
-					break;
+					continue;
 				}
 
 				this->associationListenerDeferrer.OnAssociationMessageReceived(*std::move(message));
@@ -1105,17 +1132,14 @@ namespace RTC
 
 			// Validate the CRC32c checksum unless this is a zero checksum packet that we
 			// announced we are willing to accept.
-			if (!acceptZeroChecksum || receivedPacket->GetChecksum() != 0)
+			if ((!acceptZeroChecksum || receivedPacket->GetChecksum() != 0) && !receivedPacket->ValidateCRC32cChecksum())
 			{
-				if (!receivedPacket->ValidateCRC32cChecksum())
-				{
-					MS_WARN_TAG(sctp, "invalid CRC32c checksum, packet discarded");
+				MS_WARN_TAG(sctp, "invalid CRC32c checksum, packet discarded");
 
-					this->associationListenerDeferrer.OnAssociationError(
-					  Types::ErrorKind::PARSE_FAILED, "invalid CRC32c checksum");
+				this->associationListenerDeferrer.OnAssociationError(
+				  Types::ErrorKind::PARSE_FAILED, "invalid CRC32c checksum");
 
-					return false;
-				}
+				return false;
 			}
 
 			const uint32_t localVerificationTag = this->tcb ? this->tcb->GetLocalVerificationTag() : 0;
@@ -1310,10 +1334,8 @@ namespace RTC
 
 				case Chunk::ChunkType::COOKIE_ECHO:
 				{
-					HandleReceivedCookieEchoChunk(
+					return HandleReceivedCookieEchoChunk(
 					  receivedPacket, static_cast<const CookieEchoChunk*>(receivedChunk), receivedAtUs);
-
-					break;
 				}
 
 				case Chunk::ChunkType::COOKIE_ACK:
@@ -1443,6 +1465,13 @@ namespace RTC
 		{
 			MS_TRACE();
 
+			if (this->state == State::CLOSED)
+			{
+				MS_WARN_TAG(sctp, "ignoring INIT chunk received in CLOSED state");
+
+				return;
+			}
+
 			// https://datatracker.ietf.org/doc/html/rfc9260#section-3.3.2
 			//
 			// "If the value of the Initiate Tag in a received INIT chunk is found to
@@ -1468,16 +1497,13 @@ namespace RTC
 			{
 				MS_WARN_TAG(
 				  sctp,
-				  "invalid number of outbound streams or number of inbound streams in received INIT chunk, aborting association");
+				  "invalid number of outbound streams or number of inbound streams in received INIT chunk, packet discarded");
 
-				auto packet                 = CreatePacketWithVerificationTag(0);
-				auto* abortAssociationChunk = packet->BuildChunkInPlace<AbortAssociationChunk>();
-
-				// NOTE: We are not setting the verification tag expected by the peer
-				// so T must be set to 1.
-				abortAssociationChunk->SetT(true);
-
-				auto* protocolViolationErrorCause =
+				// NOTE: The packet carries the Initiate Tag, which is the Verification
+				// Tag expected by the sender of the INIT chunk, so T must be 0.
+				const auto packet = CreatePacketWithVerificationTag(receivedInitChunk->GetInitiateTag());
+				auto* const abortAssociationChunk = packet->BuildChunkInPlace<AbortAssociationChunk>();
+				auto* const protocolViolationErrorCause =
 				  abortAssociationChunk->BuildErrorCauseInPlace<ProtocolViolationErrorCause>();
 
 				protocolViolationErrorCause->SetAdditionalInformation(
@@ -1487,8 +1513,6 @@ namespace RTC
 				abortAssociationChunk->Consolidate();
 
 				this->packetSender.SendPacket(packet.get());
-
-				InternalClose(Types::ErrorKind::PROTOCOL_VIOLATION, "received invalid INIT chunk");
 
 				return;
 			}
@@ -1525,13 +1549,6 @@ namespace RTC
 					localInitialTsn = Utils::Crypto::GetRandomUInt<uint32_t>(MinInitialTsn, MaxInitialTsn);
 
 					break;
-				}
-
-				case State::CLOSED:
-				{
-					MS_WARN_TAG(sctp, "ignoring INIT chunk received in CLOSED state");
-
-					return;
 				}
 
 				// https://datatracker.ietf.org/doc/html/rfc9260#section-5.2.1
@@ -1693,9 +1710,8 @@ namespace RTC
 
 			// The cookie is echoed back in a COOKIE-ECHO chunk, so it must fit in a
 			// packet we can send.
-			const size_t cookieEchoPacketLength =
-			  Packet::CommonHeaderLength + Chunk::ChunkHeaderLength +
-			  Utils::Byte::PadTo4Bytes(size_t{ stateCookieParameter->GetCookieLength() });
+			const size_t cookieEchoPacketLength = Packet::ComputeLengthFor(
+			  CookieEchoChunk::ComputeLengthFor(stateCookieParameter->GetCookieLength()));
 
 			if (cookieEchoPacketLength > this->maxPacketLength)
 			{
@@ -1765,14 +1781,21 @@ namespace RTC
 
 			this->tcb->SendBufferedPackets(this->shared->GetTimeUs());
 			this->t1CookieTimer->Start();
-
-			this->associationListenerDeferrer.OnAssociationConnecting();
 		}
 
-		void Association::HandleReceivedCookieEchoChunk(
+		bool Association::HandleReceivedCookieEchoChunk(
 		  const Packet* receivedPacket, const CookieEchoChunk* receivedCookieEchoChunk, int64_t receivedAtUs)
 		{
 			MS_TRACE();
+
+			// NOTE: Once closed, the association is never set up again, the same as
+			// INIT chunks are ignored in CLOSED state.
+			if (this->state == State::CLOSED)
+			{
+				MS_WARN_TAG(sctp, "ignoring COOKIE-ECHO chunk received in CLOSED state");
+
+				return false;
+			}
 
 			if (!receivedCookieEchoChunk->HasCookie())
 			{
@@ -1781,7 +1804,7 @@ namespace RTC
 				this->associationListenerDeferrer.OnAssociationError(
 				  Types::ErrorKind::PARSE_FAILED, "received COOKIE-ECHO chunk has no cookie");
 
-				return;
+				return false;
 			}
 
 			std::unique_ptr<StateCookie> cookie{ StateCookie::Parse(
@@ -1794,26 +1817,23 @@ namespace RTC
 				this->associationListenerDeferrer.OnAssociationError(
 				  Types::ErrorKind::PARSE_FAILED, "received COOKIE-ECHO chunk with invalid cookie");
 
-				return;
+				return false;
 			}
 
 			// When authentication is enabled, verify that the cookie was generated by
 			// us (valid MAC) and is not stale before trusting any of its contents.
 			//
 			// @see RFC 9260 section 5.1.4.
-			if (this->sctpOptions.requireAuthenticatedCookie)
+			if (this->sctpOptions.requireAuthenticatedCookie && !VerifyReceivedStateCookie(cookie.get(), receivedAtUs))
 			{
-				if (!VerifyReceivedStateCookie(cookie.get(), receivedAtUs))
-				{
-					return;
-				}
+				return false;
 			}
 
 			if (this->tcb)
 			{
 				if (!HandleReceivedCookieEchoChunkWithTcb(receivedPacket, cookie.get(), receivedAtUs))
 				{
-					return;
+					return false;
 				}
 			}
 			else
@@ -1826,14 +1846,18 @@ namespace RTC
 					  Types::ErrorKind::PARSE_FAILED,
 					  "received COOKIE-ECHO chunk with invalid verification tag");
 
-					return;
+					return false;
 				}
 			}
 
 			this->t1InitTimer->Stop();
 			this->t1CookieTimer->Stop();
 
-			if (this->state != State::ESTABLISHED)
+			// NOTE: If there is still a TCB here, the COOKIE-ECHO matches it (RFC
+			// 9260 section 5.2.4 action D), and that only establishes the
+			// association from COOKIE_ECHOED state. Otherwise a COOKIE-ECHO received
+			// while shutting down would establish the association again.
+			if (this->state != State::ESTABLISHED && (!this->tcb || this->state == State::COOKIE_ECHOED))
 			{
 				if (this->tcb)
 				{
@@ -1877,6 +1901,8 @@ namespace RTC
 			// SACK chunks), but the COOKIE ACK chunk MUST be the first chunk in the
 			// packet."
 			this->tcb->SendBufferedPackets(this->shared->GetTimeUs(), /*addCookieAckChunk*/ true);
+
+			return true;
 		}
 
 		bool Association::HandleReceivedCookieEchoChunkWithTcb(
@@ -1903,23 +1929,13 @@ namespace RTC
 				// association but instead resend the SHUTDOWN ACK chunk and send an
 				// ERROR chunk with a "Cookie Received While Shutting Down" error cause
 				// to its peer."
-				if (this->state == State::SHUTDOWN_ACK_SENT)
+				//
+				// NOTE: The same is done in any other shutdown state, since the
+				// association is being shut down and setting up a new one would leave
+				// the shutdown timer running in ESTABLISHED state.
+				if (IsShuttingDown())
 				{
-					auto packet = CreatePacketWithVerificationTag(cookie->GetRemoteVerificationTag());
-					const auto* shutdownAckChunk = packet->BuildChunkInPlace<ShutdownAckChunk>();
-
-					shutdownAckChunk->Consolidate();
-
-					auto* operationErrorChunk = packet->BuildChunkInPlace<OperationErrorChunk>();
-					const auto* cookieReceivedWhileShuttingDownErrorCause =
-					  operationErrorChunk->BuildErrorCauseInPlace<CookieReceivedWhileShuttingDownErrorCause>();
-
-					cookieReceivedWhileShuttingDownErrorCause->Consolidate();
-					operationErrorChunk->Consolidate();
-
-					this->packetSender.SendPacket(packet.get());
-					this->associationListenerDeferrer.OnAssociationError(
-					  Types::ErrorKind::WRONG_SEQUENCE, "received COOKIE-ECHO while shutting down");
+					SendCookieReceivedWhileShuttingDown(cookie->GetRemoteVerificationTag());
 
 					return false;
 				}
@@ -1937,6 +1953,15 @@ namespace RTC
 			  cookie->GetRemoteVerificationTag() != this->tcb->GetRemoteVerificationTag())
 			{
 				// TODO: dcsctp: Handle the case in which remote verification tag is 0?
+
+				// NOTE: Same as in action A, a new association is never set up while
+				// shutting down.
+				if (IsShuttingDown())
+				{
+					SendCookieReceivedWhileShuttingDown(cookie->GetRemoteVerificationTag());
+
+					return false;
+				}
 
 				MS_DEBUG_DEV("received COOKIE-ECHO indicating simultaneous associations");
 
@@ -1965,6 +1990,14 @@ namespace RTC
 			{
 				MS_DEBUG_DEV(
 				  "received duplicate COOKIE-ECHO, probably because of peer not receiving COOKIE-ACK and retransmitting COOKIE-ECHO");
+			}
+			// NOTE: Any other combination of tags matches none of the cases in RFC
+			// 9260 section 5.2.4, so the COOKIE-ECHO is discarded.
+			else
+			{
+				MS_WARN_TAG(sctp, "received COOKIE-ECHO chunk matching no known case, discarding");
+
+				return false;
 			}
 
 			return true;
@@ -2127,7 +2160,7 @@ namespace RTC
 				// Verification Tag is reflected."
 				default:
 				{
-					auto packet = this->CreatePacketWithVerificationTag(receivedPacket->GetVerificationTag());
+					auto packet = CreatePacketWithVerificationTag(receivedPacket->GetVerificationTag());
 					auto* shutdownCompleteChunk = packet->BuildChunkInPlace<ShutdownCompleteChunk>();
 
 					shutdownCompleteChunk->SetT(true);
@@ -2454,7 +2487,7 @@ namespace RTC
 					// NOTE: Don't set bit T in the ABORT chunk since TCB knows the
 					// verification tag expected by the remote.
 
-					auto* outOfResourceErrorCause =
+					const auto* outOfResourceErrorCause =
 					  abortAssociationChunk->BuildErrorCauseInPlace<OutOfResourceErrorCause>();
 
 					outOfResourceErrorCause->Consolidate();
@@ -2530,7 +2563,7 @@ namespace RTC
 				// K. Retransmit those K DATA chunks in a single packet. When a Fast
 				// Retransmit is being performed, the sender SHOULD ignore the value of
 				// cwnd and SHOULD NOT delay retransmission for this single packet."
-				this->tcb->MaySendFastRetransmit();
+				this->tcb->MaySendFastRetransmit(nowUs);
 
 				// Receiving an ACK will decrease outstanding bytes (maybe now below
 				// cwnd?) or indicate packet loss that may result in sending FORWARD-TSN.
@@ -2551,25 +2584,25 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			const auto action         = receivedUnknownChunk->GetActionForUnknownChunkType();
-			const auto skipProcessing = action == Chunk::ActionForUnknownChunkType::SKIP ||
-			                            action == Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT;
-			const auto reportError    = action == Chunk::ActionForUnknownChunkType::STOP_AND_REPORT ||
-			                            action == Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT;
+			const auto action             = receivedUnknownChunk->GetActionForUnknownChunkType();
+			const auto continueProcessing = action == Chunk::ActionForUnknownChunkType::SKIP ||
+			                                action == Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT;
+			const auto reportError        = action == Chunk::ActionForUnknownChunkType::STOP_AND_REPORT ||
+			                                action == Chunk::ActionForUnknownChunkType::SKIP_AND_REPORT;
 
-			if (skipProcessing)
+			if (continueProcessing)
+			{
+				MS_DEBUG_TAG(
+				  sctp,
+				  "ignoring received chunk with unknown type %" PRIu8,
+				  static_cast<uint8_t>(receivedUnknownChunk->GetType()));
+			}
+			else
 			{
 				MS_WARN_TAG(
 				  sctp,
 				  "chunk with unknown type %" PRIu8
 				  " received, skipping further processing of chunks in the packet",
-				  static_cast<uint8_t>(receivedUnknownChunk->GetType()));
-			}
-			else
-			{
-				MS_DEBUG_TAG(
-				  sctp,
-				  "ignoring received chunk with unknown type %" PRIu8,
 				  static_cast<uint8_t>(receivedUnknownChunk->GetType()));
 			}
 
@@ -2580,9 +2613,9 @@ namespace RTC
 
 				// The unknown chunk is echoed back in full within the error cause, so
 				// it must fit in a packet we can send.
-				const size_t operationErrorPacketLength =
-				  Packet::CommonHeaderLength + Chunk::ChunkHeaderLength + ErrorCause::ErrorCauseHeaderLength +
-				  Utils::Byte::PadTo4Bytes(receivedUnknownChunk->GetLength());
+				const size_t operationErrorPacketLength = Packet::ComputeLengthFor(
+				  OperationErrorChunk::ComputeLengthFor(
+				    UnrecognizedChunkTypeErrorCause::ComputeLengthFor(receivedUnknownChunk->GetLength())));
 
 				if (operationErrorPacketLength > this->maxPacketLength)
 				{
@@ -2611,7 +2644,7 @@ namespace RTC
 				}
 			}
 
-			return !skipProcessing;
+			return continueProcessing;
 		}
 
 		bool Association::VerifyReceivedStateCookie(const StateCookie* cookie, int64_t receivedAtUs)
@@ -2676,8 +2709,9 @@ namespace RTC
 
 				// The Measure of Staleness is expressed in microseconds.
 				staleCookieErrorCause->SetMeasureOfStaleness(
-				  stalenessUs > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max()
-					                                                   : static_cast<uint32_t>(stalenessUs));
+				  std::cmp_greater(stalenessUs, std::numeric_limits<uint32_t>::max())
+				    ? std::numeric_limits<uint32_t>::max()
+						: static_cast<uint32_t>(stalenessUs));
 
 				staleCookieErrorCause->Consolidate();
 				operationErrorChunk->Consolidate();
@@ -2850,7 +2884,7 @@ namespace RTC
 			  firstExpectedState = false),
 			 ...);
 
-			auto expectedStatesString = expectedStatesOss.str();
+			const auto expectedStatesString = expectedStatesOss.str();
 
 			MS_ABORT(
 			  "current internal state %.*s does not match any of the given expected states (%s)",

@@ -6,8 +6,6 @@
 
 namespace RTC
 {
-	/* Static. */
-
 	/* Instance methods. */
 
 	SvcProducerStreamManager::SvcProducerStreamManager(
@@ -110,22 +108,19 @@ namespace RTC
 	}
 
 	void SvcProducerStreamManager::ProducerRtpStreamScore(
-	  RTC::RTP::RtpStreamRecv* /*rtpStream*/, uint8_t score, uint8_t previousScore)
+	  const RTC::RTP::RtpStreamRecv* /*rtpStream*/, uint8_t score, uint8_t previousScore)
 	{
 		MS_TRACE();
 
-		if (this->listener->IsActive())
+		// Just check target layers if the stream has died or reborned.
+		if (this->listener->IsActive() && (score == 0 || previousScore == 0))
 		{
-			// Just check target layers if the stream has died or reborned.
-			if (score == 0 || previousScore == 0)
-			{
-				MayChangeLayers();
-			}
+			MayChangeLayers();
 		}
 	}
 
 	void SvcProducerStreamManager::ProducerRtcpSenderReport(
-	  RTC::RTP::RtpStreamRecv* /*rtpStream*/, bool /*first*/)
+	  const RTC::RTP::RtpStreamRecv* /*rtpStream*/, bool /*first*/)
 	{
 		MS_TRACE();
 
@@ -133,7 +128,7 @@ namespace RTC
 	}
 
 	void SvcProducerStreamManager::ProducerSpatialLayerActivityChanged(
-	  RTC::RTP::RtpStreamRecv* /*rtpStream*/, uint8_t /*spatialLayer*/, bool /*isActive*/)
+	  const RTC::RTP::RtpStreamRecv* /*rtpStream*/, uint8_t /*spatialLayer*/, bool /*isActive*/)
 	{
 		MS_TRACE();
 
@@ -263,6 +258,7 @@ namespace RTC
 			UpdateTargetLayers(option.layers.spatial, option.layers.temporal);
 		}
 	}
+
 	int64_t SvcProducerStreamManager::GetDesiredBitrate(int64_t nowMs) const
 	{
 		MS_TRACE();
@@ -285,7 +281,7 @@ namespace RTC
 			for (auto spatialLayer{ this->producerRtpStream->GetSpatialLayers() - 1 }; spatialLayer >= 0;
 			     --spatialLayer)
 			{
-				auto spatialLayerBitrate =
+				const auto spatialLayerBitrate =
 				  this->producerRtpStream->GetSpatialLayerBitrate(nowMs, spatialLayer);
 
 				desiredBitrate = std::max(spatialLayerBitrate, desiredBitrate);
@@ -383,7 +379,7 @@ namespace RTC
 			this->syncRequired = false;
 		}
 
-		auto previousLayers = this->encodingContext->GetCurrentLayers();
+		const auto previousLayers = this->encodingContext->GetCurrentLayers();
 
 		// Preserve the original marker bit. ProcessPayload may update it (VP9/AV1
 		// overwrite it based on spatial-layer end-of-frame; VP8/H264 do not, so the
@@ -393,6 +389,16 @@ namespace RTC
 		if (!packet->ProcessPayload(this->encodingContext.get(), marker))
 		{
 			result.type = RtpPacketProcessResult::Type::DROP;
+
+			// NOTE: A picture has one frame per spatial layer, all of them at the same
+			// temporal layer, so the temporal layer changes at the first frame of a
+			// picture. In K-SVC that frame belongs to a spatial layer below the one the
+			// Consumer gets, so it is dropped here and the change would otherwise go
+			// unreported.
+			if (previousLayers != this->encodingContext->GetCurrentLayers())
+			{
+				result.temporalLayerChanged = true;
+			}
 
 #ifdef MS_RTC_LOGGER_RTP
 			packet->logger.Discarded(RTC::RtcLogger::RtpPacket::DiscardReason::DROPPED_BY_CODEC);
@@ -411,6 +417,9 @@ namespace RTC
 		result.tsOffset            = 0;
 		result.marker              = marker;
 		result.sendBufferedPackets = sendBufferedPackets;
+		// Take the payload encoder for this Consumer, so that its retransmissions
+		// are rewritten the very same way.
+		result.encoder = std::move(this->encodingContext->encoder);
 
 		return result;
 	}
@@ -419,7 +428,8 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		auto mappedSsrc = this->consumableRtpEncodings[0].ssrc;
+		// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+		const auto mappedSsrc = this->consumableRtpEncodings[0].ssrc;
 
 		this->listener->OnProducerStreamManagerKeyFrameRequested(mappedSsrc);
 	}

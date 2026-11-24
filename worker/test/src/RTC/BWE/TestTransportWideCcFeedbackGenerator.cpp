@@ -1,8 +1,7 @@
 #include "common.hpp"
 #include "RTC/BWE/TransportWideCcFeedbackGenerator.hpp"
-#include "RTC/Consts.hpp"
-#include "RTC/NEW_RTCP/packet/TransportWideCcPacket.hpp"
-#include "RTC/RTP/HeaderExtensionIds.hpp"
+#include "RTC/RTCP/packet/TransportWideCcPacket.hpp"
+#include "RTC/RTP/ExtensionMapping.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "test/include/RTC/RTP/rtpCommon.hpp"
@@ -35,7 +34,7 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 	public:
 		void OnTransportWideCcFeedbackGeneratorSendPacket(
 		  RTC::BWE::TransportWideCcFeedbackGenerator* /*transportWideCcFeedbackGenerator*/,
-		  const RTC::NEW_RTCP::TransportWideCcPacket* packet) override
+		  const RTC::RTCP::TransportWideCcPacket* packet) override
 		{
 			const int64_t baseTimeUs = packet->GetBaseTimeUs();
 
@@ -52,15 +51,17 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 						                  .received      = deltaSinceBaseUs.has_value(),
 						                  .timestampUs = deltaSinceBaseUs.has_value()
 						                                   ? baseTimeUs + deltaSinceBaseUs.value() -
-						                                       RTC::NEW_RTCP::TransportWideCcPacket::TimeWrapPeriodUs
+						                                       RTC::RTCP::TransportWideCcPacket::TimeWrapPeriodUs
 						                                   : 0 });
 			  });
 
+			this->senderSsrcs.push_back(packet->GetSenderSsrc());
 			this->baseSequenceNumbers.push_back(packet->GetBaseSequenceNumber());
 			this->feedbacks.push_back(statuses);
 		}
 
 	public:
+		std::vector<uint32_t> senderSsrcs;
 		std::vector<uint16_t> baseSequenceNumbers;
 		std::vector<std::vector<TestPacketStatus>> feedbacks;
 	};
@@ -103,13 +104,13 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 			 rtpCommon::DataBuffer }
 		};
 
-		REQUIRE(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions) == true);
+		REQUIRE(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::OneByte, extensions) == true);
 
-		RTC::RTP::HeaderExtensionIds headerExtensionIds;
+		RTC::RTP::ExtensionMapping extensionMapping;
 
-		headerExtensionIds.transportWideCc01 = TransportWideCc01Id;
+		extensionMapping.transportWideCc01 = TransportWideCc01Id;
 
-		packet->AssignExtensionIds(headerExtensionIds);
+		packet->SetExtensionMapping(extensionMapping);
 		packet->SetPayloadLength(payloadSize);
 
 		REQUIRE(packet->UpdateTransportWideCc01(wideSeqNumber));
@@ -172,9 +173,11 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 	{
 		TestTransportWideCcFeedbackGeneratorListener listener;
 		RTC::BWE::TransportWideCcFeedbackGenerator transportWideCcFeedbackGenerator(
-		  std::addressof(listener), std::addressof(shared), RTC::Consts::OutgoingRtcpPacketMaxSize);
+		  std::addressof(listener),
+		  std::addressof(shared),
+		  RTC::BWE::TransportWideCcFeedbackGenerator::TransportWideCcFeedbackGeneratorOptions{});
 
-		static constexpr int64_t FeedbackSendIntervalUs{ 100 * 1000 };
+		constexpr int64_t FeedbackSendIntervalUs{ 100 * 1000 };
 
 		int64_t startTsUs = inputs.at(0).arrivalTimeUs;
 
@@ -203,21 +206,15 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 			{ .wideSeqNumber = 2, .arrivalTimeUs = 1050000 },
 			{ .wideSeqNumber = 3, .arrivalTimeUs = 1100000 },
 			{ .wideSeqNumber = 4, .arrivalTimeUs = 1150000 },
-			{ .wideSeqNumber = 5, .arrivalTimeUs = 1200000 },
+			{ .wideSeqNumber = 5, .arrivalTimeUs = 1200000 }
 		};
 
 		const TestResults expectedResults{
-			{
-			 { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 },
-			 { .wideSeqNumber = 2, .received = true, .timestampUs = 1050000 },
-			 },
-			{
-			 { .wideSeqNumber = 3, .received = true, .timestampUs = 1100000 },
-			 { .wideSeqNumber = 4, .received = true, .timestampUs = 1150000 },
-			 },
-			{
-			 { .wideSeqNumber = 5, .received = true, .timestampUs = 1200000 },
-			 },
+			{ { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 },
+			 { .wideSeqNumber = 2, .received = true, .timestampUs = 1050000 } },
+			{ { .wideSeqNumber = 3, .received = true, .timestampUs = 1100000 },
+			 { .wideSeqNumber = 4, .received = true, .timestampUs = 1150000 } },
+			{ { .wideSeqNumber = 5, .received = true, .timestampUs = 1200000 } }
 		};
 
 		validate(inputs, expectedResults);
@@ -229,20 +226,16 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 			{ .wideSeqNumber = 1, .arrivalTimeUs = 1000000 },
 			{ .wideSeqNumber = 3, .arrivalTimeUs = 1050000 },
 			{ .wideSeqNumber = 5, .arrivalTimeUs = 1100000 },
-			{ .wideSeqNumber = 6, .arrivalTimeUs = 1150000 },
+			{ .wideSeqNumber = 6, .arrivalTimeUs = 1150000 }
 		};
 
 		const TestResults expectedResults{
-			{
-			 { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 },
+			{ { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 },
 			 { .wideSeqNumber = 2, .received = false, .timestampUs = 0 },
-			 { .wideSeqNumber = 3, .received = true, .timestampUs = 1050000 },
-			 },
-			{
-			 { .wideSeqNumber = 4, .received = false, .timestampUs = 0 },
+			 { .wideSeqNumber = 3, .received = true, .timestampUs = 1050000 } },
+			{ { .wideSeqNumber = 4, .received = false, .timestampUs = 0 },
 			 { .wideSeqNumber = 5, .received = true, .timestampUs = 1100000 },
-			 { .wideSeqNumber = 6, .received = true, .timestampUs = 1150000 },
-			 },
+			 { .wideSeqNumber = 6, .received = true, .timestampUs = 1150000 } }
 		};
 
 		validate(inputs, expectedResults);
@@ -256,20 +249,14 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 			{ .wideSeqNumber = 2, .arrivalTimeUs = 1100000 },
 			{ .wideSeqNumber = 3, .arrivalTimeUs = 1150000 },
 			{ .wideSeqNumber = 3, .arrivalTimeUs = 1200000 },
-			{ .wideSeqNumber = 4, .arrivalTimeUs = 1250000 },
+			{ .wideSeqNumber = 4, .arrivalTimeUs = 1250000 }
 		};
 
 		const TestResults expectedResults{
-			{
-			 { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 },
-			 },
-			{
-			 { .wideSeqNumber = 2, .received = true, .timestampUs = 1100000 },
-			 { .wideSeqNumber = 3, .received = true, .timestampUs = 1150000 },
-			 },
-			{
-			 { .wideSeqNumber = 4, .received = true, .timestampUs = 1250000 },
-			 },
+			{ { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 } },
+			{ { .wideSeqNumber = 2, .received = true, .timestampUs = 1100000 },
+			 { .wideSeqNumber = 3, .received = true, .timestampUs = 1150000 } },
+			{ { .wideSeqNumber = 4, .received = true, .timestampUs = 1250000 } }
 		};
 
 		validate(inputs, expectedResults);
@@ -284,25 +271,19 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 			{ .wideSeqNumber = 5, .arrivalTimeUs = 1150000 },
 			// Out of order.
 			{ .wideSeqNumber = 3, .arrivalTimeUs = 1200000 },
-			{ .wideSeqNumber = 6, .arrivalTimeUs = 1250000 },
+			{ .wideSeqNumber = 6, .arrivalTimeUs = 1250000 }
 		};
 
 		const TestResults expectedResults{
-			{
-			 { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 },
-			 { .wideSeqNumber = 2, .received = true, .timestampUs = 1050000 },
-			 },
-			{
-			 { .wideSeqNumber = 3, .received = false, .timestampUs = 0 },
+			{ { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 },
+			 { .wideSeqNumber = 2, .received = true, .timestampUs = 1050000 } },
+			{ { .wideSeqNumber = 3, .received = false, .timestampUs = 0 },
+			 { .wideSeqNumber = 4, .received = true, .timestampUs = 1100000 },
+			 { .wideSeqNumber = 5, .received = true, .timestampUs = 1150000 } },
+			{ { .wideSeqNumber = 3, .received = true, .timestampUs = 1200000 },
 			 { .wideSeqNumber = 4, .received = true, .timestampUs = 1100000 },
 			 { .wideSeqNumber = 5, .received = true, .timestampUs = 1150000 },
-			 },
-			{
-			 { .wideSeqNumber = 3, .received = true, .timestampUs = 1200000 },
-			 { .wideSeqNumber = 4, .received = true, .timestampUs = 1100000 },
-			 { .wideSeqNumber = 5, .received = true, .timestampUs = 1150000 },
-			 { .wideSeqNumber = 6, .received = true, .timestampUs = 1250000 },
-			 },
+			 { .wideSeqNumber = 6, .received = true, .timestampUs = 1250000 } }
 		};
 
 		validate(inputs, expectedResults);
@@ -312,7 +293,9 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 	{
 		TestTransportWideCcFeedbackGeneratorListener listener;
 		RTC::BWE::TransportWideCcFeedbackGenerator transportWideCcFeedbackGenerator(
-		  std::addressof(listener), std::addressof(shared), RTC::Consts::OutgoingRtcpPacketMaxSize);
+		  std::addressof(listener),
+		  std::addressof(shared),
+		  RTC::BWE::TransportWideCcFeedbackGenerator::TransportWideCcFeedbackGeneratorOptions{});
 
 		feedPacket(transportWideCcFeedbackGenerator, 12, 1000000, DefaultPayloadSize);
 
@@ -331,19 +314,13 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 		transportWideCcFeedbackGenerator.FillAndSendFeedback();
 
 		const TestResults expectedResults{
-			{
-			 { .wideSeqNumber = 12, .received = true, .timestampUs = 1000000 },
-			 },
-			{
-			 { .wideSeqNumber = 13, .received = true, .timestampUs = 1500000 },
-			 },
-			{
-			 { .wideSeqNumber = 10, .received = true, .timestampUs = 1499000 },
+			{ { .wideSeqNumber = 12, .received = true, .timestampUs = 1000000 } },
+			{ { .wideSeqNumber = 13, .received = true, .timestampUs = 1500000 } },
+			{ { .wideSeqNumber = 10, .received = true, .timestampUs = 1499000 },
 			 { .wideSeqNumber = 11, .received = true, .timestampUs = 1499500 },
 			 // Forgotten above, so no longer known to have arrived.
 			  { .wideSeqNumber = 12, .received = false, .timestampUs = 0 },
-			 { .wideSeqNumber = 13, .received = true, .timestampUs = 1500000 },
-			 },
+			 { .wideSeqNumber = 13, .received = true, .timestampUs = 1500000 } }
 		};
 
 		checkFeedbacks(listener, expectedResults);
@@ -357,7 +334,9 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 	{
 		TestTransportWideCcFeedbackGeneratorListener listener;
 		RTC::BWE::TransportWideCcFeedbackGenerator transportWideCcFeedbackGenerator(
-		  std::addressof(listener), std::addressof(shared), RTC::Consts::OutgoingRtcpPacketMaxSize);
+		  std::addressof(listener),
+		  std::addressof(shared),
+		  RTC::BWE::TransportWideCcFeedbackGenerator::TransportWideCcFeedbackGeneratorOptions{});
 
 		feedPacket(transportWideCcFeedbackGenerator, 1, 1000000, DefaultPayloadSize);
 		feedPacket(transportWideCcFeedbackGenerator, 2, 1000000, DefaultPayloadSize);
@@ -375,20 +354,14 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 		transportWideCcFeedbackGenerator.FillAndSendFeedback();
 
 		const TestResults expectedResults{
-			{
-			 { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 },
-			 { .wideSeqNumber = 2, .received = true, .timestampUs = 1000000 },
-			 },
-			{
-			 { .wideSeqNumber = 3, .received = false, .timestampUs = 0 },
+			{ { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 },
+			 { .wideSeqNumber = 2, .received = true, .timestampUs = 1000000 } },
+			{ { .wideSeqNumber = 3, .received = false, .timestampUs = 0 },
 			 { .wideSeqNumber = 4, .received = false, .timestampUs = 0 },
-			 { .wideSeqNumber = 5, .received = true, .timestampUs = 1000000 },
-			 },
+			 { .wideSeqNumber = 5, .received = true, .timestampUs = 1000000 } },
 			// Only the one still known. Without moving the start up to it, 6 to 9
 			// would go out as lost having merely been forgotten.
-			{
-			 { .wideSeqNumber = 10, .received = true, .timestampUs = 1600000 },
-			 },
+			{ { .wideSeqNumber = 10, .received = true, .timestampUs = 1600000 } }
 		};
 
 		checkFeedbacks(listener, expectedResults);
@@ -400,7 +373,9 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 	{
 		TestTransportWideCcFeedbackGeneratorListener listener;
 		RTC::BWE::TransportWideCcFeedbackGenerator transportWideCcFeedbackGenerator(
-		  std::addressof(listener), std::addressof(shared), RTC::Consts::OutgoingRtcpPacketMaxSize);
+		  std::addressof(listener),
+		  std::addressof(shared),
+		  RTC::BWE::TransportWideCcFeedbackGenerator::TransportWideCcFeedbackGeneratorOptions{});
 
 		feedPacket(transportWideCcFeedbackGenerator, 1, 1000000, DefaultPayloadSize);
 		feedPacket(transportWideCcFeedbackGenerator, 2, 1000000, DefaultPayloadSize);
@@ -416,20 +391,16 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 		transportWideCcFeedbackGenerator.FillAndSendFeedback();
 
 		const TestResults expectedResults{
-			{
-			 { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 },
-			 { .wideSeqNumber = 2, .received = true, .timestampUs = 1000000 },
-			 },
-			{
-			 { .wideSeqNumber = 3, .received = false, .timestampUs = 0 },
+			{ { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 },
+			 { .wideSeqNumber = 2, .received = true, .timestampUs = 1000000 } },
+			{ { .wideSeqNumber = 3, .received = false, .timestampUs = 0 },
 			 { .wideSeqNumber = 4, .received = false, .timestampUs = 0 },
 			 { .wideSeqNumber = 5, .received = true, .timestampUs = 1000000 },
 			 { .wideSeqNumber = 6, .received = false, .timestampUs = 0 },
 			 { .wideSeqNumber = 7, .received = false, .timestampUs = 0 },
 			 { .wideSeqNumber = 8, .received = false, .timestampUs = 0 },
 			 { .wideSeqNumber = 9, .received = false, .timestampUs = 0 },
-			 { .wideSeqNumber = 10, .received = true, .timestampUs = 1600000 },
-			 },
+			 { .wideSeqNumber = 10, .received = true, .timestampUs = 1600000 } }
 		};
 
 		checkFeedbacks(listener, expectedResults);
@@ -439,7 +410,9 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 	{
 		TestTransportWideCcFeedbackGeneratorListener listener;
 		RTC::BWE::TransportWideCcFeedbackGenerator transportWideCcFeedbackGenerator(
-		  std::addressof(listener), std::addressof(shared), RTC::Consts::OutgoingRtcpPacketMaxSize);
+		  std::addressof(listener),
+		  std::addressof(shared),
+		  RTC::BWE::TransportWideCcFeedbackGenerator::TransportWideCcFeedbackGeneratorOptions{});
 
 		feedPacket(transportWideCcFeedbackGenerator, 10, 1000000, DefaultPayloadSize);
 		// Ahead of the one above by more than half the sequence space, so it goes
@@ -476,7 +449,9 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 	{
 		TestTransportWideCcFeedbackGeneratorListener listener;
 		RTC::BWE::TransportWideCcFeedbackGenerator transportWideCcFeedbackGenerator(
-		  std::addressof(listener), std::addressof(shared), RTC::Consts::OutgoingRtcpPacketMaxSize);
+		  std::addressof(listener),
+		  std::addressof(shared),
+		  RTC::BWE::TransportWideCcFeedbackGenerator::TransportWideCcFeedbackGeneratorOptions{});
 
 		feedPacket(transportWideCcFeedbackGenerator, 1, 1000000, DefaultPayloadSize);
 		// Nine seconds later, which no delta of a feedback packet can express.
@@ -485,12 +460,8 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 		transportWideCcFeedbackGenerator.FillAndSendFeedback();
 
 		const TestResults expectedResults{
-			{
-			 { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 },
-			 },
-			{
-			 { .wideSeqNumber = 2, .received = true, .timestampUs = 10000000 },
-			 },
+			{ { .wideSeqNumber = 1, .received = true, .timestampUs = 1000000 } },
+			{ { .wideSeqNumber = 2, .received = true, .timestampUs = 10000000 } }
 		};
 
 		checkFeedbacks(listener, expectedResults);
@@ -508,7 +479,10 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 
 		TestTransportWideCcFeedbackGeneratorListener listener;
 		RTC::BWE::TransportWideCcFeedbackGenerator transportWideCcFeedbackGenerator(
-		  std::addressof(listener), std::addressof(shared), MaxRtcpPacketLen);
+		  std::addressof(listener),
+		  std::addressof(shared),
+		  RTC::BWE::TransportWideCcFeedbackGenerator::TransportWideCcFeedbackGeneratorOptions{
+		    .maxRtcpPacketLen = MaxRtcpPacketLen });
 
 		TestResults expectedResults(2);
 
@@ -524,15 +498,13 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 
 		// 17, 18 and 19 are lost. The chunk that reports them still fits in the
 		// first feedback packet, but the delta of 20 does not, so the first packet
-		// ends with them and 20 goes into a second one.
+		// ends with 16 and the lost ones go with 20 into a second one.
 		feedPacket(transportWideCcFeedbackGenerator, 20, 1160000, DefaultPayloadSize);
 
 		transportWideCcFeedbackGenerator.FillAndSendFeedback();
 
 		for (uint16_t wideSeqNumber{ 17 }; wideSeqNumber <= 19; ++wideSeqNumber)
 		{
-			expectedResults.at(0).push_back(
-			  { .wideSeqNumber = wideSeqNumber, .received = false, .timestampUs = 0 });
 			expectedResults.at(1).push_back(
 			  { .wideSeqNumber = wideSeqNumber, .received = false, .timestampUs = 0 });
 		}
@@ -541,8 +513,8 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 
 		checkFeedbacks(listener, expectedResults);
 
-		// The lost ones that closed the first report are reported again, since
-		// the second one starts right after 16 and not after 19.
+		// The lost ones are reported once, by the second report, which starts
+		// right after 16.
 		REQUIRE(listener.baseSequenceNumbers.at(0) == 1);
 		REQUIRE(listener.baseSequenceNumbers.at(1) == 17);
 	}
@@ -562,11 +534,36 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 		REQUIRE(RTC::BWE::TransportWideCcFeedbackGenerator::ComputeSendIntervalMs(0) == 250);
 	}
 
+	SECTION("the feedback carries the sender SSRC given in the options")
+	{
+		TestTransportWideCcFeedbackGeneratorListener listener;
+		RTC::BWE::TransportWideCcFeedbackGenerator transportWideCcFeedbackGenerator(
+		  std::addressof(listener),
+		  std::addressof(shared),
+		  RTC::BWE::TransportWideCcFeedbackGenerator::TransportWideCcFeedbackGeneratorOptions{
+		    .rtcpSenderSsrc = 1234 });
+
+		feedPacket(transportWideCcFeedbackGenerator, 1, BaseTimeUs, 1000);
+
+		auto* timer = shared.GetTimer(TimerLabel);
+
+		REQUIRE(timer);
+
+		nowUs = timer->GetExpiresAtMs() * 1000;
+
+		REQUIRE(timer->EvaluateHasExpired());
+
+		REQUIRE(listener.senderSsrcs.size() == 1);
+		REQUIRE(listener.senderSsrcs.at(0) == 1234);
+	}
+
 	SECTION("nothing is sent periodically until a packet carrying the extension arrives")
 	{
 		TestTransportWideCcFeedbackGeneratorListener listener;
 		RTC::BWE::TransportWideCcFeedbackGenerator transportWideCcFeedbackGenerator(
-		  std::addressof(listener), std::addressof(shared), RTC::Consts::OutgoingRtcpPacketMaxSize);
+		  std::addressof(listener),
+		  std::addressof(shared),
+		  RTC::BWE::TransportWideCcFeedbackGenerator::TransportWideCcFeedbackGeneratorOptions{});
 
 		auto* timer = shared.GetTimer(TimerLabel);
 
@@ -589,7 +586,9 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 	{
 		TestTransportWideCcFeedbackGeneratorListener listener;
 		RTC::BWE::TransportWideCcFeedbackGenerator transportWideCcFeedbackGenerator(
-		  std::addressof(listener), std::addressof(shared), RTC::Consts::OutgoingRtcpPacketMaxSize);
+		  std::addressof(listener),
+		  std::addressof(shared),
+		  RTC::BWE::TransportWideCcFeedbackGenerator::TransportWideCcFeedbackGeneratorOptions{});
 
 		// A thousand bytes every 20 ms is around 400 kbps, well past what the
 		// shortest interval covers.
@@ -613,7 +612,9 @@ SCENARIO("BWE TransportWideCcFeedbackGenerator", "[bwe][transportwideccfeedbackg
 	{
 		TestTransportWideCcFeedbackGeneratorListener listener;
 		RTC::BWE::TransportWideCcFeedbackGenerator transportWideCcFeedbackGenerator(
-		  std::addressof(listener), std::addressof(shared), RTC::Consts::OutgoingRtcpPacketMaxSize);
+		  std::addressof(listener),
+		  std::addressof(shared),
+		  RTC::BWE::TransportWideCcFeedbackGenerator::TransportWideCcFeedbackGeneratorOptions{});
 
 		// Two hundred and fifty bytes every 100 ms is around 20 kbps, well below
 		// what the longest interval covers.

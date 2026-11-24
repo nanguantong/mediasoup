@@ -12,6 +12,7 @@ namespace RTC
 		/* Class variables. */
 
 		// clang-format off
+		// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 		const ankerl::unordered_dense::map<ReconfigurationResponseParameter::Result, std::string> ReconfigurationResponseParameter::Result2String =
 		{
 			{ ReconfigurationResponseParameter::Result::SUCCESS_NOTHING_TO_DO,             "SUCCESS_NOTHING_TO_DO"             },
@@ -20,7 +21,7 @@ namespace RTC
 			{ ReconfigurationResponseParameter::Result::ERROR_WRONG_SSN,                   "ERROR_WRONG_SSN"                   },
 			{ ReconfigurationResponseParameter::Result::ERROR_REQUEST_ALREADY_IN_PROGRESS, "ERROR_REQUEST_ALREADY_IN_PROGRESS" },
 			{ ReconfigurationResponseParameter::Result::ERROR_BAD_SEQUENCE_NUMBER,         "ERROR_BAD_SEQUENCE_NUMBER"         },
-			{ ReconfigurationResponseParameter::Result::IN_PROGRESS,                       "IN_PROGRESS"                       },
+			{ ReconfigurationResponseParameter::Result::IN_PROGRESS,                       "IN_PROGRESS"                       }
 		};
 		// clang-format on
 
@@ -83,14 +84,16 @@ namespace RTC
 
 			static const std::string Unknown("UNKNOWN");
 
-			auto it = ReconfigurationResponseParameter::Result2String.find(result);
+			const auto it = ReconfigurationResponseParameter::Result2String.find(result);
 
 			if (it == ReconfigurationResponseParameter::Result2String.end())
 			{
 				return Unknown;
 			}
 
-			return it->second;
+			const std::string& resultString = it->second;
+
+			return resultString;
 		}
 
 		ReconfigurationResponseParameter* ReconfigurationResponseParameter::ParseStrict(

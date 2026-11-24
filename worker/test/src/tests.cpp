@@ -4,9 +4,10 @@
 #include "DepOpenSSL.hpp"
 #include "Settings.hpp"
 #include "Utils.hpp"
+#include <uv.h>
 #include <catch2/catch_session.hpp>
 #include <cstdlib> // std::getenv()
-#include <sstream> // std::istringstream()
+#include <sstream> // std::istringstream
 #include <string>
 #include <vector>
 
@@ -27,7 +28,8 @@ int main(int argc, char* argv[])
 	// Get logTags from ENV variable.
 	if (logTagsPtr)
 	{
-		auto logTagsStr = std::string(logTagsPtr);
+		const auto logTagsStr = std::string(logTagsPtr);
+
 		std::istringstream iss(logTagsStr);
 		std::string logTag;
 
@@ -50,6 +52,11 @@ int main(int argc, char* argv[])
 	Catch::Session session;
 
 	const int status = session.run(argc, argv);
+
+	// Run one loop iteration so that libuv handles closed by the tests (uv_close()
+	// callbacks) are freed before DepLibUV::ClassDestroy() checks for alive
+	// handles.
+	uv_run(DepLibUV::GetLoop(), UV_RUN_NOWAIT);
 
 	// Free static stuff.
 	DepLibSRTP::ClassDestroy();

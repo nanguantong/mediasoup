@@ -3,6 +3,10 @@
 
 #include "RTC/NackGenerator.hpp"
 #include "Logger.hpp"
+#if MS_LOG_DEV_LEVEL == 3
+#include <iterator> // std::ostream_iterator
+#include <sstream>  // std::ostringstream
+#endif
 
 namespace RTC
 {
@@ -32,8 +36,9 @@ namespace RTC
 	/**
 	 * Returns true if this is a found nacked packet. False otherwise.
 	 *
-	 * NOTE: It also returns true if packet comes via RTX and contains a sequence
-	 * number higher than the highest seen.
+	 * @remarks
+	 * - It also returns true if packet comes via RTX and contains a sequence
+	 *   number higher than the highest seen.
 	 */
 	bool NackGenerator::ReceivePacket(const RTC::RTP::Packet* packet, bool isRecovered)
 	{
@@ -44,6 +49,13 @@ namespace RTC
 
 		if (!this->started)
 		{
+			// Do not start with a retransmission, whose sequence number may be far
+			// behind the current one.
+			if (isRecovered || this->requestedList.contains(seq))
+			{
+				return false;
+			}
+
 			this->started = true;
 			this->lastSeq = seq;
 
@@ -68,6 +80,17 @@ namespace RTC
 			// It was a nacked packet.
 			if (this->nackList.erase(seq) != 0)
 			{
+				// Remember it, so any later copy of it is known to be a retransmission.
+				this->requestedList.insert(seq);
+
+				// Remove old ones so we don't accumulate requested packets.
+				const auto it = this->requestedList.lower_bound(this->lastSeq - MaxPacketAge);
+
+				if (it != this->requestedList.begin())
+				{
+					this->requestedList.erase(this->requestedList.begin(), it);
+				}
+
 				MS_DEBUG_DEV(
 				  "NACKed packet received [ssrc:%" PRIu32 ", seq:%" PRIu16 ", recovered:%s]",
 				  packet->GetSsrc(),
@@ -103,7 +126,7 @@ namespace RTC
 
 		// Remove old keyframes.
 		{
-			auto it = this->keyFrameList.lower_bound(seq - MaxPacketAge);
+			const auto it = this->keyFrameList.lower_bound(seq - MaxPacketAge);
 
 			if (it != this->keyFrameList.begin())
 			{
@@ -113,7 +136,7 @@ namespace RTC
 
 		if (isRecovered)
 		{
-			const auto inserted = this->recoveredList.insert(seq).second;
+			const bool inserted = this->recoveredList.insert(seq).second;
 
 			// Packet already recovered, ignore it.
 			if (!inserted)
@@ -122,7 +145,7 @@ namespace RTC
 			}
 
 			// Remove old ones so we don't accumulate recovered packets.
-			auto it = this->recoveredList.lower_bound(seq - MaxPacketAge);
+			const auto it = this->recoveredList.lower_bound(seq - MaxPacketAge);
 
 			if (it != this->recoveredList.begin())
 			{
@@ -157,7 +180,7 @@ namespace RTC
 		// libwebrtc may use RTX for probation and such packets may contain
 		// RTX-encoded real RTP packets that were sent before but didn't arrive yet
 		// to us or they were lost. Let's deal with them as normal packets.
-		return isRecovered ? true : false;
+		return isRecovered;
 	}
 
 	void NackGenerator::AddPacketsToNackList(uint16_t seqStart, uint16_t seqEnd)
@@ -165,28 +188,40 @@ namespace RTC
 		MS_TRACE();
 
 		// Remove old packets.
-		auto it = this->nackList.lower_bound(seqEnd - MaxPacketAge);
+		const auto it = this->nackList.lower_bound(seqEnd - MaxPacketAge);
 
 		this->nackList.erase(this->nackList.begin(), it);
+
+		const auto requestedIt = this->requestedList.lower_bound(seqEnd - MaxPacketAge);
+
+		this->requestedList.erase(this->requestedList.begin(), requestedIt);
 
 		// If the nack list is too large, remove packets from the nack list until
 		// the latest first packet of a keyframe. If the list is still too large,
 		// clear it and request a keyframe.
 		const uint16_t numNewNacks = seqEnd - seqStart;
 
-		if (static_cast<uint16_t>(this->nackList.size()) + numNewNacks > MaxNackPackets)
+		if (this->nackList.size() + numNewNacks > MaxNackPackets)
 		{
-			while (RemoveNackItemsUntilKeyFrame() &&
-			       static_cast<uint16_t>(this->nackList.size()) + numNewNacks > MaxNackPackets)
+			while (RemoveNackItemsUntilKeyFrame() && this->nackList.size() + numNewNacks > MaxNackPackets)
 			{
 			}
 
-			if (static_cast<uint16_t>(this->nackList.size()) + numNewNacks > MaxNackPackets)
+			if (this->nackList.size() + numNewNacks > MaxNackPackets)
 			{
 				MS_WARN_TAG(
 				  rtx, "NACK list full, clearing it and requesting a key frame [seqEnd:%" PRIu16 "]", seqEnd);
 
+				// The packets already requested may still arrive, as retransmissions.
+				for (const auto& kv : this->nackList)
+				{
+					const auto& nackInfo = kv.second;
+
+					this->requestedList.insert(nackInfo.seq);
+				}
+
 				this->nackList.clear();
+
 				this->listener->OnNackGeneratorKeyFrameRequired();
 
 				return;
@@ -195,10 +230,10 @@ namespace RTC
 
 		for (uint16_t seq = seqStart; seq != seqEnd; ++seq)
 		{
-			MS_ASSERT(this->nackList.find(seq) == this->nackList.end(), "packet already in the NACK list");
+			MS_ASSERT(!this->nackList.contains(seq), "packet already in the NACK list");
 
 			// Do not send NACK for packets that are already recovered by RTX.
-			if (this->recoveredList.find(seq) != this->recoveredList.end())
+			if (this->recoveredList.contains(seq))
 			{
 				continue;
 			}
@@ -219,12 +254,22 @@ namespace RTC
 
 		while (!this->keyFrameList.empty())
 		{
-			auto it = this->nackList.lower_bound(*this->keyFrameList.begin());
+			const auto it = this->nackList.lower_bound(*this->keyFrameList.begin());
 
 			if (it != this->nackList.begin())
 			{
 				// We have found a keyframe that actually is newer than at least one
 				// packet in the nack list.
+				//
+				// NOTE: The packets already requested may still arrive, as
+				// retransmissions.
+				for (auto removedIt = this->nackList.begin(); removedIt != it; ++removedIt)
+				{
+					const auto& nackInfo = removedIt->second;
+
+					this->requestedList.insert(nackInfo.seq);
+				}
+
 				this->nackList.erase(this->nackList.begin(), it);
 
 				return true;
@@ -243,14 +288,16 @@ namespace RTC
 		MS_TRACE();
 
 		const int64_t nowMs = this->shared->GetTimeMs();
+
 		std::vector<uint16_t> nackBatch;
 
 		auto it = this->nackList.begin();
 
 		while (it != this->nackList.end())
 		{
-			NackInfo& nackInfo = it->second;
-			const uint16_t seq = nackInfo.seq;
+			auto& nackInfo = it->second;
+
+			const auto seq = nackInfo.seq;
 
 			if (this->sendNackDelayMs > 0 && nowMs - nackInfo.createdAtMs < this->sendNackDelayMs)
 			{
@@ -274,6 +321,9 @@ namespace RTC
 					  "sequence number removed from the NACK list due to max retries [filter:seq, seq:%" PRIu16
 					  "]",
 					  seq);
+
+					// The NACKs just sent may still be answered.
+					this->requestedList.insert(seq);
 
 					it = this->nackList.erase(it);
 				}
@@ -302,6 +352,9 @@ namespace RTC
 					  "]",
 					  seq);
 
+					// The NACKs just sent may still be answered.
+					this->requestedList.insert(seq);
+
 					it = this->nackList.erase(it);
 				}
 				else
@@ -319,6 +372,7 @@ namespace RTC
 		if (!nackBatch.empty())
 		{
 			std::ostringstream seqsStream;
+
 			std::ranges::copy(
 			  nackBatch.begin(), nackBatch.end() - 1, std::ostream_iterator<uint32_t>(seqsStream, ","));
 			seqsStream << nackBatch.back();
@@ -337,9 +391,36 @@ namespace RTC
 		return nackBatch;
 	}
 
+	void NackGenerator::UpdateRttMs(int64_t rttMs)
+	{
+		MS_TRACE();
+
+		this->rttMs = rttMs;
+	}
+
 	void NackGenerator::Reset()
 	{
 		MS_TRACE();
+
+		this->nackList.clear();
+		this->keyFrameList.clear();
+		this->recoveredList.clear();
+		this->requestedList.clear();
+		this->started = false;
+		this->lastSeq = 0;
+	}
+
+	void NackGenerator::Pause()
+	{
+		MS_TRACE();
+
+		// The packets still requested may arrive later, as retransmissions.
+		for (const auto& kv : this->nackList)
+		{
+			const auto& nackInfo = kv.second;
+
+			this->requestedList.insert(nackInfo.seq);
+		}
 
 		this->nackList.clear();
 		this->keyFrameList.clear();

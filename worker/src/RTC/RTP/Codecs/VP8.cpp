@@ -140,9 +140,8 @@ namespace RTC
 					return;
 				}
 
-				auto* payloadDescriptorHandler = new PayloadDescriptorHandler(payloadDescriptor);
-
-				packet->SetPayloadDescriptorHandler(payloadDescriptorHandler);
+				packet->SetPayloadDescriptorHandler(
+				  std::make_unique<PayloadDescriptorHandler>(payloadDescriptor));
 
 				// Modify the RtpPacket payload in order to always have two byte pictureId.
 				if (payloadDescriptor->hasOneBytePictureId)
@@ -228,7 +227,7 @@ namespace RTC
 
 						if (pictureId > 127)
 						{
-							MS_DEBUG_TAG(rtp, "casting pictureId value to one byte");
+							MS_DEBUG_TAG(codec, "casting pictureId value to one byte");
 						}
 					}
 				}
@@ -237,18 +236,6 @@ namespace RTC
 				{
 					*data = tl0PictureIndex;
 				}
-			}
-
-			void VP8::PayloadDescriptor::Encode(uint8_t* data) const
-			{
-				MS_TRACE();
-
-				if (this->encoder == std::nullopt)
-				{
-					return;
-				}
-
-				this->encoder->Encode(data, this);
 			}
 
 			void VP8::PayloadDescriptor::Restore(uint8_t* data) const
@@ -307,15 +294,15 @@ namespace RTC
 				if (
 				  this->payloadDescriptor->hasPictureId && this->payloadDescriptor->hasTlIndex &&
 				  this->payloadDescriptor->hasTl0PictureIndex &&
-				  !RTC::SeqManager<uint16_t, 15>::IsSeqLowerThan(
+				  !RTC::SeqManager<uint16_t, VP8::FrameIdLength>::IsSeqLowerThan(
 				    this->payloadDescriptor->pictureId, context->pictureIdManager.GetMaxInput()))
 				{
 					// Drop if:
 					// - Temporal layer is higher than target.
 					// - Temporal layer is higher than current and sync flag is not set.
 					if (
-					  this->payloadDescriptor->tlIndex > context->GetTargetTemporalLayer() ||
-					  (this->payloadDescriptor->tlIndex > context->GetCurrentTemporalLayer() &&
+					  std::cmp_greater(this->payloadDescriptor->tlIndex, context->GetTargetTemporalLayer()) ||
+					  (std::cmp_greater(this->payloadDescriptor->tlIndex, context->GetCurrentTemporalLayer()) &&
 						 !this->payloadDescriptor->y))
 					{
 						context->pictureIdManager.Drop(this->payloadDescriptor->pictureId);
@@ -354,7 +341,9 @@ namespace RTC
 				context->SetCurrentSpatialLayer(0);
 
 				// Update/fix current temporal layer.
-				if (this->payloadDescriptor->hasTlIndex && this->payloadDescriptor->tlIndex == context->GetTargetTemporalLayer())
+				if (
+				  this->payloadDescriptor->hasTlIndex &&
+				  std::cmp_equal(this->payloadDescriptor->tlIndex, context->GetTargetTemporalLayer()))
 				{
 					context->SetCurrentTemporalLayer(this->payloadDescriptor->tlIndex);
 				}
@@ -369,16 +358,23 @@ namespace RTC
 				}
 
 				// Do not send tlIndex higher than current one.
-				if (this->payloadDescriptor->tlIndex > context->GetCurrentTemporalLayer())
+				if (std::cmp_greater(this->payloadDescriptor->tlIndex, context->GetCurrentTemporalLayer()))
 				{
 					return false;
 				}
 
 				if (this->payloadDescriptor->hasPictureId && this->payloadDescriptor->hasTl0PictureIndex)
 				{
-					// Store the encoding data for retransmissions.
-					this->payloadDescriptor->CreateEncoder({ pictureId, tl0PictureIndex });
-					this->payloadDescriptor->Encode(packet->GetPayload());
+					this->payloadDescriptor->Encode(packet->GetPayload(), pictureId, tl0PictureIndex);
+
+					// Leave the Consumer how this packet was rewritten for it.
+					auto encoder =
+					  std::make_unique<VP8::PayloadDescriptor::Encoder>(VP8::PayloadDescriptor::EncodingData{
+					    .pictureId = pictureId, .tl0PictureIndex = tl0PictureIndex });
+
+					encoder->preferDependencyDescriptor = context->PrefersDependencyDescriptor();
+
+					context->encoder = std::move(encoder);
 				}
 
 				return true;

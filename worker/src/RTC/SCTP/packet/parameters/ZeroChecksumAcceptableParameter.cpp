@@ -12,11 +12,12 @@ namespace RTC
 		/* Class variables. */
 
 		// clang-format off
+		// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 		const ankerl::unordered_dense::map<ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod, std::string> ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod2String =
 		{
 			{ ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod::NONE,            "NONE"            },
 			{ ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod::SCTP_OVER_DTLS,  "SCTP_OVER_DTLS"  },
-			{ ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod::TRUSTED_NETWORK, "TRUSTED_NETWORK" },
+			{ ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod::TRUSTED_NETWORK, "TRUSTED_NETWORK" }
 		};
 		// clang-format on
 
@@ -99,7 +100,7 @@ namespace RTC
 
 			static const std::string Unknown("UNKNOWN");
 
-			auto it = ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod2String.find(
+			const auto it = ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod2String.find(
 			  alternateErrorDetectionMethod);
 
 			if (it == ZeroChecksumAcceptableParameter::AlternateErrorDetectionMethod2String.end())
@@ -107,7 +108,9 @@ namespace RTC
 				return Unknown;
 			}
 
-			return it->second;
+			const std::string& alternateErrorDetectionMethodString = it->second;
+
+			return alternateErrorDetectionMethodString;
 		}
 
 		/* Instance methods. */

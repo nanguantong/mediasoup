@@ -91,13 +91,50 @@ namespace RTC
 		/**
 		 * Max length for a 2 bytes RTP header extension.
 		 */
-		constexpr uint8_t TwoBytesRtpExtensionMaxLength{ 255 };
+		constexpr uint8_t TwoByteRtpExtensionMaxLength{ 255 };
 
 		/**
 		 * MID RTP header extension max length (just used when setting/updating MID
 		 * extension).
 		 */
 		constexpr uint8_t MidRtpExtensionMaxLength{ 8 };
+
+		/**
+		 * Maximum interval for regular RTCP mode for audio (ms).
+		 *
+		 * @remarks
+		 * - Not the 5000 ms that other implementations take, because our
+		 *   correspondence between NTP and RTP timestamps is not the fixed line of
+		 *   a real capture system but an estimation that moves. Refreshing it for
+		 *   audio less often than for video would make receivers combine
+		 *   measurements taken at different instants, and that difference is lip
+		 *   sync error.
+		 */
+		constexpr int64_t MaxAudioRtcpIntervalMs{ 1000 };
+
+		/**
+		 * Maximum interval for regular RTCP mode for video (ms).
+		 */
+		constexpr int64_t MaxVideoRtcpIntervalMs{ 1000 };
+
+		/**
+		 * How long a received stream may go without receiving any RTP packet
+		 * before RTCP Receiver Reports stop carrying a report block about it (ms).
+		 */
+		constexpr int64_t RtcpReportBlockTimeoutMs{ 8000 };
+
+		/**
+		 * Maximum number of received RTCP Receiver Reference Time Extended
+		 * Reports, one per remote SSRC, kept until they are answered with a DLRR
+		 * sub-block. Those beyond it are discarded.
+		 */
+		constexpr size_t MaxNumberOfRtcpReceiverReferenceTimes{ 300 };
+
+		/**
+		 * Maximum number of sub-blocks in a RTCP Delay Since Last Receiver Report
+		 * Extended Report.
+		 */
+		constexpr size_t MaxRtcpDelaySinceLastReceiverReportSubBlocks{ 50 };
 
 		/**
 		 * SSRC of the RTP stream the probing packets are sent on.

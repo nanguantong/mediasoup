@@ -8,7 +8,17 @@
 
 namespace helpers
 {
-	bool readBinaryFile(const char* file, uint8_t* buffer, size_t* len)
+	void FillBuffer(uint8_t* buffer, size_t bufferLength, uint8_t firstByte)
+	{
+		MS_TRACE();
+
+		for (size_t i{ 0 }; i < bufferLength; ++i)
+		{
+			buffer[i] = static_cast<uint8_t>(firstByte + i);
+		}
+	}
+
+	bool ReadBinaryFile(const char* file, uint8_t* buffer, size_t* len)
 	{
 		MS_TRACE();
 
@@ -16,7 +26,7 @@ namespace helpers
 		std::string filePath = "test/" + std::string(file);
 
 #ifdef _WIN32
-		std::replace(filePath.begin(), filePath.end(), '/', '\\');
+		std::ranges::replace(filePath, '/', '\\');
 #endif
 
 		std::ifstream in(filePath, std::ios::ate | std::ios::binary);
@@ -26,7 +36,7 @@ namespace helpers
 			return false;
 		}
 
-		*len = static_cast<size_t>(in.tellg()) - 1;
+		*len = static_cast<size_t>(in.tellg());
 
 		in.seekg(0, std::ios::beg);
 		in.read(reinterpret_cast<char*>(buffer), *len);
@@ -35,7 +45,7 @@ namespace helpers
 		return true;
 	}
 
-	bool areBuffersEqual(const uint8_t* data1, size_t size1, const uint8_t* data2, size_t size2)
+	bool AreBuffersEqual(const uint8_t* data1, size_t size1, const uint8_t* data2, size_t size2)
 	{
 		MS_TRACE();
 

@@ -9,13 +9,14 @@
 /* Static variables. */
 
 static std::mutex GlobalSyncMutex;
-static size_t GlobalInstances = 0;
+static size_t GlobalInstances{ 0 };
 
 // NOTE: This map must always be in sync with the srtp_err_status_t in srtp.h
 // in libsrtp library:
 //   https://github.com/cisco/libsrtp/blob/main/include/srtp.h
 //
 // clang-format off
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 const ankerl::unordered_dense::map<srtp_err_status_t, std::string> DepLibSRTP::ErrorCode2String =
 {
 	{ srtp_err_status_ok,            "nothing to report" },
@@ -47,7 +48,7 @@ const ankerl::unordered_dense::map<srtp_err_status_t, std::string> DepLibSRTP::E
 	{ srtp_err_status_pkt_idx_old,   "packet index is too old to consider" },
 	{ srtp_err_status_pkt_idx_adv,   "packet index advanced, reset needed" },
 	{ srtp_err_status_buffer_small,  "out buffer is too small" },
-	{ srtp_err_status_cryptex_err,   "unsupported cryptex operation" },
+	{ srtp_err_status_cryptex_err,   "unsupported cryptex operation" }
 };
 // clang-format on
 
@@ -58,7 +59,7 @@ void DepLibSRTP::ClassInit()
 	MS_TRACE();
 
 	{
-		const std::lock_guard<std::mutex> lock(GlobalSyncMutex);
+		const std::scoped_lock lock(GlobalSyncMutex);
 
 		if (GlobalInstances == 0)
 		{
@@ -81,7 +82,8 @@ void DepLibSRTP::ClassDestroy()
 	MS_TRACE();
 
 	{
-		const std::lock_guard<std::mutex> lock(GlobalSyncMutex);
+		const std::scoped_lock lock(GlobalSyncMutex);
+
 		--GlobalInstances;
 
 		if (GlobalInstances == 0)
@@ -97,12 +99,14 @@ const std::string& DepLibSRTP::GetErrorString(srtp_err_status_t code)
 
 	static const std::string UnknownError("unknown libsrtp error");
 
-	auto it = DepLibSRTP::ErrorCode2String.find(code);
+	const auto it = DepLibSRTP::ErrorCode2String.find(code);
 
 	if (it == DepLibSRTP::ErrorCode2String.end())
 	{
 		return UnknownError;
 	}
 
-	return it->second;
+	const auto& errorString = it->second;
+
+	return errorString;
 }

@@ -5,7 +5,9 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
+#include <cstdlib> // std::abort()
 #include <cstring> // std::memcpy()
+#include <exception>
 
 /* Static. */
 
@@ -18,11 +20,13 @@ alignas(4) static thread_local uint8_t ReadBuffer[ReadBufferSize];
 
 /* Static methods for UV callbacks. */
 
+// libuv imposes the callback signature.
+// NOLINTNEXTLINE(misc-const-correctness)
 inline static void onAlloc(uv_handle_t* handle, size_t suggestedSize, uv_buf_t* buf)
 {
 	MS_TRACE();
 
-	auto* socket = static_cast<UdpSocketHandle*>(handle->data);
+	auto* const socket = static_cast<UdpSocketHandle*>(handle->data);
 
 	if (socket)
 	{
@@ -30,12 +34,18 @@ inline static void onAlloc(uv_handle_t* handle, size_t suggestedSize, uv_buf_t* 
 	}
 }
 
+// libuv imposes the callback signature.
 inline static void onRecv(
-  uv_udp_t* handle, ssize_t nread, const uv_buf_t* buf, const struct sockaddr* addr, unsigned int flags)
+  // NOLINTNEXTLINE(misc-const-correctness)
+  uv_udp_t* handle,
+  ssize_t nread,
+  const uv_buf_t* buf,
+  const sockaddr* addr,
+  unsigned int flags)
 {
 	MS_TRACE();
 
-	auto* socket = static_cast<UdpSocketHandle*>(handle->data);
+	auto* const socket = static_cast<UdpSocketHandle*>(handle->data);
 
 	if (socket)
 	{
@@ -43,13 +53,15 @@ inline static void onRecv(
 	}
 }
 
+// libuv imposes the callback signature.
+// NOLINTNEXTLINE(misc-const-correctness)
 inline static void onSend(uv_udp_send_t* req, int status)
 {
 	MS_TRACE();
 
-	auto* sendData = static_cast<UdpSocketHandle::UvSendData*>(req->data);
-	auto* handle   = req->handle;
-	auto* socket   = static_cast<UdpSocketHandle*>(handle->data);
+	const auto* const sendData   = static_cast<UdpSocketHandle::UvSendData*>(req->data);
+	const uv_udp_t* const handle = req->handle;
+	auto* const socket           = static_cast<UdpSocketHandle*>(handle->data);
 
 	if (socket)
 	{
@@ -76,7 +88,6 @@ UdpSocketHandle::UdpSocketHandle(uv_udp_t* uvHandle) : uvHandle(uvHandle)
 
 	this->uvHandle->data = static_cast<void*>(this);
 
-	// NOLINTNEXTLINE(misc-const-correctness)
 	const int err = uv_udp_recv_start(
 	  this->uvHandle, static_cast<uv_alloc_cb>(onAlloc), static_cast<uv_udp_recv_cb>(onRecv));
 
@@ -106,9 +117,11 @@ UdpSocketHandle::~UdpSocketHandle()
 		{
 			InternalClose();
 		}
-		catch (const std::exception& e)
+		// NOTE: MS_ABORT() throws in the lib build, and an exception cannot leave
+		// a destructor.
+		catch (const std::exception&)
 		{
-			MS_ERROR("error closing UDP socket: %s", e.what());
+			std::abort();
 		}
 	}
 }
@@ -124,8 +137,7 @@ void UdpSocketHandle::Dump(int indentation) const
 	MS_DUMP_CLEAN(indentation, "</UdpSocketHandle>");
 }
 
-void UdpSocketHandle::Send(
-  const uint8_t* data, size_t len, const struct sockaddr* addr, onSendCallback cb)
+void UdpSocketHandle::Send(const uint8_t* data, size_t len, const sockaddr* addr, onSendCallback cb)
 {
 	MS_TRACE();
 
@@ -153,10 +165,11 @@ void UdpSocketHandle::Send(
 	// then build a uv_req_t and use uv_udp_send().
 
 	uv_buf_t buffer = uv_buf_init(reinterpret_cast<char*>(const_cast<uint8_t*>(data)), len);
-	const int sent  = uv_udp_try_send(this->uvHandle, std::addressof(buffer), 1, addr);
+
+	const int sent = uv_udp_try_send(this->uvHandle, std::addressof(buffer), 1, addr);
 
 	// Entire datagram was sent. Done.
-	if (sent == static_cast<int>(len))
+	if (std::cmp_equal(sent, len))
 	{
 		// Update sent bytes.
 		this->sentBytes += sent;
@@ -188,7 +201,7 @@ void UdpSocketHandle::Send(
 		MS_WARN_DEV("uv_udp_try_send() failed, trying uv_udp_send(): %s", uv_strerror(sent));
 	}
 
-	auto* sendData = new UvSendData(len);
+	auto* const sendData = new UvSendData(len);
 
 	sendData->req.data = static_cast<void*>(sendData);
 	std::memcpy(sendData->store, data, len);
@@ -230,6 +243,7 @@ uint32_t UdpSocketHandle::GetSendBufferSize() const
 	MS_TRACE();
 
 	int size{ 0 };
+
 	const int err =
 	  uv_send_buffer_size(reinterpret_cast<uv_handle_t*>(this->uvHandle), std::addressof(size));
 
@@ -266,6 +280,7 @@ uint32_t UdpSocketHandle::GetRecvBufferSize() const
 	MS_TRACE();
 
 	int size{ 0 };
+
 	const int err =
 	  uv_recv_buffer_size(reinterpret_cast<uv_handle_t*>(this->uvHandle), std::addressof(size));
 
@@ -326,13 +341,10 @@ bool UdpSocketHandle::SetLocalAddress()
 {
 	MS_TRACE();
 
-	int err;
 	int len = sizeof(this->localAddr);
 
-	err = uv_udp_getsockname(
-	  this->uvHandle,
-	  reinterpret_cast<struct sockaddr*>(std::addressof(this->localAddr)),
-	  std::addressof(len));
+	const int err = uv_udp_getsockname(
+	  this->uvHandle, reinterpret_cast<sockaddr*>(std::addressof(this->localAddr)), std::addressof(len));
 
 	if (err != 0)
 	{
@@ -344,7 +356,7 @@ bool UdpSocketHandle::SetLocalAddress()
 	int family;
 
 	Utils::IP::GetAddressInfo(
-	  reinterpret_cast<const struct sockaddr*>(std::addressof(this->localAddr)),
+	  reinterpret_cast<const sockaddr*>(std::addressof(this->localAddr)),
 	  family,
 	  this->localIp,
 	  this->localPort);
@@ -358,12 +370,13 @@ inline void UdpSocketHandle::OnUvRecvAlloc(size_t /*suggestedSize*/, uv_buf_t* b
 
 	// Tell UV to write into the static buffer.
 	buf->base = reinterpret_cast<char*>(ReadBuffer);
+
 	// Give UV all the buffer space.
 	buf->len = ReadBufferSize;
 }
 
 inline void UdpSocketHandle::OnUvRecv(
-  ssize_t nread, const uv_buf_t* buf, const struct sockaddr* addr, unsigned int flags)
+  ssize_t nread, const uv_buf_t* buf, const sockaddr* addr, unsigned int flags)
 {
 	MS_TRACE();
 
@@ -410,9 +423,7 @@ inline void UdpSocketHandle::OnUvSend(int status, const onSendCallback& cb)
 	}
 	else
 	{
-#if MS_LOG_DEV_LEVEL == 3
 		MS_DEBUG_DEV("send error: %s", uv_strerror(status));
-#endif
 
 		if (cb)
 		{

@@ -12,23 +12,20 @@ namespace RTC
 	{
 		/* Class methods. */
 
-		RetransmissionBuffer::Item* RetransmissionBuffer::CreateItem(RTP::Packet* packet, int64_t nowMs)
+		RetransmissionBuffer::Item* RetransmissionBuffer::CreateItem(const RTP::Packet* packet, int64_t nowMs)
 		{
 			MS_TRACE();
 
 			// Store some extra info into the item.
 			//
-			// NOTE: `sharedPacket` is left empty here. Insert() returns the item so
-			// that the Consumer fills it right after, once the packet has been
-			// restored to its original state.
-			return new Item{
-				.encoder        = packet->GetPayloadEncoder(),
-				.ssrc           = packet->GetSsrc(),
-				.sequenceNumber = packet->GetSequenceNumber(),
-				.timestamp      = packet->GetTimestamp(),
-				.marker         = packet->HasMarker(),
-				.storedAtMs     = nowMs,
-			};
+			// NOTE: `sharedPacket` and `encoder` are left empty here. Insert()
+			// returns the item so that the Consumer fills them right after, once
+			// the packet has been restored to its original state.
+			return new Item{ .ssrc           = packet->GetSsrc(),
+			                 .sequenceNumber = packet->GetSequenceNumber(),
+			                 .timestamp      = packet->GetTimestamp(),
+			                 .marker         = packet->HasMarker(),
+			                 .storedAtMs     = nowMs };
 		}
 
 		/* Instance methods. */
@@ -56,6 +53,7 @@ namespace RTC
 			MS_DUMP_CLEAN(indentation, "<RetransmissionBuffer>");
 			MS_DUMP_CLEAN(
 			  indentation, "  buffer [size:%zu, maxSize:%" PRIu16 "]", this->buffer.size(), this->maxItems);
+
 			if (!this->buffer.empty())
 			{
 				const auto* oldestItem = GetOldest();
@@ -73,10 +71,11 @@ namespace RTC
 				  newestItem->timestamp);
 				MS_DUMP_CLEAN(
 				  indentation,
-				  "  buffer window: %" PRIu32 "ms",
-				  static_cast<uint32_t>(newestItem->timestamp * 1000 / this->clockRate) -
-				    static_cast<uint32_t>(oldestItem->timestamp * 1000 / this->clockRate));
+				  "  buffer window: %" PRIu64 "ms",
+				  static_cast<uint64_t>(newestItem->timestamp - oldestItem->timestamp) * 1000 /
+				    this->clockRate);
 			}
+
 			MS_DUMP_CLEAN(indentation, "</RetransmissionBuffer>");
 		}
 
@@ -116,7 +115,7 @@ namespace RTC
 		 * @returns The inserted item (with no packet in it yet) or nullptr if the
 		 *   packet was not inserted.
 		 */
-		RetransmissionBuffer::Item* RetransmissionBuffer::Insert(RTP::Packet* packet, int64_t nowMs)
+		RetransmissionBuffer::Item* RetransmissionBuffer::Insert(const RTP::Packet* packet, int64_t nowMs)
 		{
 			MS_TRACE();
 
@@ -140,8 +139,8 @@ namespace RTC
 				return item;
 			}
 
-			auto* oldestItem = GetOldest();
-			auto* newestItem = GetNewest();
+			const auto* oldestItem = GetOldest();
+			const auto* newestItem = GetNewest();
 
 			// Special case: Received packet has lower seq than newest packet in the
 			// buffer, however its timestamp is higher. If so, clear the whole buffer.
@@ -171,9 +170,10 @@ namespace RTC
 			// packet loss, received packet has higher timestamp but "older" seq number
 			// than the newest packet in the buffer and, if so, use it to clear too old
 			// packets rather than the newest packet in the buffer.
-			auto newestTimestamp = Utils::Number::IsHigherThan<uint32_t>(timestamp, newestItem->timestamp)
-			                         ? timestamp
-			                         : newestItem->timestamp;
+			const auto newestTimestamp =
+			  Utils::Number::IsHigherThan<uint32_t>(timestamp, newestItem->timestamp)
+			    ? timestamp
+			    : newestItem->timestamp;
 
 			// ClearTooOldByTimestamp() returns true if at least one packet has been
 			// removed from the front.
@@ -450,7 +450,9 @@ namespace RTC
 				}
 
 				// Store the packet.
-				item              = RetransmissionBuffer::CreateItem(packet, nowMs);
+				item = RetransmissionBuffer::CreateItem(packet, nowMs);
+
+				// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 				this->buffer[idx] = item;
 			}
 
@@ -469,7 +471,7 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			for (auto* item : this->buffer)
+			for (const auto* const item : this->buffer)
 			{
 				if (!item)
 				{
@@ -525,7 +527,7 @@ namespace RTC
 				return;
 			}
 
-			auto* item = this->buffer.front();
+			const auto* const item = this->buffer.front();
 
 			// NOTE: No need to reset the item here since deleting it destroys its
 			// `sharedPacket` member, which already decreases the RTP packet shared
@@ -611,7 +613,7 @@ namespace RTC
 
 			const int64_t diffTs = newestTimestamp - timestamp;
 
-			return static_cast<uint32_t>(diffTs * 1000 / this->clockRate) > this->maxRetransmissionDelayMs;
+			return diffTs * 1000 / this->clockRate > this->maxRetransmissionDelayMs;
 		}
 	} // namespace RTP
 } // namespace RTC

@@ -43,6 +43,12 @@ if get_option('ms_log_file_line')
   ]
 endif
 
+if get_option('ms_log_dev_level') > 0
+  cpp_args += [
+    '-DMS_LOG_DEV_LEVEL_DEFAULT=@0@'.format(get_option('ms_log_dev_level')),
+  ]
+endif
+
 if get_option('ms_rtc_logger_rtp')
   cpp_args += [
     '-DMS_RTC_LOGGER_RTP',
@@ -90,6 +96,35 @@ else
   cpp_args += ['-Werror=unused-result']
 endif
 
+# GCC 12, 13 and 14 report false positives of -Warray-bounds and
+# -Wstringop-overflow (disabling only one of them makes the other one show up)
+# when a std::vector copy (e.g. a one-byte vector passed by value) is inlined
+# into a large function. They show up at -O1, -O2 and -O3 (not at -O0 nor -Os)
+# and depend on the surrounding code, so no small snippet reproduces them.
+# GCC 11 and 15 do not report them.
+if cpp.get_id() == 'gcc' and cpp.version().version_compare('>=12') and cpp.version().version_compare('<15')
+  cpp_args += [
+    '-Wno-array-bounds',
+    '-Wno-stringop-overflow',
+  ]
+endif
+
+# Compiler warnings are errors in mediasoup targets only if ms_werror is
+# enabled (never in subprojects). It is disabled by default so that a newer
+# compiler that emits a new warning does not break the build of mediasoup in
+# users' machines.
+werror_override_options = get_option('ms_werror') ? ['werror=true'] : []
+
+# MSVC has no system include directories, so as_system() on the dependencies
+# below does nothing there. Instead, every header included with angle brackets
+# is treated as external and its warnings are disabled.
+if cpp.get_argument_syntax() == 'msvc'
+  cpp_args += [
+    '/external:anglebrackets',
+    '/external:W0',
+  ]
+endif
+
 # This is a workaround to define FLATBUFFERS_LOCALE_INDEPENDENT=0 outside
 # flatbuffers project, which is needed in case the current arch doesn't support
 # strtoll_l or strtoull_l (such as musl in Alpine Linux). Problem is that
@@ -110,10 +145,13 @@ common_sources = [
   'src/Settings.cpp',
   'src/Shared.cpp',
   'src/Worker.cpp',
-  'src/Utils/BitStream.cpp',
+  'src/Utils/BitReader.cpp',
+  'src/Utils/BitWriter.cpp',
+  'src/Utils/Bits.cpp',
   'src/Utils/Crypto.cpp',
   'src/Utils/File.cpp',
   'src/Utils/IP.cpp',
+  'src/Utils/Number.cpp',
   'src/Utils/String.cpp',
   'src/handles/BackoffTimerHandle.cpp',
   'src/handles/SignalHandle.cpp',
@@ -221,56 +259,30 @@ common_sources = [
   'src/RTC/RTP/Codecs/VP8.cpp',
   'src/RTC/RTP/Codecs/VP9.cpp',
   'src/RTC/RTP/Codecs/DependencyDescriptor.cpp',
-  'src/RTC/RTCP/Packet.cpp',
-  'src/RTC/RTCP/CompoundPacket.cpp',
-  'src/RTC/RTCP/SenderReport.cpp',
-  'src/RTC/RTCP/ReceiverReport.cpp',
-  'src/RTC/RTCP/Sdes.cpp',
-  'src/RTC/RTCP/Bye.cpp',
-  'src/RTC/RTCP/Feedback.cpp',
-  'src/RTC/RTCP/FeedbackPs.cpp',
-  'src/RTC/RTCP/FeedbackRtp.cpp',
-  'src/RTC/RTCP/FeedbackRtpNack.cpp',
-  'src/RTC/RTCP/FeedbackRtpTmmb.cpp',
-  'src/RTC/RTCP/FeedbackRtpSrReq.cpp',
-  'src/RTC/RTCP/FeedbackRtpTllei.cpp',
-  'src/RTC/RTCP/FeedbackRtpEcn.cpp',
-  'src/RTC/RTCP/FeedbackRtpTransport.cpp',
-  'src/RTC/RTCP/FeedbackPsPli.cpp',
-  'src/RTC/RTCP/FeedbackPsSli.cpp',
-  'src/RTC/RTCP/FeedbackPsRpsi.cpp',
-  'src/RTC/RTCP/FeedbackPsFir.cpp',
-  'src/RTC/RTCP/FeedbackPsTst.cpp',
-  'src/RTC/RTCP/FeedbackPsVbcm.cpp',
-  'src/RTC/RTCP/FeedbackPsLei.cpp',
-  'src/RTC/RTCP/FeedbackPsAfb.cpp',
-  'src/RTC/RTCP/FeedbackPsRemb.cpp',
-  'src/RTC/RTCP/XR.cpp',
-  'src/RTC/RTCP/XrDelaySinceLastRr.cpp',
-  'src/RTC/RTCP/XrReceiverReferenceTime.cpp',
-  'src/RTC/NEW_RTCP/packet/CompoundPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/Packet.cpp',
-  'src/RTC/NEW_RTCP/packet/AnyFeedbackPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/AnyPayloadSpecificFeedbackPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/AnyReportPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/AnyTransportLayerFeedbackPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/ByePacket.cpp',
-  'src/RTC/NEW_RTCP/packet/FirPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/NackPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/PliPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/ReceiverReportPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/RembPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/SdesPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/SenderReportPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/TransportWideCcPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/UnknownPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/UnknownPayloadSpecificFeedbackPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/UnknownTransportLayerFeedbackPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/XrPacket.cpp',
-  'src/RTC/NEW_RTCP/packet/ExtendedReport.cpp',
-  'src/RTC/NEW_RTCP/packet/extendedReports/DlrrExtendedReport.cpp',
-  'src/RTC/NEW_RTCP/packet/extendedReports/RrtExtendedReport.cpp',
-  'src/RTC/NEW_RTCP/packet/extendedReports/UnknownExtendedReport.cpp',
+  'src/RTC/RTP/Codecs/DependencyDescriptorPayloadDescriptor.cpp',
+  'src/RTC/RTCP/packet/CompoundPacket.cpp',
+  'src/RTC/RTCP/packet/Packet.cpp',
+  'src/RTC/RTCP/packet/AnyFeedbackPacket.cpp',
+  'src/RTC/RTCP/packet/AnyPayloadSpecificFeedbackPacket.cpp',
+  'src/RTC/RTCP/packet/AnyReportPacket.cpp',
+  'src/RTC/RTCP/packet/AnyTransportLayerFeedbackPacket.cpp',
+  'src/RTC/RTCP/packet/ByePacket.cpp',
+  'src/RTC/RTCP/packet/FirPacket.cpp',
+  'src/RTC/RTCP/packet/NackPacket.cpp',
+  'src/RTC/RTCP/packet/PliPacket.cpp',
+  'src/RTC/RTCP/packet/ReceiverReportPacket.cpp',
+  'src/RTC/RTCP/packet/RembPacket.cpp',
+  'src/RTC/RTCP/packet/SdesPacket.cpp',
+  'src/RTC/RTCP/packet/SenderReportPacket.cpp',
+  'src/RTC/RTCP/packet/TransportWideCcPacket.cpp',
+  'src/RTC/RTCP/packet/UnknownPacket.cpp',
+  'src/RTC/RTCP/packet/UnknownPayloadSpecificFeedbackPacket.cpp',
+  'src/RTC/RTCP/packet/UnknownTransportLayerFeedbackPacket.cpp',
+  'src/RTC/RTCP/packet/XrPacket.cpp',
+  'src/RTC/RTCP/packet/ExtendedReport.cpp',
+  'src/RTC/RTCP/packet/extendedReports/DlrrExtendedReport.cpp',
+  'src/RTC/RTCP/packet/extendedReports/RrtExtendedReport.cpp',
+  'src/RTC/RTCP/packet/extendedReports/UnknownExtendedReport.cpp',
   'src/RTC/SCTP/association/Association.cpp',
   'src/RTC/SCTP/association/AssociationListenerDeferrer.cpp',
   'src/RTC/SCTP/association/Capabilities.cpp',
@@ -294,6 +306,7 @@ common_sources = [
   'src/RTC/SCTP/packet/TLV.cpp',
   'src/RTC/SCTP/packet/UserData.cpp',
   'src/RTC/SCTP/packet/Chunk.cpp',
+  'src/RTC/SCTP/packet/chunks/AnyDataChunk.cpp',
   'src/RTC/SCTP/packet/chunks/DataChunk.cpp',
   'src/RTC/SCTP/packet/chunks/InitChunk.cpp',
   'src/RTC/SCTP/packet/chunks/InitAckChunk.cpp',
@@ -388,13 +401,20 @@ flatbuffers_proj = subproject(
 # flatbuffers schemas subdirectory.
 subdir('fbs')
 
+# Dependencies are marked with as_system() so that their headers are included
+# as system headers. Otherwise warnings in them would be reported when
+# compiling mediasoup files and would make the build fail when ms_werror is
+# enabled. as_system() does not reach the dependencies nested in a dependency,
+# so OpenSSL is added through libcrypto_dep and libssl_dep, which declare its
+# include directories, rather than openssl_dep.
 dependencies = [
-  libuv_proj.get_variable('libuv_dep'),
-  openssl_proj.get_variable('openssl_dep'),
-  libsrtp3_proj.get_variable('libsrtp3_dep'),
-  ankerl_unordered_dense_dep,
-  flatbuffers_proj.get_variable('flatbuffers_dep'),
-  flatbuffers_generator_dep,
+  libuv_proj.get_variable('libuv_dep').as_system(),
+  openssl_proj.get_variable('libcrypto_dep').as_system(),
+  openssl_proj.get_variable('libssl_dep').as_system(),
+  libsrtp3_proj.get_variable('libsrtp3_dep').as_system(),
+  ankerl_unordered_dense_dep.as_system(),
+  flatbuffers_proj.get_variable('flatbuffers_dep').as_system(),
+  flatbuffers_generator_dep.as_system(),
 ]
 
 link_whole = [
@@ -414,7 +434,7 @@ if host_machine.system() == 'windows'
   )
 
   dependencies += [
-    wingetopt_proj.get_variable('wingetopt_dep'),
+    wingetopt_proj.get_variable('wingetopt_dep').as_system(),
   ]
   link_whole += [
     wingetopt_proj.get_variable('wingetopt_lib'),
@@ -430,7 +450,7 @@ if get_option('ms_build_tests')
   )
 
   dependencies += [
-    catch2_proj.get_variable('catch2_dep'),
+    catch2_proj.get_variable('catch2_dep').as_system(),
   ]
 endif
 
@@ -445,6 +465,7 @@ libmediasoup_worker = library(
   include_directories: include_directories('include'),
   cpp_args: cpp_args,
   link_whole: link_whole,
+  override_options: werror_override_options,
 )
 
 executable(
@@ -456,6 +477,7 @@ executable(
   sources: common_sources + ['src/main.cpp'],
   include_directories: include_directories('include'),
   cpp_args: cpp_args + ['-DMS_EXECUTABLE'],
+  override_options: werror_override_options,
 )
 
 mock_sources = [
@@ -485,6 +507,7 @@ test_sources = [
   'test/src/RTC/TestRttCalculator.cpp',
   'test/src/RTC/TestSeqManager.cpp',
   'test/src/RTC/TestSubchannelsCodec.cpp',
+  'test/src/RTC/TestTransport.cpp',
   'test/src/RTC/TestTransportTuple.cpp',
   'test/src/RTC/BWE/helpers/LinkSimulator.cpp',
   'test/src/RTC/BWE/helpers/RemoteBitrateEstimatorAbsSendTimeTestHelper.cpp',
@@ -515,6 +538,7 @@ test_sources = [
   'test/src/RTC/BWE/TestTransportWideCcFeedbackGenerator.cpp',
   'test/src/RTC/BWE/TestTrendlineEstimator.cpp',
   'test/src/RTC/ICE/iceCommon.cpp',
+  'test/src/RTC/ICE/TestIceServer.cpp',
   'test/src/RTC/ICE/TestStunPacket.cpp',
   'test/src/RTC/RTP/rtpCommon.cpp',
   'test/src/RTC/RTP/TestPacket.cpp',
@@ -522,50 +546,30 @@ test_sources = [
   'test/src/RTC/RTP/TestRtpStreamSend.cpp',
   'test/src/RTC/RTP/TestRtpStreamRecv.cpp',
   'test/src/RTC/RTP/TestPacketUtils.cpp',
+  'test/src/RTC/RTP/Codecs/TestAV1.cpp',
+  'test/src/RTC/RTP/Codecs/TestDependencyDescriptorPayloadDescriptor.cpp',
   'test/src/RTC/RTP/Codecs/TestH264.cpp',
   'test/src/RTC/RTP/Codecs/TestVP8.cpp',
   'test/src/RTC/RTP/Codecs/TestVP9.cpp',
   'test/src/RTC/RTP/Codecs/TestDependencyDescriptor.cpp',
-  'test/src/RTC/RTCP/TestFeedbackPsAfb.cpp',
-  'test/src/RTC/RTCP/TestFeedbackPsFir.cpp',
-  'test/src/RTC/RTCP/TestFeedbackPsLei.cpp',
-  'test/src/RTC/RTCP/TestFeedbackPsPli.cpp',
-  'test/src/RTC/RTCP/TestFeedbackPsRemb.cpp',
-  'test/src/RTC/RTCP/TestFeedbackPsRpsi.cpp',
-  'test/src/RTC/RTCP/TestFeedbackPsSli.cpp',
-  'test/src/RTC/RTCP/TestFeedbackPsTst.cpp',
-  'test/src/RTC/RTCP/TestFeedbackPsVbcm.cpp',
-  'test/src/RTC/RTCP/TestFeedbackRtpEcn.cpp',
-  'test/src/RTC/RTCP/TestFeedbackRtpNack.cpp',
-  'test/src/RTC/RTCP/TestFeedbackRtpSrReq.cpp',
-  'test/src/RTC/RTCP/TestFeedbackRtpTllei.cpp',
-  'test/src/RTC/RTCP/TestFeedbackRtpTmmb.cpp',
-  'test/src/RTC/RTCP/TestFeedbackRtpTransport.cpp',
-  'test/src/RTC/RTCP/TestBye.cpp',
-  'test/src/RTC/RTCP/TestCompoundPacket.cpp',
-  'test/src/RTC/RTCP/TestReceiverReport.cpp',
-  'test/src/RTC/RTCP/TestSdes.cpp',
-  'test/src/RTC/RTCP/TestSenderReport.cpp',
-  'test/src/RTC/RTCP/TestPacket.cpp',
-  'test/src/RTC/RTCP/TestXr.cpp',
-  'test/src/RTC/NEW_RTCP/rtcpCommon.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestCompoundPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestByePacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestFirPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestNackPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestPliPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestReceiverReportPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestRembPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestSdesPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestSenderReportPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestTransportWideCcPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestUnknownPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestUnknownPayloadSpecificFeedbackPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestUnknownTransportLayerFeedbackPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/TestXrPacket.cpp',
-  'test/src/RTC/NEW_RTCP/packet/extendedReports/TestDlrrExtendedReport.cpp',
-  'test/src/RTC/NEW_RTCP/packet/extendedReports/TestRrtExtendedReport.cpp',
-  'test/src/RTC/NEW_RTCP/packet/extendedReports/TestUnknownExtendedReport.cpp',
+  'test/src/RTC/RTCP/rtcpCommon.cpp',
+  'test/src/RTC/RTCP/packet/TestCompoundPacket.cpp',
+  'test/src/RTC/RTCP/packet/TestByePacket.cpp',
+  'test/src/RTC/RTCP/packet/TestFirPacket.cpp',
+  'test/src/RTC/RTCP/packet/TestNackPacket.cpp',
+  'test/src/RTC/RTCP/packet/TestPliPacket.cpp',
+  'test/src/RTC/RTCP/packet/TestReceiverReportPacket.cpp',
+  'test/src/RTC/RTCP/packet/TestRembPacket.cpp',
+  'test/src/RTC/RTCP/packet/TestSdesPacket.cpp',
+  'test/src/RTC/RTCP/packet/TestSenderReportPacket.cpp',
+  'test/src/RTC/RTCP/packet/TestTransportWideCcPacket.cpp',
+  'test/src/RTC/RTCP/packet/TestUnknownPacket.cpp',
+  'test/src/RTC/RTCP/packet/TestUnknownPayloadSpecificFeedbackPacket.cpp',
+  'test/src/RTC/RTCP/packet/TestUnknownTransportLayerFeedbackPacket.cpp',
+  'test/src/RTC/RTCP/packet/TestXrPacket.cpp',
+  'test/src/RTC/RTCP/packet/extendedReports/TestDlrrExtendedReport.cpp',
+  'test/src/RTC/RTCP/packet/extendedReports/TestRrtExtendedReport.cpp',
+  'test/src/RTC/RTCP/packet/extendedReports/TestUnknownExtendedReport.cpp',
   'test/src/RTC/SCTP/sctpCommon.cpp',
   'test/src/RTC/SCTP/association/TestAssociation.cpp',
   'test/src/RTC/SCTP/association/TestCapabilities.cpp',
@@ -639,6 +643,8 @@ test_sources = [
   'test/src/RTC/SCTP/packet/errorCauses/TestUserInitiatedAbortErrorCause.cpp',
   'test/src/RTC/SCTP/packet/errorCauses/TestProtocolViolationErrorCause.cpp',
   'test/src/RTC/SCTP/packet/errorCauses/TestUnknownErrorCause.cpp',
+  'test/src/Utils/TestBitReader.cpp',
+  'test/src/Utils/TestBitWriter.cpp',
   'test/src/Utils/TestBits.cpp',
   'test/src/Utils/TestByte.cpp',
   'test/src/Utils/TestCrypto.cpp',
@@ -658,6 +664,7 @@ mediasoup_worker_test = executable(
   sources: common_sources + test_sources + mock_sources,
   include_directories: include_directories('include'),
   cpp_args: cpp_args,
+  override_options: werror_override_options,
 )
 
 test(
@@ -683,6 +690,7 @@ mediasoup_worker_test_asan_address = executable(
   link_args: [
     '-fsanitize=address',
   ],
+  override_options: werror_override_options,
 )
 
 test(
@@ -708,6 +716,7 @@ mediasoup_worker_test_asan_undefined = executable(
   link_args: [
     '-fsanitize=undefined',
   ],
+  override_options: werror_override_options,
 )
 
 test(
@@ -727,53 +736,78 @@ fuzzer_sources = [
   'fuzzer/src/RTC/RTP/FuzzerRetransmissionBuffer.cpp',
   'fuzzer/src/RTC/RTP/FuzzerRtpStreamSend.cpp',
   'fuzzer/src/RTC/RTP/Codecs/FuzzerOpus.cpp',
-  'fuzzer/src/RTC/RTP/Codecs/FuzzerAV1.cpp',
   'fuzzer/src/RTC/RTP/Codecs/FuzzerH264.cpp',
   'fuzzer/src/RTC/RTP/Codecs/FuzzerVP8.cpp',
   'fuzzer/src/RTC/RTP/Codecs/FuzzerVP9.cpp',
   'fuzzer/src/RTC/RTP/Codecs/FuzzerDependencyDescriptor.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerBye.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackPs.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackPsAfb.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackPsFir.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackPsLei.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackPsPli.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackPsRemb.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackPsRpsi.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackPsSli.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackPsTst.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackPsVbcm.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackRtp.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackRtpEcn.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackRtpNack.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackRtpSrReq.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackRtpTllei.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackRtpTmmb.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerFeedbackRtpTransport.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerPacket.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerReceiverReport.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerSdes.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerSenderReport.cpp',
-  'fuzzer/src/RTC/RTCP/FuzzerXr.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerByePacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerCompoundPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerFirPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerNackPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerPliPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerReceiverReportPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerRembPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerSdesPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerSenderReportPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerTransportWideCcPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerUnknownPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerUnknownPayloadSpecificFeedbackPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerUnknownTransportLayerFeedbackPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/FuzzerXrPacket.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/extendedReports/FuzzerDlrrExtendedReport.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/extendedReports/FuzzerRrtExtendedReport.cpp',
-  'fuzzer/src/RTC/NEW_RTCP/packet/extendedReports/FuzzerUnknownExtendedReport.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerByePacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerCompoundPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerFirPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerNackPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerPliPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerReceiverReportPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerRembPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerSdesPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerSenderReportPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerTransportWideCcPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerUnknownPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerUnknownPayloadSpecificFeedbackPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerUnknownTransportLayerFeedbackPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/FuzzerXrPacket.cpp',
+  'fuzzer/src/RTC/RTCP/packet/extendedReports/FuzzerDlrrExtendedReport.cpp',
+  'fuzzer/src/RTC/RTCP/packet/extendedReports/FuzzerRrtExtendedReport.cpp',
+  'fuzzer/src/RTC/RTCP/packet/extendedReports/FuzzerUnknownExtendedReport.cpp',
   'fuzzer/src/RTC/SCTP/association/FuzzerStateCookie.cpp',
   'fuzzer/src/RTC/SCTP/packet/FuzzerPacket.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerAbortAssociationChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerCookieAckChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerCookieEchoChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerDataChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerForwardTsnChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerHeartbeatAckChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerHeartbeatRequestChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerIDataChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerIForwardTsnChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerInitAckChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerInitChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerOperationErrorChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerReConfigChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerSackChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerShutdownAckChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerShutdownChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerShutdownCompleteChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/chunks/FuzzerUnknownChunk.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerCookieReceivedWhileShuttingDownErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerInvalidMandatoryParameterErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerInvalidStreamIdentifierErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerMissingMandatoryParameterErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerNoUserDataErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerOutOfResourceErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerProtocolViolationErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerRestartOfAnAssociationWithNewAddressesErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerStaleCookieErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerUnknownErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerUnrecognizedChunkTypeErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerUnrecognizedParametersErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerUnresolvableAddressErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/errorCauses/FuzzerUserInitiatedAbortErrorCause.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerAddIncomingStreamsRequestParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerAddOutgoingStreamsRequestParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerCookiePreservativeParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerForwardTsnSupportedParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerHeartbeatInfoParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerIPv4AddressParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerIPv6AddressParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerIncomingSsnResetRequestParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerOutgoingSsnResetRequestParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerReconfigurationResponseParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerSsnTsnResetRequestParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerStateCookieParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerSupportedAddressTypesParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerSupportedExtensionsParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerUnknownParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerUnrecognizedParameterParameter.cpp',
+  'fuzzer/src/RTC/SCTP/packet/parameters/FuzzerZeroChecksumAcceptableParameter.cpp',
 ]
 
 executable(
@@ -793,4 +827,5 @@ executable(
   link_args: [
     '-fsanitize=address,undefined,fuzzer',
   ],
+  override_options: werror_override_options,
 )

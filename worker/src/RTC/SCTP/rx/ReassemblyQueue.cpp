@@ -77,10 +77,10 @@ namespace RTC
 				// fail to compile because `std::function` doesn't accept move-only
 				// callables and `UserData` has its copy constructor deleted, so the
 				// resulting lambda is not copyable and `std::function` will reject it.
-				auto sharedData = std::make_shared<UserData>(std::move(data));
+				const auto sharedData = std::make_shared<UserData>(std::move(data));
 
 				this->deferredResetStreams->deferredActions.emplace_back(
-				  [this, tsn, sharedData]() mutable
+				  [this, tsn, sharedData]() mutable -> void
 				  {
 					  this->queuedBytes -= sharedData->GetPayloadLength();
 
@@ -144,6 +144,10 @@ namespace RTC
 
 				this->queuedBytes += ForwardTsnCost(skippedStreams.size());
 
+				// NOTE: This should not be needed but clang-tidy fails to understand
+				// this optional was already checked above and nothing could unset it
+				// in between.
+				// NOLINTNEXTLINE(bugprone-unchecked-optional-access)
 				this->deferredResetStreams->deferredActions.emplace_back(
 				  [this,
 					 newCumulativeTsn,
@@ -202,11 +206,11 @@ namespace RTC
 				//
 				// "Any queued TSNs (queued at step E2) MUST now be released and
 				// processed normally."
-				auto deferredActions = std::move(this->deferredResetStreams->deferredActions);
+				const auto deferredActions = std::move(this->deferredResetStreams->deferredActions);
 
 				this->deferredResetStreams = std::nullopt;
 
-				for (auto& action : deferredActions)
+				for (const auto& action : deferredActions)
 				{
 					action();
 				}
@@ -255,7 +259,12 @@ namespace RTC
 			return (1 + numStreams) * 4;
 		}
 
+#if MS_LOG_DEV_LEVEL == 3
 		void ReassemblyQueue::AddReassembledMessage(std::span<const Types::UnwrappedTsn> tsns, Message message)
+#else
+		void ReassemblyQueue::AddReassembledMessage(
+		  std::span<const Types::UnwrappedTsn> /*tsns*/, Message message)
+#endif
 		{
 			MS_TRACE();
 

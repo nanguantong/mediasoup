@@ -48,7 +48,7 @@ namespace RTC
 				SHUTTING_DOWN
 			};
 
-			constexpr std::string_view associationStateToString(AssociationState associationState)
+			constexpr std::string_view AssociationStateToString(AssociationState associationState)
 			{
 				switch (associationState)
 				{
@@ -88,7 +88,7 @@ namespace RTC
 			{
 				/**
 				 * Indicates that no error has occurred. This will never be the case when
-				 * OnError() or OnAborted() is called.
+				 * `OnAssociationError()` or `OnAssociationFailed()` is called.
 				 */
 				SUCCESS,
 				/**
@@ -128,7 +128,7 @@ namespace RTC
 				UNSUPPORTED_OPERATION
 			};
 
-			constexpr std::string_view errorKindToString(ErrorKind errorKind)
+			constexpr std::string_view ErrorKindToString(ErrorKind errorKind)
 			{
 				switch (errorKind)
 				{
@@ -166,7 +166,7 @@ namespace RTC
 
 					case ErrorKind::PROTOCOL_VIOLATION:
 					{
-						return "PROTOCOL-VIOLATION";
+						return "PROTOCOL_VIOLATION";
 					}
 
 					case ErrorKind::RESOURCE_EXHAUSTION:
@@ -195,7 +195,7 @@ namespace RTC
 				USRSCTP
 			};
 
-			constexpr std::string_view sctpImplementationToString(SctpImplementation sctpImplementation)
+			constexpr std::string_view SctpImplementationToString(SctpImplementation sctpImplementation)
 			{
 				switch (sctpImplementation)
 				{
@@ -246,7 +246,7 @@ namespace RTC
 				NOT_SUPPORTED
 			};
 
-			constexpr std::string_view resetStreamsStatusToString(ResetStreamsStatus status)
+			constexpr std::string_view ResetStreamsStatusToString(ResetStreamsStatus status)
 			{
 				switch (status)
 				{
@@ -264,6 +264,8 @@ namespace RTC
 					{
 						return "NOT_SUPPORTED";
 					}
+
+						NO_DEFAULT();
 				}
 			}
 
@@ -303,7 +305,7 @@ namespace RTC
 				ERROR_SHUTTING_DOWN
 			};
 
-			constexpr std::string_view sendMessageStatusToString(SendMessageStatus status)
+			constexpr std::string_view SendMessageStatusToString(SendMessageStatus status)
 			{
 				switch (status)
 				{

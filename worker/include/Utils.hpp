@@ -5,13 +5,13 @@
 #include "RTC/Consts.hpp"
 #include <openssl/evp.h>
 #include <array>
-#include <cassert>
-#include <cctype> // std::tolower()
-#include <cmath>
-#include <cstring> // std::memcmp(), std::memcpy()
+#include <cctype>  // std::tolower()
+#include <cmath>   // std::round()
+#include <cstring> // std::memcmp(), std::memcpy(), std::memset(), std::strerror()
 #include <limits>  // std::numeric_limits
 #include <random>  // std::mt19937_64, std::uniform_int_distribution, std::random_device
 #include <string>
+#include <type_traits> // std::is_same_v, std::is_unsigned_v
 #ifdef _WIN32
 #include <ws2ipdef.h>
 // https://stackoverflow.com/a/24550632/2085408
@@ -26,11 +26,11 @@ namespace Utils
 	public:
 		static int GetFamily(const std::string& ip);
 
-		static void GetAddressInfo(const struct sockaddr* addr, int& family, std::string& ip, uint16_t& port);
+		static void GetAddressInfo(const sockaddr* addr, int& family, std::string& ip, uint16_t& port);
 
-		static size_t GetAddressLen(const struct sockaddr* addr);
+		static size_t GetAddressLen(const sockaddr* addr);
 
-		static bool CompareAddresses(const struct sockaddr* addr1, const struct sockaddr* addr2)
+		static bool CompareAddresses(const sockaddr* addr1, const sockaddr* addr2)
 		{
 			// Compare family.
 			if (
@@ -43,8 +43,8 @@ namespace Utils
 
 			// Compare port.
 			if (
-			  reinterpret_cast<const struct sockaddr_in*>(addr1)->sin_port !=
-			  reinterpret_cast<const struct sockaddr_in*>(addr2)->sin_port)
+			  reinterpret_cast<const sockaddr_in*>(addr1)->sin_port !=
+			  reinterpret_cast<const sockaddr_in*>(addr2)->sin_port)
 			{
 				return false;
 			}
@@ -55,16 +55,16 @@ namespace Utils
 				case AF_INET:
 				{
 					return (
-					  reinterpret_cast<const struct sockaddr_in*>(addr1)->sin_addr.s_addr ==
-					  reinterpret_cast<const struct sockaddr_in*>(addr2)->sin_addr.s_addr);
+					  reinterpret_cast<const sockaddr_in*>(addr1)->sin_addr.s_addr ==
+					  reinterpret_cast<const sockaddr_in*>(addr2)->sin_addr.s_addr);
 				}
 
 				case AF_INET6:
 				{
 					return (
 					  std::memcmp(
-					    std::addressof(reinterpret_cast<const struct sockaddr_in6*>(addr1)->sin6_addr),
-					    std::addressof(reinterpret_cast<const struct sockaddr_in6*>(addr2)->sin6_addr),
+					    std::addressof(reinterpret_cast<const sockaddr_in6*>(addr1)->sin6_addr),
+					    std::addressof(reinterpret_cast<const sockaddr_in6*>(addr2)->sin6_addr),
 					    16) == 0);
 				}
 
@@ -75,18 +75,18 @@ namespace Utils
 			}
 		}
 
-		static struct sockaddr_storage CopyAddress(const struct sockaddr* addr)
+		static sockaddr_storage CopyAddress(const sockaddr* addr)
 		{
 			sockaddr_storage copiedAddr{};
 
 			switch (addr->sa_family)
 			{
 				case AF_INET:
-					std::memcpy(std::addressof(copiedAddr), addr, sizeof(struct sockaddr_in));
+					std::memcpy(std::addressof(copiedAddr), addr, sizeof(sockaddr_in));
 					break;
 
 				case AF_INET6:
-					std::memcpy(std::addressof(copiedAddr), addr, sizeof(struct sockaddr_in6));
+					std::memcpy(std::addressof(copiedAddr), addr, sizeof(sockaddr_in6));
 					break;
 
 				default:;
@@ -118,7 +118,7 @@ namespace Utils
 
 		static uint16_t Get2Bytes(const uint8_t* data, size_t i)
 		{
-			return uint16_t{ data[i + 1] } | uint16_t{ data[i] } << 8;
+			return static_cast<uint16_t>(uint32_t{ data[i + 1] } | uint32_t{ data[i] } << 8);
 		}
 
 		static uint32_t Get3Bytes(const uint8_t* data, size_t i)
@@ -128,15 +128,16 @@ namespace Utils
 
 		static int32_t Get3BytesSigned(const uint8_t* data, size_t i)
 		{
-			auto byte2 = data[i]; // The most significant byte.
-			auto byte1 = data[i + 1];
-			auto byte0 = data[i + 2]; // The less significant byte.
+			const uint8_t byte2 = data[i]; // The most significant byte.
+			const uint8_t byte1 = data[i + 1];
+			const uint8_t byte0 = data[i + 2]; // The less significant byte.
 
 			// Check bit 7 (sign).
 			const uint8_t extension = byte2 & 0b10000000 ? 0b11111111 : 0b00000000;
 
-			return int32_t{ byte0 } | (int32_t{ byte1 } << 8) | (int32_t{ byte2 } << 16) |
-			       (int32_t{ extension } << 24);
+			return static_cast<int32_t>(
+			  uint32_t{ byte0 } | (uint32_t{ byte1 } << 8) | (uint32_t{ byte2 } << 16) |
+			  (uint32_t{ extension } << 24));
 		}
 
 		static uint32_t Get4Bytes(const uint8_t* data, size_t i)
@@ -170,9 +171,11 @@ namespace Utils
 
 		static void Set3BytesSigned(uint8_t* data, size_t i, int32_t value)
 		{
-			data[i + 2] = static_cast<int8_t>(value);
-			data[i + 1] = static_cast<uint8_t>(value >> 8);
-			data[i]     = static_cast<uint8_t>(value >> 16);
+			const auto unsignedValue = static_cast<uint32_t>(value);
+
+			data[i + 2] = static_cast<uint8_t>(unsignedValue);
+			data[i + 1] = static_cast<uint8_t>(unsignedValue >> 8);
+			data[i]     = static_cast<uint8_t>(unsignedValue >> 16);
 		}
 
 		static void Set4Bytes(uint8_t* data, size_t i, uint32_t value)
@@ -196,31 +199,31 @@ namespace Utils
 		}
 
 		template<typename T>
-		bool static IsPaddedTo4Bytes(T size) requires std::is_unsigned_v<T>
+		static bool IsPaddedTo4Bytes(T size) requires std::is_unsigned_v<T>
 		{
 			return (size & 0x03) == 0;
 		}
 
 		template<typename T>
-		bool static IsPaddedTo8Bytes(T size) requires std::is_unsigned_v<T>
+		static bool IsPaddedTo8Bytes(T size) requires std::is_unsigned_v<T>
 		{
 			return (size & 0x07) == 0;
 		}
 
 		template<typename T>
-		T static PadTo4Bytes(T size) requires std::is_unsigned_v<T>
+		static T PadTo4Bytes(T size) requires std::is_unsigned_v<T>
 		{
 			return (size + 3) & ~static_cast<T>(0x03);
 		}
 
 		template<typename T>
-		T static PadDownTo4Bytes(T size) requires std::is_unsigned_v<T>
+		static T PadDownTo4Bytes(T size) requires std::is_unsigned_v<T>
 		{
 			return size & ~static_cast<T>(0x03);
 		}
 
 		template<typename T>
-		T static PadTo8Bytes(T size) requires std::is_unsigned_v<T>
+		static T PadTo8Bytes(T size) requires std::is_unsigned_v<T>
 		{
 			return (size + 7) & ~static_cast<T>(0x07);
 		}
@@ -229,14 +232,26 @@ namespace Utils
 	class Bits
 	{
 	public:
-		static size_t CountSetBits(const uint16_t mask)
-		{
-			return static_cast<size_t>(__builtin_popcount(mask));
-		}
+		static size_t CountSetBits(uint16_t mask);
+
+		/**
+		 * Value of the bit at the given offset, counting from the most significant
+		 * bit of the first byte.
+		 */
+		static uint8_t GetBitAt(const uint8_t* data, size_t len, uint32_t offset);
 	};
 
 	class Crypto
 	{
+	private:
+		/**
+		 * Number of input bytes consumed per iteration of the slice-by-8 loop.
+		 */
+		static constexpr size_t CrcSlices{ 8 };
+
+	private:
+		using CrcTables = std::array<std::array<uint32_t, 256>, CrcSlices>;
+
 	public:
 		static void ClassInit();
 
@@ -269,21 +284,22 @@ namespace Utils
 		{
 			// The implementation is the same as boost::hash_combine().
 			seed ^= value + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-		};
+		}
+
+	private:
+		static constexpr CrcTables GenerateCrcTables(uint32_t polynomial) noexcept;
+
+		static uint32_t ReadLe32(const uint8_t* data);
+
+		static uint32_t ComputeCrc(const CrcTables& tables, const uint8_t* data, size_t size);
 
 	private:
 		static thread_local std::mt19937_64 rng;
 		static thread_local EVP_MAC* mac;
 		static thread_local EVP_MAC_CTX* hmacSha1Ctx;
 		static thread_local uint8_t hmacSha1Buffer[];
-		// Number of input bytes consumed per iteration of the slice-by-8 loop.
-		static constexpr size_t CrcSlices{ 8 };
-		using CrcTables = std::array<std::array<uint32_t, 256>, CrcSlices>;
 		static const CrcTables Crc32Tables;
 		static const CrcTables Crc32cTables;
-		static constexpr CrcTables generateCrcTables(uint32_t polynomial) noexcept;
-		static uint32_t ReadLe32(const uint8_t* data);
-		static uint32_t ComputeCrc(const CrcTables& tables, const uint8_t* data, size_t size);
 	};
 
 	class String
@@ -312,8 +328,67 @@ namespace Utils
 	class Number
 	{
 	public:
-		// T is the base type (uint16_t, uint32_t, ...).
-		// N is the max number of bits used in T.
+		/**
+		 * Highest value that fits in `length` bits of T, or in every bit of T
+		 * when `length` is 0 or wider than T itself.
+		 */
+		template<typename T>
+		static constexpr T MaxValue(uint8_t length)
+		{
+			static_assert(
+			  std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> || std::is_same_v<T, uint32_t> ||
+			    std::is_same_v<T, uint64_t>,
+			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
+
+			// NOTE: Lengths that take every bit of T are told apart rather than
+			// shifted, since shifting T by its own width is undefined.
+			return length == 0 || length >= std::numeric_limits<T>::digits
+			         ? std::numeric_limits<T>::max()
+							 : static_cast<T>((T{ 1 } << length) - 1);
+		}
+
+		/**
+		 * Whether lhs is higher than rhs in a space wrapping at maxValue, for
+		 * callers that only know where it wraps at runtime.
+		 */
+		template<typename T>
+		static bool IsHigherThan(T lhs, T rhs, T maxValue)
+		{
+			static_assert(
+			  std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> || std::is_same_v<T, uint32_t> ||
+			    std::is_same_v<T, uint64_t>,
+			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
+
+			lhs &= maxValue;
+			rhs &= maxValue;
+
+			return ((lhs > rhs) && (lhs - rhs <= maxValue / 2)) ||
+			       ((rhs > lhs) && (rhs - lhs > maxValue / 2));
+		}
+
+		/**
+		 * Whether lhs is lower than rhs in a space wrapping at maxValue, for
+		 * callers that only know where it wraps at runtime.
+		 */
+		template<typename T>
+		static bool IsLowerThan(T lhs, T rhs, T maxValue)
+		{
+			static_assert(
+			  std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> || std::is_same_v<T, uint32_t> ||
+			    std::is_same_v<T, uint64_t>,
+			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
+
+			lhs &= maxValue;
+			rhs &= maxValue;
+
+			return ((rhs > lhs) && (rhs - lhs <= maxValue / 2)) ||
+			       ((lhs > rhs) && (lhs - rhs > maxValue / 2));
+		}
+
+		/**
+		 * T is the base type (uint16_t, uint32_t, ...).
+		 * N is the max number of bits used in T.
+		 */
 		template<typename T, uint8_t N = 0>
 		static bool IsEqualThan(T lhs, T rhs)
 		{
@@ -322,16 +397,18 @@ namespace Utils
 			    std::is_same_v<T, uint64_t>,
 			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
 
-			constexpr T MaxValue = (N == 0) ? std::numeric_limits<T>::max() : ((1 << N) - 1);
+			constexpr T Max = MaxValue<T>(N);
 
-			lhs &= MaxValue;
-			rhs &= MaxValue;
+			lhs &= Max;
+			rhs &= Max;
 
 			return (lhs == rhs);
 		}
 
-		// T is the base type (uint16_t, uint32_t, ...).
-		// N is the max number of bits used in T.
+		/**
+		 * T is the base type (uint16_t, uint32_t, ...).
+		 * N is the max number of bits used in T.
+		 */
 		template<typename T, uint8_t N = 0>
 		static bool IsHigherThan(T lhs, T rhs)
 		{
@@ -340,17 +417,13 @@ namespace Utils
 			    std::is_same_v<T, uint64_t>,
 			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
 
-			constexpr T MaxValue = (N == 0) ? std::numeric_limits<T>::max() : ((1 << N) - 1);
-
-			lhs &= MaxValue;
-			rhs &= MaxValue;
-
-			return ((lhs > rhs) && (lhs - rhs <= MaxValue / 2)) ||
-			       ((rhs > lhs) && (rhs - lhs > MaxValue / 2));
+			return IsHigherThan<T>(lhs, rhs, MaxValue<T>(N));
 		}
 
-		// T is the base type (uint16_t, uint32_t, ...).
-		// N is the max number of bits used in T.
+		/**
+		 * T is the base type (uint16_t, uint32_t, ...).
+		 * N is the max number of bits used in T.
+		 */
 		template<typename T, uint8_t N = 0>
 		static bool IsLowerThan(T lhs, T rhs)
 		{
@@ -359,17 +432,13 @@ namespace Utils
 			    std::is_same_v<T, uint64_t>,
 			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
 
-			constexpr T MaxValue = (N == 0) ? std::numeric_limits<T>::max() : ((1 << N) - 1);
-
-			lhs &= MaxValue;
-			rhs &= MaxValue;
-
-			return ((rhs > lhs) && (rhs - lhs <= MaxValue / 2)) ||
-			       ((lhs > rhs) && (lhs - rhs > MaxValue / 2));
+			return IsLowerThan<T>(lhs, rhs, MaxValue<T>(N));
 		}
 
-		// T is the base type (uint16_t, uint32_t, ...).
-		// N is the max number of bits used in T.
+		/**
+		 * T is the base type (uint16_t, uint32_t, ...).
+		 * N is the max number of bits used in T.
+		 */
 		template<typename T, uint8_t N = 0>
 		static bool IsHigherOrEqualThan(T lhs, T rhs)
 		{
@@ -378,17 +447,19 @@ namespace Utils
 			    std::is_same_v<T, uint64_t>,
 			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
 
-			constexpr T MaxValue = (N == 0) ? std::numeric_limits<T>::max() : ((1 << N) - 1);
+			constexpr T Max = MaxValue<T>(N);
 
-			lhs &= MaxValue;
-			rhs &= MaxValue;
+			lhs &= Max;
+			rhs &= Max;
 
-			return (lhs == rhs) || ((lhs > rhs) && (lhs - rhs <= MaxValue / 2)) ||
-			       ((rhs > lhs) && (rhs - lhs > MaxValue / 2));
+			return (lhs == rhs) || ((lhs > rhs) && (lhs - rhs <= Max / 2)) ||
+			       ((rhs > lhs) && (rhs - lhs > Max / 2));
 		}
 
-		// T is the base type (uint16_t, uint32_t, ...).
-		// N is the max number of bits used in T.
+		/**
+		 * T is the base type (uint16_t, uint32_t, ...).
+		 * N is the max number of bits used in T.
+		 */
 		template<typename T, uint8_t N = 0>
 		static bool IsLowerOrEqualThan(T lhs, T rhs)
 		{
@@ -397,13 +468,13 @@ namespace Utils
 			    std::is_same_v<T, uint64_t>,
 			  "T must be uint8_t, uint16_t, uint32_t or uint64_t");
 
-			constexpr T MaxValue = (N == 0) ? std::numeric_limits<T>::max() : ((1 << N) - 1);
+			constexpr T Max = MaxValue<T>(N);
 
-			lhs &= MaxValue;
-			rhs &= MaxValue;
+			lhs &= Max;
+			rhs &= Max;
 
-			return (lhs == rhs) || ((rhs > lhs) && (rhs - lhs <= MaxValue / 2)) ||
-			       ((lhs > rhs) && (lhs - rhs > MaxValue / 2));
+			return (lhs == rhs) || ((rhs > lhs) && (rhs - lhs <= Max / 2)) ||
+			       ((lhs > rhs) && (lhs - rhs > Max / 2));
 		}
 
 		/**
@@ -437,18 +508,15 @@ namespace Utils
 		template<typename T, T M>
 		static T ForwardDiff(T a, T b) requires(M > 0)
 		{
-			static_assert(std::is_unsigned<T>::value, "type must be an unsigned integer");
+			static_assert(std::is_unsigned_v<T>, "type must be an unsigned integer");
 
-			assert(a < M);
-			assert(b < M);
-
-			return a <= b ? b - a : M - (a - b);
+			return static_cast<T>(ForwardDiff(static_cast<uint64_t>(a), static_cast<uint64_t>(b), M));
 		}
 
 		template<typename T, T M>
 		static T ForwardDiff(T a, T b) requires(M == 0)
 		{
-			static_assert(std::is_unsigned<T>::value, "type must be an unsigned integer");
+			static_assert(std::is_unsigned_v<T>, "type must be an unsigned integer");
 
 			return b - a;
 		}
@@ -458,6 +526,8 @@ namespace Utils
 		{
 			return ForwardDiff<T, 0>(a, b);
 		}
+
+		static uint64_t ForwardDiff(uint64_t a, uint64_t b, uint64_t max);
 
 		/**
 		 * Calculates the reverse difference between two wrapping numbers.
@@ -489,18 +559,16 @@ namespace Utils
 		template<typename T, T M>
 		static T ReverseDiff(T a, T b) requires(M > 0)
 		{
-			static_assert(std::is_unsigned<T>::value, "type must be an unsigned integer");
+			static_assert(std::is_unsigned_v<T>, "type must be an unsigned integer");
 
-			assert(a < M);
-			assert(b < M);
-
-			return b <= a ? a - b : M - (b - a);
+			return static_cast<T>(ReverseDiff(static_cast<uint64_t>(a), static_cast<uint64_t>(b), M));
 		}
 
 		template<typename T, T M>
 		static T ReverseDiff(T a, T b) requires(M == 0)
 		{
-			static_assert(std::is_unsigned<T>::value, "type must be an unsigned integer");
+			static_assert(std::is_unsigned_v<T>, "type must be an unsigned integer");
+
 			return a - b;
 		}
 
@@ -509,16 +577,22 @@ namespace Utils
 		{
 			return ReverseDiff<T, 0>(a, b);
 		}
+
+		static uint64_t ReverseDiff(uint64_t a, uint64_t b, uint64_t max);
 	};
 
 	class Time
 	{
 	public:
-		// Seconds from Jan 1, 1900 to Jan 1, 1970.
+		/**
+		 * Seconds from Jan 1, 1900 to Jan 1, 1970.
+		 */
 		static constexpr uint32_t UnixNtpOffsetSec{ 0x83AA7E80 };
 
 	private:
-		// NTP fractional unit.
+		/**
+		 * NTP fractional unit.
+		 */
 		static constexpr uint64_t NtpFractionalUnit{ 1LL << 32 };
 
 	public:
@@ -528,6 +602,7 @@ namespace Utils
 			uint32_t fractions;
 		};
 
+	public:
 		/**
 		 * Convert microseconds into milliseconds.
 		 *
@@ -563,17 +638,16 @@ namespace Utils
 		 */
 		static Time::Ntp TimeUsToNtp(int64_t timeUs)
 		{
-			Time::Ntp ntp{}; // NOLINT(cppcoreguidelines-pro-type-member-init)
-
-			// NOTE: The truncation is intended. Seconds are 32 bits wide in NTP, so they wrap
-			// every 2^32 seconds since Jan 1, 1900, being Feb 7, 2036 the next time it
-			// happens. That is the NTP era and receivers deal with it by doing modular
-			// arithmetic, so there is nothing to protect against here.
-			ntp.seconds = static_cast<uint32_t>(timeUs / 1000000);
-			ntp.fractions =
-			  static_cast<uint32_t>((static_cast<double>(timeUs % 1000000) / 1000000) * NtpFractionalUnit);
-
-			return ntp;
+			// NOTE: The truncation of the seconds is intended. Seconds are 32 bits wide
+			// in NTP, so they wrap every 2^32 seconds since Jan 1, 1900, being Feb 7,
+			// 2036 the next time it happens. That is the NTP era and receivers deal with
+			// it by doing modular arithmetic, so there is nothing to protect against
+			// here.
+			return {
+				.seconds   = static_cast<uint32_t>(timeUs / 1000000),
+				.fractions = static_cast<uint32_t>(
+				  (static_cast<double>(timeUs % 1000000) / 1000000) * NtpFractionalUnit),
+			};
 		}
 
 		/**
@@ -613,12 +687,13 @@ namespace Utils
 
 			if (compactNtpInterval > 0x80000000)
 			{
-				value -= (int64_t{ 1 } << 32);
+				value -= 0x100000000;
 			}
 
 			// NOTE: Right shifting a negative value rounds towards negative infinity,
 			// so adding half the divisor first rounds to the nearest value.
-			return ((value * 1000000) + (1 << 15)) >> 16;
+			// NOLINTNEXTLINE(bugprone-signed-bitwise)
+			return ((value * 1000000) + 32768) >> 16;
 		}
 
 		/**
@@ -650,7 +725,8 @@ namespace Utils
 			// as the positive time it's congruent with rather than a meaningless one.
 			const int64_t wrappedUs = ((timeUs % WrapPeriodUs) + WrapPeriodUs) % WrapPeriodUs;
 
-			return static_cast<uint32_t>(((wrappedUs << 18) + 500000) / 1000000) & 0x00FFFFFF;
+			return static_cast<uint32_t>(((static_cast<uint64_t>(wrappedUs) << 18) + 500000) / 1000000) &
+			       0x00FFFFFF;
 		}
 
 		/**
@@ -659,7 +735,7 @@ namespace Utils
 		 * capture timestamp itself unsigned instead (UQ32.32).
 		 *
 		 * @returns No value if the given instant does not fit in the format, whose seconds
-		 * are 32 bits wide.
+		 *   are 32 bits wide.
 		 *
 		 * @see https://datatracker.ietf.org/doc/html/draft-ietf-avtcore-abs-capture-time-00
 		 */
@@ -689,33 +765,75 @@ namespace Utils
 		}
 	};
 
-	class BitStream
+	/**
+	 * Reads bits out of its own copy of the given data.
+	 *
+	 * @remarks
+	 * - The copy is what lets a reader outlive the buffer it was built from,
+	 *   which it does: a Dependency Descriptor is parsed out of the RTP packet it
+	 *   came in, and then read again on every retransmission of that packet, long
+	 *   after the receive buffer holding it has been reused.
+	 */
+	class BitReader
 	{
 	public:
-		BitStream(uint8_t* data, size_t len);
-		~BitStream() = default;
+		BitReader(const uint8_t* data, size_t len);
+
+		~BitReader() = default;
 
 		const uint8_t* GetData() const;
+
 		size_t GetLength() const;
+
 		uint32_t GetOffset() const;
-		void Reset();
+
 		uint8_t GetBit();
+
 		uint32_t GetBits(size_t count);
+
 		uint32_t GetLeftBits() const;
-		uint32_t GetNumBits(uint32_t n) const;
+
 		std::optional<uint32_t> ReadNs(uint32_t n);
+
 		void SkipBits(size_t count);
-		void Write(uint32_t offset, uint32_t n, uint32_t v);
+
+	private:
+		uint8_t data[RTC::Consts::TwoByteRtpExtensionMaxLength];
+		const uint32_t len;
+		uint32_t offset{ 0 };
+	};
+
+	/**
+	 * Appends bits into a buffer that the caller has zeroed.
+	 *
+	 * @remarks
+	 * - Unlike BitReader, this doesn't read, doesn't own the buffer and cannot
+	 *   reset it, so whatever is being rewritten can never be its own
+	 *   destination. That's what makes it possible to copy over bits that are
+	 *   not parsed, via PutBitRange().
+	 */
+	class BitWriter
+	{
+	public:
+		BitWriter(uint8_t* data, size_t len);
+
+		~BitWriter() = default;
+
+		uint32_t GetOffset() const;
+
 		void PutBit(uint8_t bit);
+
 		void PutBits(uint32_t count, uint32_t bits);
 
-	private:
-		void PutBit(uint32_t offset, uint8_t bit);
-		void PutBits(uint32_t offset, uint32_t count, uint32_t bits);
+		/**
+		 * Appends the bits of `src`, which holds `len` bytes, in the range
+		 * [from, to).
+		 */
+		void PutBitRange(const uint8_t* src, size_t len, uint32_t from, uint32_t to);
 
 	private:
-		uint8_t data[RTC::Consts::TwoBytesRtpExtensionMaxLength];
-		uint32_t len{ 0 };
+		uint8_t* const data;
+		const size_t len;
 		uint32_t offset{ 0 };
 	};
 

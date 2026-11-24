@@ -5,8 +5,9 @@
 #include "RTC/SCTP/tx/SendQueueInterface.hpp"
 #include "mocks/include/mockTypes.hpp"
 #include <queue>
-#include <stdexcept>
+#include <stdexcept> // std::logic_error
 #include <string>
+#include <vector>
 
 namespace mocks
 {
@@ -22,9 +23,13 @@ namespace mocks
 
 				struct DiscardExpectation
 				{
-					// If std::nullopt, don't check it.
+					/**
+					 * If std::nullopt, don't check it.
+					 */
 					std::optional<uint16_t> streamId;
-					// If std::nullopt, don't check it.
+					/**
+					 * If std::nullopt, don't check it.
+					 */
 					std::optional<uint32_t> outgoingMessageId;
 					bool returnValue{ false };
 				};
@@ -71,7 +76,7 @@ namespace mocks
 						throw std::logic_error("Discard() called but no expectation was set");
 					}
 
-					auto discardExpectation = this->discardExpectations.front();
+					const auto discardExpectation = this->discardExpectations.front();
 
 					this->discardExpectations.pop();
 
@@ -183,7 +188,10 @@ namespace mocks
 
 				MockSendQueue& WillDiscardOnce(uint16_t streamId, uint32_t outgoingMessageId, bool returnValue)
 				{
-					this->discardExpectations.push({ streamId, outgoingMessageId, returnValue });
+					this->discardExpectations.push(
+					  { .streamId          = streamId,
+						  .outgoingMessageId = outgoingMessageId,
+						  .returnValue       = returnValue });
 
 					return *this;
 				}
@@ -204,13 +212,20 @@ namespace mocks
 				{
 					if (
 					  this->expectedMessageInterleavingCalledWith.has_value() &&
-					  this->messageInterleavingCalledWith != this->expectedMessageInterleavingCalledWith.value())
+					  this->messageInterleavingCalledWith != this->expectedMessageInterleavingCalledWith)
 					{
+						const char* got{ "not called" };
+
+						if (this->messageInterleavingCalledWith.has_value())
+						{
+							got = this->messageInterleavingCalledWith.value() ? "true" : "false";
+						}
+
 						return { .ok = false,
 						         .errorMessage =
 						           std::string("EnableMessageInterleaving() call mismatch [expected:") +
 						           (this->expectedMessageInterleavingCalledWith.value() ? "true" : "false") +
-						           ", got:" + (this->messageInterleavingCalledWith ? "true" : "false") + "]" };
+						           ", got:" + got + "]" };
 					}
 
 					if (
@@ -246,7 +261,7 @@ namespace mocks
 
 			private:
 				// EnableMessageInterleaving().
-				bool messageInterleavingCalledWith{ false };
+				std::optional<bool> messageInterleavingCalledWith;
 				std::optional<bool> expectedMessageInterleavingCalledWith;
 
 				// Produce().

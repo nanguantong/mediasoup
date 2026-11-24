@@ -24,12 +24,15 @@ public:
 		bool score{ false };
 		bool simulcast{ false };
 		bool svc{ false };
+		bool codec{ false };
 		bool sctp{ false };
 		bool message{ false };
 	};
 
 public:
-	// Struct holding the configuration.
+	/**
+	 * Struct holding the configuration.
+	 */
 	struct Configuration
 	{
 		LogLevel logLevel{ LogLevel::LOG_ERROR };

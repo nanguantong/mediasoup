@@ -3,13 +3,12 @@
 
 #include "RTC/RTP/RtpStreamRecv.hpp"
 #include "Logger.hpp"
-#include "RTC/Consts.hpp"
-#include "RTC/RTCP/FeedbackPsFir.hpp"
-#include "RTC/RTCP/FeedbackPsPli.hpp"
-#include "RTC/RTCP/FeedbackRtpNack.hpp"
+#include "RTC/RTCP/packet/AnyReportPacket.hpp"
+#include "RTC/RTCP/packet/FirPacket.hpp"
+#include "RTC/RTCP/packet/NackPacket.hpp"
+#include "RTC/RTCP/packet/PliPacket.hpp"
 #include "RTC/RTP/Codecs/Tools.hpp"
-#include "Utils.hpp"
-#include <cmath> // std::round()
+#include <cmath> // std::pow(), std::round()
 
 namespace RTC
 {
@@ -24,6 +23,14 @@ namespace RTC
 		// its counter has fully elapsed, so this interval just adds to that
 		// unavoidable detection delay.
 		static constexpr int64_t SpatialLayersActivityCheckIntervalMs{ 1500 };
+		// Smallest difference between the transit times of two packets (in RTP
+		// timestamp units) that is left out of the jitter, which is 5 seconds at 90
+		// kHz.
+		static constexpr int64_t MinIgnoredJitterTransitDifference{ 5 * 90000 };
+		// Buffer in which the RTCP feedback packets to send are built.
+		// NOTE: Every packet built in it is handed to the listener, which sends it
+		// right away, before the buffer is used again.
+		alignas(4) static thread_local uint8_t RtcpPacketBuffer[RTC::Consts::OutgoingRtcpPacketMaxSize];
 
 		/* TransmissionCounter methods. */
 
@@ -57,8 +64,10 @@ namespace RTC
 
 			// Sanity check. Do not allow temporal layers higher than defined.
 			temporalLayer =
+			  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 			  std::min(static_cast<size_t>(temporalLayer), this->spatialLayerCounters[0].size() - 1);
 
+			// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 			auto& temporalLayerCounter = this->spatialLayerCounters[spatialLayer][temporalLayer];
 
 			temporalLayerCounter.Update(packet);
@@ -88,7 +97,9 @@ namespace RTC
 
 			MS_ASSERT(spatialLayer < this->spatialLayerCounters.size(), "spatialLayer too high");
 			MS_ASSERT(
-			  temporalLayer < this->spatialLayerCounters[spatialLayer].size(), "temporalLayer too high");
+			  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+			  temporalLayer < this->spatialLayerCounters[spatialLayer].size(),
+			  "temporalLayer too high");
 
 			// Return 0 if specified layers are not being received.
 			if (GetTemporalLayerBitrate(nowMs, spatialLayer, temporalLayer) <= 0)
@@ -106,6 +117,7 @@ namespace RTC
 			{
 				for (uint8_t tIdx{ 0 }; tIdx <= temporalLayer; ++tIdx)
 				{
+					// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 					auto& temporalLayerCounter = this->spatialLayerCounters[sIdx][tIdx];
 
 					rate += temporalLayerCounter.GetBitrate(nowMs).value_or(0);
@@ -123,10 +135,9 @@ namespace RTC
 
 			int64_t rate{ 0 };
 
-			for (size_t tIdx{ 0 }; tIdx < this->spatialLayerCounters[spatialLayer].size(); ++tIdx)
+			// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+			for (auto& temporalLayerCounter : this->spatialLayerCounters[spatialLayer])
 			{
-				auto& temporalLayerCounter = this->spatialLayerCounters[spatialLayer][tIdx];
-
 				rate += temporalLayerCounter.GetBitrate(nowMs).value_or(0);
 			}
 
@@ -140,12 +151,15 @@ namespace RTC
 
 			MS_ASSERT(spatialLayer < this->spatialLayerCounters.size(), "spatialLayer too high");
 			MS_ASSERT(
-			  temporalLayer < this->spatialLayerCounters[spatialLayer].size(), "temporalLayer too high");
+			  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+			  temporalLayer < this->spatialLayerCounters[spatialLayer].size(),
+			  "temporalLayer too high");
 
 			int64_t rate{ 0 };
 
 			for (uint8_t tIdx{ 0 }; tIdx <= temporalLayer; ++tIdx)
 			{
+				// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 				auto& temporalLayerCounter = this->spatialLayerCounters[spatialLayer][tIdx];
 
 				rate += temporalLayerCounter.GetBitrate(nowMs).value_or(0);
@@ -161,8 +175,11 @@ namespace RTC
 
 			MS_ASSERT(spatialLayer < this->spatialLayerCounters.size(), "spatialLayer too high");
 			MS_ASSERT(
-			  temporalLayer < this->spatialLayerCounters[spatialLayer].size(), "temporalLayer too high");
+			  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+			  temporalLayer < this->spatialLayerCounters[spatialLayer].size(),
+			  "temporalLayer too high");
 
+			// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 			auto& temporalLayerCounter = this->spatialLayerCounters[spatialLayer][temporalLayer];
 
 			return temporalLayerCounter.GetBitrate(nowMs).value_or(0);
@@ -207,12 +224,14 @@ namespace RTC
 		RtpStreamRecv::RtpStreamRecv(
 		  RTP::RtpStreamRecv::Listener* listener,
 		  SharedInterface* shared,
-		  RTP::RtpStream::Params& params,
+		  const RTP::RtpStream::Params& params,
 		  int64_t sendNackDelayMs,
 		  bool useRtpInactivityCheck)
 		  : RTP::RtpStream::RtpStream(listener, shared, params, 10),
-		    sendNackDelayMs(sendNackDelayMs),
 		    useRtpInactivityCheck(useRtpInactivityCheck),
+		    nackGenerator(
+		      params.useNack ? std::make_unique<RTC::NackGenerator>(this, shared, sendNackDelayMs)
+					               : nullptr),
 		    inactivityCheckPeriodicTimer(
 		      useRtpInactivityCheck ? shared->CreateTimer(this, "rtp-stream-recv-inactivity-check")
 					                      : nullptr),
@@ -225,13 +244,6 @@ namespace RTC
 		    mediaTransmissionCounter(shared, /*ignorePaddingOnlyPackets*/ true)
 		{
 			MS_TRACE();
-
-			if (this->params.useNack)
-			{
-				this->nackGenerator.reset(new RTC::NackGenerator(this, this->shared, this->sendNackDelayMs));
-			}
-
-			this->inactive = false;
 
 			if (this->useRtpInactivityCheck)
 			{
@@ -305,6 +317,11 @@ namespace RTC
 		{
 			MS_TRACE();
 
+			// Whether this is the first packet of the stream, and the extended highest
+			// sequence number before it, to tell whether it moves the stream forward.
+			const bool isFirstPacket          = !IsStarted();
+			const uint32_t prevExtendedMaxSeq = this->cycles + this->maxSeq;
+
 			// Call the parent method.
 			if (!RTP::RtpStream::ReceiveStreamPacket(packet))
 			{
@@ -313,10 +330,32 @@ namespace RTC
 				return false;
 			}
 
+			// A requested retransmission that arrives this late is not forwarded, since
+			// the streams of the Consumers would take it as invalid, but the
+			// NackGenerator is told so that it stops requesting it.
+			if (IsTooOldToForward(packet))
+			{
+				if (this->params.useNack)
+				{
+					this->nackGenerator->ReceivePacket(packet, /*isRecovered*/ false);
+				}
+
+				return false;
+			}
+
 			// Process the packet at codec level.
 			if (packet->GetPayloadType() == GetPayloadType())
 			{
-				RTP::Codecs::Tools::ProcessRtpPacket(packet, GetMimeType(), this->templateDependencyStructure);
+				RTP::Codecs::Tools::ProcessRtpPacket(packet, GetMimeType(), this->dependencyDescriptorContext);
+			}
+
+			// Tell the listener if this packet made the stream restart, now that it
+			// can tell whether the packet starts a key frame.
+			if (this->restarted)
+			{
+				this->restarted = false;
+
+				static_cast<RTP::RtpStreamRecv::Listener*>(this->listener)->OnRtpStreamRestarted(this, packet);
 			}
 
 			// Pass the packet to the NackGenerator.
@@ -337,10 +376,21 @@ namespace RTC
 				}
 			}
 
-			// Calculate jitter.
-			CalculateJitter(packet->GetTimestamp(), receivedAtUs);
+			// Late packets (reordered or retransmitted) say nothing about the current
+			// state of the stream.
+			const bool movesStreamForward =
+			  isFirstPacket || this->cycles + this->maxSeq != prevExtendedMaxSeq;
 
-			// Store the capture instant if the packet carries it.
+			// Calculate jitter, just with packets that move the stream forward, since
+			// late ones would inflate it.
+			if (movesStreamForward)
+			{
+				CalculateJitter(packet->GetTimestamp(), receivedAtUs);
+			}
+
+			// Store the capture instant if the packet carries it, just with packets
+			// that move the stream forward, since late ones would replace a newer one.
+			if (movesStreamForward)
 			{
 				uint64_t absCaptureTimestamp{ 0 };
 				int64_t estimatedCaptureClockOffset{ 0 };
@@ -348,10 +398,8 @@ namespace RTC
 				// NOTE: A zeroed capture timestamp gives no capture instant to store.
 				if (packet->ReadAbsCaptureTime(absCaptureTimestamp, estimatedCaptureClockOffset) && absCaptureTimestamp != 0)
 				{
-					Utils::Time::Ntp ntp{}; // NOLINT(cppcoreguidelines-pro-type-member-init)
-
-					ntp.seconds   = static_cast<uint32_t>(absCaptureTimestamp >> 32);
-					ntp.fractions = static_cast<uint32_t>(absCaptureTimestamp);
+					const Utils::Time::Ntp ntp{ .seconds   = static_cast<uint32_t>(absCaptureTimestamp >> 32),
+					                            .fractions = static_cast<uint32_t>(absCaptureTimestamp) };
 
 					// The capture timestamp belongs to the clock of the capture system, which is
 					// not the clock of the sender of this stream when the media comes from
@@ -366,10 +414,8 @@ namespace RTC
 					// that cannot be true, so there is nothing to store.
 					if (captureAtUs > 0)
 					{
-						this->lastAbsCaptureTime = AbsCaptureTime{
-							.ts    = packet->GetTimestamp(),
-							.ntpUs = captureAtUs,
-						};
+						this->lastAbsCaptureTime =
+						  AbsCaptureTime{ .ts = packet->GetTimestamp(), .ntpUs = captureAtUs };
 					}
 				}
 			}
@@ -379,6 +425,8 @@ namespace RTC
 
 			// Increase media transmission counter.
 			this->mediaTransmissionCounter.Update(packet);
+
+			this->lastPacketReceivedAtUs = receivedAtUs;
 
 			// Padding only packet, do not consider it for stream activation.
 			if (packet->GetPayloadLength() == 0)
@@ -403,7 +451,7 @@ namespace RTC
 			return true;
 		}
 
-		bool RtpStreamRecv::ReceiveRtxPacket(RTP::Packet* packet)
+		bool RtpStreamRecv::ReceiveRtxPacket(RTP::Packet* packet, int64_t receivedAtUs)
 		{
 			MS_TRACE();
 
@@ -432,7 +480,7 @@ namespace RTC
 
 			if (HasRtx())
 			{
-				if (!this->rtxStream->ReceivePacket(packet))
+				if (!this->rtxStream->ReceivePacket(packet, receivedAtUs))
 				{
 					MS_WARN_TAG(rtx, "RTX packet discarded");
 
@@ -466,7 +514,7 @@ namespace RTC
 			  packet->GetSequenceNumber());
 
 			// If not a valid packet ignore it.
-			if (!RTP::RtpStream::UpdateSeq(packet))
+			if (!RTP::RtpStream::UpdateRecoveredSeq(packet))
 			{
 				MS_WARN_TAG(
 				  rtx,
@@ -477,10 +525,20 @@ namespace RTC
 				return false;
 			}
 
+			// A requested retransmission that arrives this late is not forwarded, since
+			// the streams of the Consumers would take it as invalid, but the
+			// NackGenerator is told so that it stops requesting it.
+			if (IsTooOldToForward(packet))
+			{
+				this->nackGenerator->ReceivePacket(packet, /*isRecovered*/ true);
+
+				return false;
+			}
+
 			// Process the packet at codec level.
 			if (packet->GetPayloadType() == GetPayloadType())
 			{
-				RTP::Codecs::Tools::ProcessRtpPacket(packet, GetMimeType(), this->templateDependencyStructure);
+				RTP::Codecs::Tools::ProcessRtpPacket(packet, GetMimeType(), this->dependencyDescriptorContext);
 			}
 
 			// Mark the packet as retransmitted.
@@ -523,9 +581,25 @@ namespace RTC
 			return false;
 		}
 
-		RTC::RTCP::ReceiverReport* RtpStreamRecv::GetRtcpReceiverReport()
+		bool RtpStreamRecv::AddRtcpReportBlock(
+		  RTC::RTCP::ReceiverReportPacket* receiverReportPacket, int64_t nowUs)
 		{
 			MS_TRACE();
+
+			if (!HasRtcpReportBlock(nowUs))
+			{
+				return false;
+			}
+
+			if (receiverReportPacket->GetNumberOfReportBlocks() == RTC::RTCP::AnyReportPacket::MaxReportBlocks)
+			{
+				return false;
+			}
+
+			if (receiverReportPacket->GetAvailableLength() < RTC::RTCP::AnyReportPacket::ReportBlockLength)
+			{
+				return false;
+			}
 
 			// Ask the listener for the worst remote fraction lost.
 			const uint8_t worstRemoteFractionLost =
@@ -538,9 +612,7 @@ namespace RTC
 				MS_DEBUG_TAG(rtcp, "using worst remote fraction lost:%" PRIu8, worstRemoteFractionLost);
 			}
 
-			auto* const report = new RTC::RTCP::ReceiverReport();
-
-			report->SetSsrc(GetSsrc());
+			RTC::RTCP::AnyReportPacket::ReportBlock reportBlock{ .ssrc = GetSsrc() };
 
 			const int32_t prevPacketsLost = this->packetsLost;
 
@@ -566,8 +638,8 @@ namespace RTC
 
 			// Calculate fraction lost.
 			//
-			// NOTE: Reading the difference of the expected count as signed makes a
-			// sequence number re-sync, which restarts the count, come out negative.
+			// NOTE: The expected count wraps at 32 bits, so the difference is taken in
+			// that width.
 			const int64_t expectedInterval = static_cast<int32_t>(expectedPackets - this->expectedPrior);
 
 			this->expectedPrior = expectedPackets;
@@ -587,9 +659,8 @@ namespace RTC
 			{
 				// A fixed point number with 8 bits of fraction, so a whole interval lost
 				// gives 256, one more than the field can hold.
-				const double fraction = std::round(static_cast<double>(lostInterval << 8) / expectedInterval);
-
-				this->fractionLost = static_cast<uint8_t>(std::min(fraction, 255.0));
+				this->fractionLost =
+				  static_cast<uint8_t>(std::min<int64_t>((lostInterval * 256) / expectedInterval, 255));
 			}
 
 			// Worst remote fraction lost is not worse than local one.
@@ -597,126 +668,131 @@ namespace RTC
 			{
 				this->reportedPacketsLost += (this->packetsLost - prevPacketsLost);
 
-				report->SetTotalLost(this->reportedPacketsLost);
-				report->SetFractionLost(this->fractionLost);
+				reportBlock.totalLost    = this->reportedPacketsLost;
+				reportBlock.fractionLost = this->fractionLost;
 			}
 			else
 			{
 				// Recalculate packetsLost.
 				//
-				// NOTE: The expected interval is not positive when a sequence number
-				// re-sync restarted the count, and then nothing was expected to be lost.
+				// NOTE: Clamped as the fraction lost above, since the difference read as
+				// signed may come out negative.
 				const auto newLostInterval = static_cast<uint32_t>(
-				  (worstRemoteFractionLost * std::max<int64_t>(expectedInterval, 0)) >> 8);
+				  (static_cast<uint64_t>(worstRemoteFractionLost) *
+					 static_cast<uint64_t>(std::max<int64_t>(expectedInterval, 0))) >>
+				  8U);
 
 				this->reportedPacketsLost += newLostInterval;
 
-				report->SetTotalLost(this->reportedPacketsLost);
-				report->SetFractionLost(worstRemoteFractionLost);
+				reportBlock.totalLost    = this->reportedPacketsLost;
+				reportBlock.fractionLost = worstRemoteFractionLost;
 			}
 
-			// Fill the rest of the report.
-			report->SetLastSeq(static_cast<uint32_t>(this->maxSeq) + this->cycles);
-			report->SetJitter(this->jitter);
+			// Fill the rest of the report block.
+			reportBlock.extendedHighestSeq = static_cast<uint32_t>(this->maxSeq) + this->cycles;
+			reportBlock.jitter             = static_cast<uint32_t>(this->jitter);
 
 			if (this->lastSenderReportTiming.has_value())
 			{
 				const auto& senderReportTiming = this->lastSenderReportTiming.value();
+
 				// Get delay in microseconds.
-				const int64_t delayUs = this->shared->GetTimeUs() - senderReportTiming.receivedAtUs;
+				const int64_t delayUs = nowUs - senderReportTiming.receivedAtUs;
+
 				// Express delay in units of 1/65536 seconds.
-				auto dlsr = static_cast<uint32_t>((delayUs / 1000000) << 16);
+				auto dlsr = static_cast<uint32_t>(delayUs / 1000000) << 16U;
 
 				dlsr |= static_cast<uint32_t>(((delayUs % 1000000) * 65536) / 1000000);
 
-				report->SetDelaySinceLastSenderReport(dlsr);
-				report->SetLastSenderReport(senderReportTiming.compactNtp);
+				reportBlock.delaySinceLastSenderReport = dlsr;
+				reportBlock.lastSenderReport           = senderReportTiming.compactNtp;
 			}
 			else
 			{
-				report->SetDelaySinceLastSenderReport(0);
-				report->SetLastSenderReport(0);
+				reportBlock.delaySinceLastSenderReport = 0;
+				reportBlock.lastSenderReport           = 0;
 			}
 
-			return report;
+			receiverReportPacket->AddReportBlock(reportBlock);
+
+			return true;
 		}
 
-		RTC::RTCP::ReceiverReport* RtpStreamRecv::GetRtxRtcpReceiverReport()
+		bool RtpStreamRecv::AddRtxRtcpReportBlock(
+		  RTC::RTCP::ReceiverReportPacket* receiverReportPacket, int64_t nowUs)
 		{
 			MS_TRACE();
 
 			if (HasRtx())
 			{
-				return this->rtxStream->GetRtcpReceiverReport();
+				return this->rtxStream->AddRtcpReportBlock(receiverReportPacket, nowUs);
 			}
 
-			return nullptr;
+			return false;
 		}
 
-		void RtpStreamRecv::ReceiveRtcpSenderReport(RTC::RTCP::SenderReport* report, int64_t receivedAtUs)
+		void RtpStreamRecv::ReceiveRtcpSenderReportPacket(
+		  const RTC::RTCP::SenderReportPacket* senderReportPacket, int64_t receivedAtUs)
 		{
 			MS_TRACE();
+
+			const Utils::Time::Ntp ntp = senderReportPacket->GetNtp();
 
 			// Update info about last Sender Report.
 			//
 			// NOTE: A sender with no wall clock may report a zeroed NTP timestamp, which
 			// gives nothing to store.
-			if (report->GetNtpSec() != 0 || report->GetNtpFrac() != 0)
+			if (ntp.seconds != 0 || ntp.fractions != 0)
 			{
-				const Utils::Time::Ntp ntp{ .seconds   = report->GetNtpSec(),
-				                            .fractions = report->GetNtpFrac() };
+				this->lastSenderReportTiming =
+				  SenderReportTiming{ .compactNtp   = Utils::Time::NtpToCompactNtp(ntp),
+					                    .receivedAtUs = receivedAtUs };
 
-				this->lastSenderReportTiming = SenderReportTiming{
-					.compactNtp   = Utils::Time::NtpToCompactNtp(ntp),
-					.receivedAtUs = receivedAtUs,
-				};
-
-				this->lastSenderReportMapping = RTP::RtpStream::SenderReportMapping{
-					.ntpUs = Utils::Time::NtpToTimeUs(ntp),
-					.ts    = report->GetRtpTs(),
-				};
+				this->lastSenderReportMapping =
+				  RTP::RtpStream::SenderReportMapping{ .ntpUs = Utils::Time::NtpToTimeUs(ntp),
+					                                     .ts    = senderReportPacket->GetRtpTimestamp() };
 			}
 
-			// Update the score with the current RR.
+			// Update the score.
 			UpdateScore();
 		}
 
-		void RtpStreamRecv::ReceiveRtxRtcpSenderReport(RTC::RTCP::SenderReport* report, int64_t receivedAtUs)
+		void RtpStreamRecv::ReceiveRtxRtcpSenderReportPacket(
+		  const RTC::RTCP::SenderReportPacket* senderReportPacket, int64_t receivedAtUs)
 		{
 			MS_TRACE();
 
 			if (HasRtx())
 			{
-				this->rtxStream->ReceiveRtcpSenderReport(report, receivedAtUs);
+				this->rtxStream->ReceiveRtcpSenderReportPacket(senderReportPacket, receivedAtUs);
 			}
 		}
 
-		std::optional<float> RtpStreamRecv::ReceiveRtcpXrDelaySinceLastRr(
-		  RTC::RTCP::DelaySinceLastRr::SsrcInfo* ssrcInfo, int64_t receivedAtUs)
+		std::optional<float> RtpStreamRecv::ReceiveRtcpDlrrSubBlock(
+		  const RTC::RTCP::DlrrExtendedReport::SubBlock& subBlock, int64_t receivedAtUs)
 		{
 			MS_TRACE();
 
 			/* Calculate RTT. */
 
-			// Get the NTP representation of the time at which the report arrived, which
-			// is what the round trip is measured against.
-			const auto ntp = Utils::Time::TimeUsToNtp(receivedAtUs + this->shared->GetNtpOffsetUs());
+			const uint32_t lastRr = subBlock.lastReceiverReport;
+			const uint32_t dlrr   = subBlock.delaySinceLastReceiverReport;
 
-			// Get the compact NTP representation of the arrival time.
-			uint32_t compactNtp = (ntp.seconds & 0x0000FFFF) << 16;
-
-			compactNtp |= (ntp.fractions & 0xFFFF0000) >> 16;
-
-			const uint32_t lastRr = ssrcInfo->GetLastReceiverReport();
-			const uint32_t dlrr   = ssrcInfo->GetDelaySinceLastReceiverReport();
-
-			// If no Receiver Extended Report was received by the remote endpoint yet,
-			// the Sender Extended Report carries no RTT, so the last one is kept and
-			// nothing new is reported.
+			// If the remote endpoint has not received any Receiver Reference Time
+			// Extended Report from us yet, the DLRR sub-block carries no RTT, so the
+			// last one is kept and nothing new is reported.
 			if (lastRr == 0)
 			{
 				return std::nullopt;
 			}
+
+			// Get the NTP representation of the time at which the report arrived, which
+			// is what the round trip is measured against.
+			const Utils::Time::Ntp ntp =
+			  Utils::Time::TimeUsToNtp(receivedAtUs + this->shared->GetNtpOffsetUs());
+
+			// Get the compact NTP representation of the arrival time.
+			const uint32_t compactNtp = Utils::Time::NtpToCompactNtp(ntp);
 
 			// NOTE: The subtraction wraps around along with the compact NTP
 			// representation, which is what the conversion expects.
@@ -725,13 +801,17 @@ namespace RTC
 
 			this->rttMs = measuredRttMs;
 
-			// Tell it to the NackGenerator.
+			return measuredRttMs;
+		}
+
+		void RtpStreamRecv::UpdateRttMs(int64_t rttMs)
+		{
+			MS_TRACE();
+
 			if (this->params.useNack)
 			{
-				this->nackGenerator->UpdateRttMs(static_cast<int64_t>(measuredRttMs));
+				this->nackGenerator->UpdateRttMs(rttMs);
 			}
-
-			return measuredRttMs;
 		}
 
 		std::optional<int64_t> RtpStreamRecv::GetRemoteCaptureAtUsFromAbsCaptureTime(uint32_t ts) const
@@ -817,35 +897,34 @@ namespace RTC
 			{
 				MS_DEBUG_2TAGS(rtcp, rtx, "sending PLI [ssrc:%" PRIu32 "]", GetSsrc());
 
-				// Sender SSRC should be 0 since there is no media sender involved, but
-				// some implementations like gstreamer will fail to process it otherwise.
-				RTC::RTCP::FeedbackPsPliPacket packet(GetSsrc(), GetSsrc());
+				const std::unique_ptr<RTC::RTCP::PliPacket> pliPacket{ RTC::RTCP::PliPacket::Factory(
+					RtcpPacketBuffer, sizeof(RtcpPacketBuffer)) };
 
-				packet.Serialize(RTC::RTCP::SerializationBuffer);
+				pliPacket->SetSenderSsrc(this->params.rtcpSenderSsrc);
+				pliPacket->SetMediaSsrc(GetSsrc());
 
 				this->pliCount++;
 
 				// Notify the listener.
 				static_cast<RTP::RtpStreamRecv::Listener*>(this->listener)
-				  ->OnRtpStreamSendRtcpPacket(this, std::addressof(packet));
+				  ->OnRtpStreamSendRtcpPacket(this, pliPacket.get());
 			}
 			else if (this->params.useFir)
 			{
 				MS_DEBUG_2TAGS(rtcp, rtx, "sending FIR [ssrc:%" PRIu32 "]", GetSsrc());
 
-				// Sender SSRC should be 0 since there is no media sender involved, but
-				// some implementations like gstreamer will fail to process it otherwise.
-				RTC::RTCP::FeedbackPsFirPacket packet(GetSsrc(), GetSsrc());
-				auto* const item = new RTC::RTCP::FeedbackPsFirItem(GetSsrc(), ++this->firSeqNumber);
+				const std::unique_ptr<RTC::RTCP::FirPacket> firPacket{ RTC::RTCP::FirPacket::Factory(
+					RtcpPacketBuffer, sizeof(RtcpPacketBuffer)) };
 
-				packet.AddItem(item);
-				packet.Serialize(RTC::RTCP::SerializationBuffer);
+				firPacket->SetSenderSsrc(this->params.rtcpSenderSsrc);
+				firPacket->SetMediaSsrc(GetSsrc());
+				firPacket->AddItem(GetSsrc(), ++this->firSeqNumber);
 
 				this->firCount++;
 
 				// Notify the listener.
 				static_cast<RTP::RtpStreamRecv::Listener*>(this->listener)
-				  ->OnRtpStreamSendRtcpPacket(this, std::addressof(packet));
+				  ->OnRtpStreamSendRtcpPacket(this, firPacket.get());
 			}
 		}
 
@@ -860,7 +939,7 @@ namespace RTC
 
 			if (this->params.useNack)
 			{
-				this->nackGenerator->Reset();
+				this->nackGenerator->Pause();
 			}
 
 			// Reset jitter.
@@ -876,6 +955,18 @@ namespace RTC
 			{
 				this->inactivityCheckPeriodicTimer->Restart();
 			}
+		}
+
+		bool RtpStreamRecv::IsTooOldToForward(const RTP::Packet* packet) const
+		{
+			MS_TRACE();
+
+			const uint16_t udelta = packet->GetSequenceNumber() - this->maxSeq;
+
+			// Behind the highest sequence number seen, and as far as `UpdateSeq()`
+			// takes as a bad sequence number.
+			return udelta > RTP::RtpStream::RtpSeqMod / 2 &&
+			       udelta <= RTP::RtpStream::RtpSeqMod - RTP::RtpStream::MaxMisorder;
 		}
 
 		void RtpStreamRecv::CalculateJitter(uint32_t rtpTimestamp, int64_t receivedAtUs)
@@ -899,6 +990,7 @@ namespace RTC
 
 			// NOTE: Based on https://github.com/versatica/mediasoup/issues/1018.
 			const auto transit = static_cast<int32_t>(arrivalTs - rtpTimestamp);
+
 			// NOTE: Wider than its operands because the difference of two int32_t does
 			// not fit in an int32_t, and neither would negating its lowest value.
 			int64_t d = static_cast<int64_t>(transit) - this->transit;
@@ -916,6 +1008,13 @@ namespace RTC
 			if (d < 0)
 			{
 				d = -d;
+			}
+
+			// A jump of the RTP timestamp, such as the one of a sender that restarts
+			// its stream, says nothing about the network, so it is left out.
+			if (d >= MinIgnoredJitterTransitDifference)
+			{
+				return;
 			}
 
 			this->jitter += (1. / 16.) * (static_cast<float>(d) - this->jitter);
@@ -1043,7 +1142,28 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			// Nothing to do.
+			// The RTP timestamps of a restarted stream have nothing to do with the
+			// previous ones, so the next packet starts the transit calculation again.
+			this->transit = 0;
+
+			// The sequence numbers of a restarted stream have nothing to do with the
+			// previous ones either, so the next packet starts the NACK generation
+			// again.
+			if (this->params.useNack)
+			{
+				this->nackGenerator->Reset();
+			}
+
+			// Whether it needs a key frame can only be told once the packet has been
+			// processed at codec level, so the listener is told later.
+			this->restarted = true;
+		}
+
+		bool RtpStreamRecv::IsRequestedRetransmission(const RTP::Packet* packet) const
+		{
+			MS_TRACE();
+
+			return this->params.useNack && this->nackGenerator->IsNacked(packet->GetSequenceNumber());
 		}
 
 		inline void RtpStreamRecv::OnTimer(TimerHandleInterface* timer)
@@ -1071,11 +1191,13 @@ namespace RTC
 					const bool isActive =
 					  this->transmissionCounter.GetSpatialLayerBitrate(nowMs, spatialLayer) > 0;
 
+					// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 					if (isActive == this->spatialLayersActivity[spatialLayer])
 					{
 						continue;
 					}
 
+					// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 					this->spatialLayersActivity[spatialLayer] = isActive;
 
 					MS_DEBUG_2TAGS(
@@ -1102,23 +1224,27 @@ namespace RTC
 			  rtx,
 			  "triggering NACK [ssrc:%" PRIu32 ", first seq:%" PRIu16 ", num packets:%zu]",
 			  this->params.ssrc,
+			  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 			  seqNumbers[0],
 			  seqNumbers.size());
 
-			auto packet = std::make_unique<RTC::RTCP::FeedbackRtpNackPacket>(0, GetSsrc());
+			std::unique_ptr<RTC::RTCP::NackPacket> nackPacket{ RTC::RTCP::NackPacket::Factory(
+				RtcpPacketBuffer, sizeof(RtcpPacketBuffer)) };
+
+			nackPacket->SetSenderSsrc(this->params.rtcpSenderSsrc);
+			nackPacket->SetMediaSsrc(GetSsrc());
+
 			size_t numPacketsRequested{ 0 };
 
 			// Sends the NACK packet built so far.
-			const auto sendPacket = [this, &packet, &numPacketsRequested]() -> void
+			const auto sendPacket = [this, &nackPacket, &numPacketsRequested]() -> void
 			{
 				this->nackCount++;
 				this->nackPacketCount += numPacketsRequested;
 
-				packet->Serialize(RTC::RTCP::SerializationBuffer);
-
 				// Notify the listener.
 				static_cast<RTP::RtpStreamRecv::Listener*>(this->listener)
-				  ->OnRtpStreamSendRtcpPacket(this, packet.get());
+				  ->OnRtpStreamSendRtcpPacket(this, nackPacket.get());
 			};
 
 			auto it        = seqNumbers.begin();
@@ -1126,10 +1252,9 @@ namespace RTC
 
 			while (it != end)
 			{
-				uint16_t seq;
+				const uint16_t seq = *it;
 				uint16_t bitmask{ 0 };
 
-				seq = *it;
 				++it;
 
 				while (it != end)
@@ -1141,25 +1266,29 @@ namespace RTC
 						break;
 					}
 
-					bitmask |= (1 << shift);
+					bitmask |= (1U << shift);
 					++it;
 				}
 
-				auto* const nackItem = new RTC::RTCP::FeedbackRtpNackItem(seq, bitmask);
-
 				// If the item does not fit in the packet, send the packet and start a
 				// new one.
-				if (packet->GetSize() + nackItem->GetSize() > RTC::Consts::OutgoingRtcpPacketMaxSize)
+				if (nackPacket->GetAvailableLength() < RTC::RTCP::NackPacket::NackItemLength)
 				{
 					sendPacket();
 
-					packet              = std::make_unique<RTC::RTCP::FeedbackRtpNackPacket>(0, GetSsrc());
+					nackPacket.reset(RTC::RTCP::NackPacket::Factory(RtcpPacketBuffer, sizeof(RtcpPacketBuffer)));
+
+					nackPacket->SetSenderSsrc(this->params.rtcpSenderSsrc);
+					nackPacket->SetMediaSsrc(GetSsrc());
+
 					numPacketsRequested = 0;
 				}
 
-				packet->AddItem(nackItem);
+				nackPacket->AddItem(seq, bitmask);
 
-				numPacketsRequested += nackItem->CountRequestedPackets();
+				// The item requests the packet with its sequence number plus one for
+				// every bit set in its bitmask.
+				numPacketsRequested += Utils::Bits::CountSetBits(bitmask) + 1;
 			}
 
 			sendPacket();
@@ -1171,7 +1300,8 @@ namespace RTC
 
 			MS_DEBUG_TAG(rtx, "requesting key frame [ssrc:%" PRIu32 "]", this->params.ssrc);
 
-			RequestKeyFrame();
+			// Notify the listener.
+			static_cast<RTP::RtpStreamRecv::Listener*>(this->listener)->OnRtpStreamKeyFrameRequired(this);
 		}
 	} // namespace RTP
 } // namespace RTC

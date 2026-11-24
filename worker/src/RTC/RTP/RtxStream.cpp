@@ -3,9 +3,8 @@
 
 #include "RTC/RTP/RtxStream.hpp"
 #include "Logger.hpp"
+#include "RTC/RTCP/packet/AnyReportPacket.hpp"
 #include "RTC/RTP/RtpStream.hpp"
-#include "Utils.hpp"
-#include <cmath> // std::round()
 
 namespace RTC
 {
@@ -13,7 +12,7 @@ namespace RTC
 	{
 		/* Instance methods. */
 
-		RtxStream::RtxStream(SharedInterface* shared, RTP::RtxStream::Params& params)
+		RtxStream::RtxStream(SharedInterface* shared, const RTP::RtxStream::Params& params)
 		  : shared(shared), params(params)
 		{
 			MS_TRACE();
@@ -34,12 +33,12 @@ namespace RTC
 			MS_TRACE();
 
 			// Add params.
-			auto params = this->params.FillBuffer(builder);
+			const auto params = this->params.FillBuffer(builder);
 
 			return FBS::RtxStream::CreateRtxDump(builder, params);
 		}
 
-		bool RtxStream::ReceivePacket(const RTP::Packet* packet)
+		bool RtxStream::ReceivePacket(const RTP::Packet* packet, int64_t receivedAtUs)
 		{
 			MS_TRACE();
 
@@ -51,7 +50,6 @@ namespace RTC
 				InitSeq(seq);
 
 				this->started     = true;
-				this->maxSeq      = seq - 1;
 				this->maxPacketTs = packet->GetTimestamp();
 			}
 
@@ -76,21 +74,37 @@ namespace RTC
 			// Increase packet count.
 			this->packetsCount++;
 
+			this->lastPacketReceivedAtUs = receivedAtUs;
+
 			return true;
 		}
 
-		RTC::RTCP::ReceiverReport* RtxStream::GetRtcpReceiverReport()
+		bool RtxStream::AddRtcpReportBlock(
+		  RTC::RTCP::ReceiverReportPacket* receiverReportPacket, int64_t nowUs)
 		{
 			MS_TRACE();
 
-			auto* report = new RTC::RTCP::ReceiverReport();
+			if (!HasRtcpReportBlock(nowUs))
+			{
+				return false;
+			}
 
-			report->SetSsrc(GetSsrc());
+			if (receiverReportPacket->GetNumberOfReportBlocks() == RTC::RTCP::AnyReportPacket::MaxReportBlocks)
+			{
+				return false;
+			}
+
+			if (receiverReportPacket->GetAvailableLength() < RTC::RTCP::AnyReportPacket::ReportBlockLength)
+			{
+				return false;
+			}
+
+			RTC::RTCP::AnyReportPacket::ReportBlock reportBlock{ .ssrc = GetSsrc() };
 
 			const int32_t prevPacketsLost = this->packetsLost;
 
 			// Calculate packets expected and lost.
-			auto expectedPackets = GetExpectedPackets();
+			const auto expectedPackets = GetExpectedPackets();
 
 			// NOTE: The expected count is the extended sequence number arithmetic of RFC
 			// 3550, so it wraps at 32 bits, whereas the received one does not wrap at
@@ -110,8 +124,8 @@ namespace RTC
 
 			// Calculate fraction lost.
 			//
-			// NOTE: Reading the difference of the expected count as signed makes a
-			// sequence number re-sync, which restarts the count, come out negative.
+			// NOTE: The expected count wraps at 32 bits, so the difference is taken in
+			// that width.
 			const int64_t expectedInterval = static_cast<int32_t>(expectedPackets - this->expectedPrior);
 
 			this->expectedPrior = expectedPackets;
@@ -130,55 +144,64 @@ namespace RTC
 			{
 				// A fixed point number with 8 bits of fraction, so a whole interval lost
 				// gives 256, one more than the field can hold.
-				const double fraction = std::round(static_cast<double>(lostInterval << 8) / expectedInterval);
-
-				this->fractionLost = static_cast<uint8_t>(std::min(fraction, 255.0));
+				this->fractionLost =
+				  static_cast<uint8_t>(std::min<int64_t>((lostInterval * 256) / expectedInterval, 255));
 			}
 
 			this->reportedPacketsLost += (this->packetsLost - prevPacketsLost);
 
-			report->SetTotalLost(this->reportedPacketsLost);
-			report->SetFractionLost(this->fractionLost);
+			reportBlock.totalLost    = this->reportedPacketsLost;
+			reportBlock.fractionLost = this->fractionLost;
 
-			// Fill the rest of the report.
-			report->SetLastSeq(static_cast<uint32_t>(this->maxSeq) + this->cycles);
+			// Fill the rest of the report block.
+			reportBlock.extendedHighestSeq = static_cast<uint32_t>(this->maxSeq) + this->cycles;
 
 			// NOTE: Do not calculate any jitter.
-			report->SetJitter(0);
+			reportBlock.jitter = 0;
 
 			if (this->lastSenderReportTiming.has_value())
 			{
 				const auto& senderReportTiming = this->lastSenderReportTiming.value();
+
 				// Get delay in microseconds.
-				const int64_t delayUs = this->shared->GetTimeUs() - senderReportTiming.receivedAtUs;
+				const int64_t delayUs = nowUs - senderReportTiming.receivedAtUs;
+
 				// Express delay in units of 1/65536 seconds.
-				auto dlsr = static_cast<uint32_t>((delayUs / 1000000) << 16);
+				auto dlsr = static_cast<uint32_t>(delayUs / 1000000) << 16U;
 
 				dlsr |= static_cast<uint32_t>(((delayUs % 1000000) * 65536) / 1000000);
 
-				report->SetDelaySinceLastSenderReport(dlsr);
-				report->SetLastSenderReport(senderReportTiming.compactNtp);
+				reportBlock.delaySinceLastSenderReport = dlsr;
+				reportBlock.lastSenderReport           = senderReportTiming.compactNtp;
 			}
 			else
 			{
-				report->SetDelaySinceLastSenderReport(0);
-				report->SetLastSenderReport(0);
+				reportBlock.delaySinceLastSenderReport = 0;
+				reportBlock.lastSenderReport           = 0;
 			}
 
-			return report;
+			receiverReportPacket->AddReportBlock(reportBlock);
+
+			return true;
 		}
 
-		void RtxStream::ReceiveRtcpSenderReport(RTC::RTCP::SenderReport* report, int64_t receivedAtUs)
+		void RtxStream::ReceiveRtcpSenderReportPacket(
+		  const RTC::RTCP::SenderReportPacket* senderReportPacket, int64_t receivedAtUs)
 		{
 			MS_TRACE();
 
-			const uint32_t compactNtp = Utils::Time::NtpToCompactNtp(
-			  Utils::Time::Ntp{ .seconds = report->GetNtpSec(), .fractions = report->GetNtpFrac() });
+			const Utils::Time::Ntp ntp = senderReportPacket->GetNtp();
 
-			this->lastSenderReportTiming = SenderReportTiming{
-				.compactNtp   = compactNtp,
-				.receivedAtUs = receivedAtUs,
-			};
+			// Update info about last Sender Report.
+			//
+			// NOTE: A sender with no wall clock may report a zeroed NTP timestamp, which
+			// gives nothing to store.
+			if (ntp.seconds != 0 || ntp.fractions != 0)
+			{
+				this->lastSenderReportTiming =
+				  SenderReportTiming{ .compactNtp   = Utils::Time::NtpToCompactNtp(ntp),
+					                    .receivedAtUs = receivedAtUs };
+			}
 		}
 
 		bool RtxStream::UpdateSeq(const RTP::Packet* packet)
@@ -191,7 +214,7 @@ namespace RTC
 			// If the new packet sequence number is greater than the max seen but not
 			// "so much bigger", accept it.
 			// NOTE: udelta also handles the case of a new cycle, this is:
-			//    maxSeq:65536, seq:0 => udelta:1
+			//    maxSeq:65535, seq:0 => udelta:1
 			if (udelta < RTP::RtpStream::MaxDropout)
 			{
 				// In order, with permissible gap.
@@ -204,7 +227,7 @@ namespace RTC
 				this->maxSeq = seq;
 			}
 			// Too old packet received (older than the allowed misorder).
-			// Or to new packet (more than acceptable dropout).
+			// Or too new packet (more than acceptable dropout).
 			else if (udelta <= RTP::RtpStream::RtpSeqMod - RTP::RtpStream::MaxMisorder)
 			{
 				// The sequence number made a very large jump. If two sequential packets
@@ -219,6 +242,10 @@ namespace RTC
 					  packet->GetSsrc(),
 					  packet->GetSequenceNumber());
 
+					// Keep counting the packets expected so far, so the jump in sequence
+					// number is not taken as packets lost.
+					this->expectedPacketsBeforeSeqReset = GetExpectedPackets();
+
 					InitSeq(seq);
 
 					this->maxPacketTs = packet->GetTimestamp();
@@ -231,7 +258,7 @@ namespace RTC
 					  packet->GetSsrc(),
 					  packet->GetSequenceNumber());
 
-					this->badSeq = (seq + 1) & (RTP::RtpStream::RtpSeqMod - 1);
+					this->badSeq = (seq + 1U) & (RTP::RtpStream::RtpSeqMod - 1);
 
 					// Packet discarded due to late or early arriving.
 					this->packetsDiscarded++;
@@ -256,6 +283,7 @@ namespace RTC
 			this->baseSeq = seq;
 			this->maxSeq  = seq;
 			this->badSeq  = RTP::RtpStream::RtpSeqMod + 1; // So seq == badSeq is false.
+			this->cycles  = 0;
 		}
 
 		flatbuffers::Offset<FBS::RtxStream::Params> RtxStream::Params::FillBuffer(

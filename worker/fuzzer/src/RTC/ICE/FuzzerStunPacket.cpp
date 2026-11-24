@@ -2,24 +2,18 @@
 #include "RTC/ICE/StunPacket.hpp"
 #include <string_view>
 
-namespace
-{
-	constexpr size_t ResponseFactoryBufferLength{ 65536 };
-	alignas(4) thread_local uint8_t ResponseFactoryBuffer[ResponseFactoryBufferLength];
-	constexpr size_t SerializeBufferLength{ 65536 };
-	alignas(4) thread_local uint8_t SerializeBuffer[SerializeBufferLength];
-	constexpr size_t CloneBufferLength{ 65536 };
-	alignas(4) thread_local uint8_t CloneBuffer[CloneBufferLength];
-} // namespace
-
 void FuzzerRtcIceStunPacket::Fuzz(const uint8_t* data, size_t len)
 {
+	alignas(4) static thread_local uint8_t responseFactoryBuffer[65536];
+	alignas(4) static thread_local uint8_t serializeBuffer[65536];
+	alignas(4) static thread_local uint8_t cloneBuffer[65536];
+
 	if (!RTC::ICE::StunPacket::IsStun(data, len))
 	{
 		return;
 	}
 
-	auto* packet = RTC::ICE::StunPacket::Parse(data, len);
+	const std::unique_ptr<RTC::ICE::StunPacket> packet{ RTC::ICE::StunPacket::Parse(data, len) };
 
 	if (!packet)
 	{
@@ -95,8 +89,7 @@ void FuzzerRtcIceStunPacket::Fuzz(const uint8_t* data, size_t len)
 
 	try
 	{
-		packet->AddXorMappedAddress(
-		  reinterpret_cast<struct sockaddr*>(std::addressof(xorMappedAddressStorage)));
+		packet->AddXorMappedAddress(reinterpret_cast<sockaddr*>(std::addressof(xorMappedAddressStorage)));
 	}
 	catch (...) // NOLINT(bugprone-empty-catch)
 	{
@@ -128,19 +121,17 @@ void FuzzerRtcIceStunPacket::Fuzz(const uint8_t* data, size_t len)
 
 	if (packet->GetClass() == RTC::ICE::StunPacket::Class::REQUEST)
 	{
-		auto* successResponse =
-		  packet->CreateSuccessResponse(ResponseFactoryBuffer, sizeof(ResponseFactoryBuffer));
-		auto* errorResponse = packet->CreateErrorResponse(
-		  ResponseFactoryBuffer, sizeof(ResponseFactoryBuffer), 444, "ERROR aljsh œœ∫∂å∫∂ zhx   å∫∂å∫∂ !!!");
-
-		delete successResponse;
-		delete errorResponse;
+		const std::unique_ptr<RTC::ICE::StunPacket> successResponse{ packet->CreateSuccessResponse(
+			responseFactoryBuffer, sizeof(responseFactoryBuffer)) };
+		const std::unique_ptr<RTC::ICE::StunPacket> errorResponse{ packet->CreateErrorResponse(
+			responseFactoryBuffer,
+			sizeof(responseFactoryBuffer),
+			444,
+			"ERROR aljsh œœ∫∂å∫∂ zhx   å∫∂å∫∂ !!!") };
 	}
 
-	packet->Serialize(SerializeBuffer, sizeof(SerializeBuffer));
+	packet->Serialize(serializeBuffer, sizeof(serializeBuffer));
 
-	const auto* clonedPacket = packet->Clone(CloneBuffer, sizeof(CloneBuffer));
-
-	delete packet;
-	delete clonedPacket;
+	const std::unique_ptr<const RTC::ICE::StunPacket> clonedPacket{ packet->Clone(
+		cloneBuffer, sizeof(cloneBuffer)) };
 }

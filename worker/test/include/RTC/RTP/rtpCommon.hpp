@@ -33,7 +33,7 @@ namespace rtpCommon
 	void ResetBuffers();
 } // namespace rtpCommon
 
-// NOLINTNEXTLINE (cppcoreguidelines-macro-usage)
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define CHECK_RTP_PACKET(                                                                                \
   /*const RTC::RTP::Packet**/ packet,                                                                    \
   /*const uint8_t**/ buffer,                                                                             \
@@ -48,7 +48,7 @@ namespace rtpCommon
   /*bool*/ hasHeaderExtension,                                                                           \
   /*size_t*/ headerExtensionValueLength,                                                                 \
   /*bool*/ hasOneByteExtensions,                                                                         \
-  /*bool*/ hasTwoBytesExtensions,                                                                        \
+  /*bool*/ hasTwoByteExtensions,                                                                         \
   /*bool*/ hasPayload,                                                                                   \
   /*size_t*/ payloadLength,                                                                              \
   /*bool*/ hasPadding,                                                                                   \
@@ -58,16 +58,18 @@ namespace rtpCommon
 		REQUIRE(RTC::RTP::Packet::IsRtp(buffer, length) == true);                                            \
 		REQUIRE(packet);                                                                                     \
 		REQUIRE(packet->GetBuffer() != nullptr);                                                             \
+                                                                                                         \
 		const std::vector<uint8_t> originalBuffer(                                                           \
 		  packet->GetBuffer(), packet->GetBuffer() + packet->GetBufferLength());                             \
+                                                                                                         \
 		REQUIRE(packet->GetBuffer() == buffer);                                                              \
 		REQUIRE(packet->GetBufferLength() != 0);                                                             \
 		REQUIRE(packet->GetBufferLength() == bufferLength);                                                  \
 		REQUIRE(packet->GetLength() != 0);                                                                   \
 		REQUIRE(packet->GetLength() == length);                                                              \
 		REQUIRE(packet->GetAvailableLength() == packet->GetBufferLength() - packet->GetLength());            \
-		REQUIRE(static_cast<unsigned>(packet->GetVersion()) == 2);                                           \
-		REQUIRE(static_cast<unsigned>(packet->GetPayloadType()) == payloadType);                             \
+		REQUIRE(static_cast<uint32_t>(packet->GetVersion()) == 2);                                           \
+		REQUIRE(static_cast<uint32_t>(packet->GetPayloadType()) == payloadType);                             \
 		REQUIRE(packet->HasMarker() == hasMarker);                                                           \
 		REQUIRE(packet->GetSequenceNumber() == seqNumber);                                                   \
 		REQUIRE(packet->GetTimestamp() == timestamp);                                                        \
@@ -75,83 +77,97 @@ namespace rtpCommon
 		REQUIRE(packet->HasCsrcs() == hasCsrcs);                                                             \
 		REQUIRE(packet->HasHeaderExtension() == hasHeaderExtension);                                         \
 		REQUIRE(packet->GetHeaderExtensionValueLength() == headerExtensionValueLength);                      \
-		REQUIRE(packet->HasExtensions() == (hasOneByteExtensions || hasTwoBytesExtensions));                 \
+		REQUIRE(packet->HasExtensions() == (hasOneByteExtensions || hasTwoByteExtensions));                  \
 		REQUIRE(packet->HasOneByteExtensions() == hasOneByteExtensions);                                     \
-		REQUIRE(packet->HasTwoBytesExtensions() == hasTwoBytesExtensions);                                   \
+		REQUIRE(packet->HasTwoByteExtensions() == hasTwoByteExtensions);                                     \
+                                                                                                         \
 		if (!packet->HasHeaderExtension())                                                                   \
 		{                                                                                                    \
 			REQUIRE(packet->GetHeaderExtensionValueLength() == 0);                                             \
 			REQUIRE(packet->HasExtensions() == false);                                                         \
 			REQUIRE(packet->HasOneByteExtensions() == false);                                                  \
-			REQUIRE(packet->HasTwoBytesExtensions() == false);                                                 \
+			REQUIRE(packet->HasTwoByteExtensions() == false);                                                  \
 		}                                                                                                    \
+                                                                                                         \
 		REQUIRE(packet->HasPayload() == hasPayload);                                                         \
 		REQUIRE(packet->GetPayloadLength() == payloadLength);                                                \
+                                                                                                         \
 		size_t realPayloadLength;                                                                            \
+                                                                                                         \
 		packet->GetPayload(realPayloadLength);                                                               \
+                                                                                                         \
 		REQUIRE(realPayloadLength == payloadLength);                                                         \
+                                                                                                         \
 		if (!packet->HasPayload())                                                                           \
 		{                                                                                                    \
 			REQUIRE(packet->GetPayload() == nullptr);                                                          \
 			REQUIRE(packet->GetPayloadLength() == 0);                                                          \
-			size_t realPayloadLength;                                                                          \
 			REQUIRE(packet->GetPayload(realPayloadLength) == nullptr);                                         \
 			REQUIRE(realPayloadLength == 0);                                                                   \
 		}                                                                                                    \
+                                                                                                         \
 		REQUIRE(packet->HasPadding() == hasPadding);                                                         \
-		REQUIRE(static_cast<unsigned>(packet->GetPaddingLength()) == paddingLength);                         \
+		REQUIRE(static_cast<uint32_t>(packet->GetPaddingLength()) == paddingLength);                         \
+                                                                                                         \
 		if (!packet->HasPadding())                                                                           \
 		{                                                                                                    \
-			REQUIRE(static_cast<unsigned>(packet->GetPaddingLength()) == 0);                                   \
+			REQUIRE(static_cast<uint32_t>(packet->GetPaddingLength()) == 0);                                   \
 		}                                                                                                    \
+                                                                                                         \
 		REQUIRE(packet->Validate(/*storeExtensions*/ false));                                                \
 		REQUIRE_NOTHROW(packet->SetPayloadType(packet->GetPayloadType()));                                   \
 		REQUIRE_NOTHROW(packet->SetMarker(packet->HasMarker()));                                             \
 		REQUIRE_NOTHROW(packet->SetSequenceNumber(packet->GetSequenceNumber()));                             \
 		REQUIRE_NOTHROW(packet->SetTimestamp(packet->GetTimestamp()));                                       \
 		REQUIRE_NOTHROW(packet->SetSsrc(packet->GetSsrc()));                                                 \
+                                                                                                         \
 		if (!packet->HasHeaderExtension())                                                                   \
 		{                                                                                                    \
 			REQUIRE_NOTHROW(packet->RemoveHeaderExtension());                                                  \
 		}                                                                                                    \
+                                                                                                         \
 		if (!hasPadding)                                                                                     \
 		{                                                                                                    \
 			REQUIRE_NOTHROW(packet->SetPayload(packet->GetPayload(), packet->GetPayloadLength()));             \
 			REQUIRE(                                                                                           \
-			  helpers::areBuffersEqual(                                                                        \
+			  helpers::AreBuffersEqual(                                                                        \
 			    packet->GetBuffer(),                                                                           \
 			    packet->GetBufferLength(),                                                                     \
 			    originalBuffer.data(),                                                                         \
 			    originalBuffer.size()) == true);                                                               \
+                                                                                                         \
 			REQUIRE_NOTHROW(packet->SetPayloadLength(packet->GetPayloadLength()));                             \
 			REQUIRE(                                                                                           \
-			  helpers::areBuffersEqual(                                                                        \
+			  helpers::AreBuffersEqual(                                                                        \
 			    packet->GetBuffer(),                                                                           \
 			    packet->GetBufferLength(),                                                                     \
 			    originalBuffer.data(),                                                                         \
 			    originalBuffer.size()) == true);                                                               \
 		}                                                                                                    \
+                                                                                                         \
 		REQUIRE_THROWS_AS(                                                                                   \
 		  packet->SetPayload(rtpCommon::DataBuffer, packet->GetBufferLength()), MediaSoupError);             \
 		REQUIRE_THROWS_AS(packet->SetPayloadLength(packet->GetBufferLength()), MediaSoupError);              \
 		REQUIRE_NOTHROW(packet->SetPaddingLength(packet->GetPaddingLength()));                               \
+                                                                                                         \
 		if (packet->IsPaddedTo4Bytes() && packet->GetPaddingLength() < 4)                                    \
 		{                                                                                                    \
 			REQUIRE_NOTHROW(packet->PadTo4Bytes());                                                            \
 			REQUIRE(                                                                                           \
-			  helpers::areBuffersEqual(                                                                        \
+			  helpers::AreBuffersEqual(                                                                        \
 			    packet->GetBuffer(),                                                                           \
 			    packet->GetBufferLength(),                                                                     \
 			    originalBuffer.data(),                                                                         \
 			    originalBuffer.size()) == true);                                                               \
 		}                                                                                                    \
+                                                                                                         \
 		REQUIRE_THROWS_AS(                                                                                   \
 		  const_cast<RTC::RTP::Packet*>(packet)->Serialize(rtpCommon::ThrowBuffer, length - 1),              \
 		  MediaSoupError);                                                                                   \
 		REQUIRE_THROWS_AS(packet->Clone(rtpCommon::ThrowBuffer, length - 1), MediaSoupError);                \
 		REQUIRE(packet->Validate(/*storeExtensions*/ false));                                                \
 		REQUIRE(                                                                                             \
-		  helpers::areBuffersEqual(                                                                          \
+		  helpers::AreBuffersEqual(                                                                          \
 		    packet->GetBuffer(), packet->GetBufferLength(), originalBuffer.data(), originalBuffer.size()) == \
 		  true);                                                                                             \
 	} while (false)

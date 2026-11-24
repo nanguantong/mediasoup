@@ -137,7 +137,7 @@ namespace RTC
 		 *   Serializable is destroyed or serialized. Otherwise the Serializable
 		 *   will invoke a listener that was already destroyed.
 		 */
-		virtual void SetBufferReleasedListener(BufferReleasedListener* listener) final;
+		virtual void SetBufferReleasedListener(const BufferReleasedListener* listener) final;
 
 		/**
 		 * The application must call this method on a Serializable when it's been
@@ -208,7 +208,7 @@ namespace RTC
 
 		/**
 		 * Update the buffer length of the Serializable.
-		 **
+		 *
 		 * @remarks
 		 * - The child class must invoke this method after parsing completes in
 		 *   case it couldn't anticipate its expected exact length. Specially
@@ -230,8 +230,9 @@ namespace RTC
 		 *   after every change in the Serializable content that affects its
 		 *   current length.
 		 *
-		 * @throw MediaSoupError - If given `length` is larger than the buffer
-		 *   length of the Serializable.
+		 * @throw
+		 * - MediaSoupError - If given `length` is larger than the buffer length of
+		 *   the Serializable.
 		 */
 		virtual void SetLength(size_t length) final;
 
@@ -252,10 +253,15 @@ namespace RTC
 		virtual void CloneInto(Serializable* serializable) const;
 
 		/**
-		 * Fill the last given `padding` number of bytes of the buffer with zeros.
+		 * Set to zero the last `padding` bytes of the current length.
 		 *
 		 * @remarks
-		 * - This method does NOT add bytes to the buffer.
+		 * - The length is not modified, so those bytes must already be included in
+		 *   it (call `SetLength()` first).
+		 *
+		 * @throw
+		 * - MediaSoupTypeError - If given `padding` is greater than the current
+		 *   length of the Serializable.
 		 */
 		virtual void FillPadding(uint8_t padding) final;
 
@@ -278,8 +284,9 @@ namespace RTC
 		virtual void SetNeedsConsolidation(bool flag) final;
 
 		/**
-		 * @throw MediaSoupError - If some item is being built in place within
-		 *   this Serializable.
+		 * @throw
+		 * - MediaSoupError - If some item is being built in place within this
+		 *   Serializable.
 		 *
 		 * @see NeedsConsolidation()
 		 */
@@ -294,12 +301,12 @@ namespace RTC
 		// Serializable current exact length (includes padding bytes).
 		size_t length{ 0 };
 		// Event listener invoked when the current buffer is released (no longer
-		// used by this Serializable)-
-		BufferReleasedListener* bufferReleasedListener{ nullptr };
+		// used by this Serializable).
+		const BufferReleasedListener* bufferReleasedListener{ nullptr };
 		// Event listener invoked when the Serializable is consolidated or
 		// discarded. It's removed by the const `Consolidate()` and `Discard()`
 		// methods before invoking it.
-		mutable BuildInPlaceListener buildInPlaceListener{ nullptr };
+		mutable BuildInPlaceListener buildInPlaceListener;
 		// Whether some item is being built in place within this Serializable and
 		// `Consolidate()` or `Discard()` wasn't invoked on it yet.
 		bool needsConsolidation{ false };

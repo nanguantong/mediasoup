@@ -76,7 +76,9 @@ namespace mocks
 
 			if (it != this->timers.end())
 			{
-				return it->second;
+				auto* const timer = it->second;
+
+				return timer;
 			}
 			else
 			{
@@ -90,7 +92,9 @@ namespace mocks
 
 			if (it != this->backoffTimers.end())
 			{
-				return it->second;
+				auto* const backoffTimer = it->second;
+
+				return backoffTimer;
 			}
 			else
 			{
@@ -99,7 +103,7 @@ namespace mocks
 		}
 
 	private:
-		// Given by argument.
+		// Passed by argument.
 		const std::function<int64_t()> getTimeUs;
 		// Others.
 		const std::unique_ptr<::Channel::ChannelSocket> channelSocket;

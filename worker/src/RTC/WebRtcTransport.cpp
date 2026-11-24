@@ -2,7 +2,6 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/WebRtcTransport.hpp"
-#include "FBS/webRtcTransport.h"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "RTC/Consts.hpp"
@@ -47,238 +46,217 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		try
+		const auto* listenIndividual = options->listen_as<FBS::WebRtcTransport::ListenIndividual>();
+		const auto* listenInfos      = listenIndividual->listenInfos();
+		uint16_t iceLocalPreferenceDecrement{ 0 };
+
+		// Multiply by 2 to preallocate space in case |exposeInternalIp| is set.
+		this->iceCandidates.reserve(listenInfos->size() * 2);
+
+		for (const auto* listenInfo : *listenInfos)
 		{
-			const auto* listenIndividual = options->listen_as<FBS::WebRtcTransport::ListenIndividual>();
-			const auto* listenInfos      = listenIndividual->listenInfos();
-			uint16_t iceLocalPreferenceDecrement{ 0 };
+			auto ip = listenInfo->ip()->str();
 
-			// Multiply by 2 to preallocate space in case |exposeInternalIp| is set.
-			this->iceCandidates.reserve(listenInfos->size() * 2);
+			// This may throw.
+			Utils::IP::NormalizeIp(ip);
 
-			for (const auto* listenInfo : *listenInfos)
+			std::string announcedAddress;
+
+			if (flatbuffers::IsFieldPresent(listenInfo, FBS::Transport::ListenInfo::VT_ANNOUNCEDADDRESS))
 			{
-				auto ip = listenInfo->ip()->str();
-
-				// This may throw.
-				Utils::IP::NormalizeIp(ip);
-
-				std::string announcedAddress;
-
-				if (flatbuffers::IsFieldPresent(listenInfo, FBS::Transport::ListenInfo::VT_ANNOUNCEDADDRESS))
-				{
-					announcedAddress = listenInfo->announcedAddress()->str();
-				}
-
-				const bool exposeInternalIp = listenInfo->exposeInternalIp();
-
-				RTC::Transport::SocketFlags flags;
-
-				flags.ipv6Only     = listenInfo->flags()->ipv6Only();
-				flags.udpReusePort = listenInfo->flags()->udpReusePort();
-
-				const uint16_t iceLocalPreference =
-				  IceCandidateDefaultLocalPriority - iceLocalPreferenceDecrement;
-				const uint32_t icePriority = generateIceCandidatePriority(iceLocalPreference);
-
-				if (listenInfo->protocol() == FBS::Transport::Protocol::UDP)
-				{
-					RTC::UdpSocket* udpSocket;
-
-					if (listenInfo->portRange()->min() != 0 && listenInfo->portRange()->max() != 0)
-					{
-						RTC::PortManager::PortRangeKey portRangeKey;
-
-						udpSocket = new RTC::UdpSocket(
-						  this,
-						  this->shared,
-						  ip,
-						  listenInfo->portRange()->min(),
-						  listenInfo->portRange()->max(),
-						  flags,
-						  portRangeKey);
-					}
-					else if (listenInfo->port() != 0)
-					{
-						udpSocket = new RTC::UdpSocket(this, this->shared, ip, listenInfo->port(), flags);
-					}
-					// NOTE: This is temporal to allow deprecated usage of worker port range.
-					// In the future this should throw since |port| or |portRange| will be
-					// required.
-					else
-					{
-						RTC::PortManager::PortRangeKey portRangeKey;
-
-						udpSocket = new RTC::UdpSocket(
-						  this,
-						  this->shared,
-						  ip,
-						  Settings::configuration.rtcMinPort,
-						  Settings::configuration.rtcMaxPort,
-						  flags,
-						  portRangeKey);
-					}
-
-					this->udpSockets[udpSocket] = announcedAddress;
-
-					if (announcedAddress.empty())
-					{
-						this->iceCandidates.emplace_back(udpSocket, icePriority);
-					}
-					else
-					{
-						this->iceCandidates.emplace_back(udpSocket, icePriority, announcedAddress);
-
-						if (exposeInternalIp)
-						{
-							this->iceCandidates.emplace_back(udpSocket, icePriority - 1000);
-						}
-					}
-
-					if (listenInfo->sendBufferSize() != 0)
-					{
-						// NOTE: This may throw.
-						udpSocket->SetSendBufferSize(listenInfo->sendBufferSize());
-					}
-
-					if (listenInfo->recvBufferSize() != 0)
-					{
-						// NOTE: This may throw.
-						udpSocket->SetRecvBufferSize(listenInfo->recvBufferSize());
-					}
-
-					MS_DEBUG_TAG(
-					  info,
-					  "UDP socket buffer sizes [send:%" PRIu32 ", recv:%" PRIu32 "]",
-					  udpSocket->GetSendBufferSize(),
-					  udpSocket->GetRecvBufferSize());
-				}
-				else if (listenInfo->protocol() == FBS::Transport::Protocol::TCP)
-				{
-					RTC::TcpServer* tcpServer;
-
-					if (listenInfo->portRange()->min() != 0 && listenInfo->portRange()->max() != 0)
-					{
-						RTC::PortManager::PortRangeKey portRangeKey{};
-
-						tcpServer = new RTC::TcpServer(
-						  this,
-						  this,
-						  this->shared,
-						  ip,
-						  listenInfo->portRange()->min(),
-						  listenInfo->portRange()->max(),
-						  flags,
-						  portRangeKey);
-					}
-					else if (listenInfo->port() != 0)
-					{
-						tcpServer = new RTC::TcpServer(this, this, this->shared, ip, listenInfo->port(), flags);
-					}
-					// NOTE: This is temporal to allow deprecated usage of worker port range.
-					// In the future this should throw since |port| or |portRange| will be
-					// required.
-					else
-					{
-						RTC::PortManager::PortRangeKey portRangeKey{};
-
-						tcpServer = new RTC::TcpServer(
-						  this,
-						  this,
-						  this->shared,
-						  ip,
-						  Settings::configuration.rtcMinPort,
-						  Settings::configuration.rtcMaxPort,
-						  flags,
-						  portRangeKey);
-					}
-
-					this->tcpServers[tcpServer] = announcedAddress;
-
-					if (announcedAddress.empty())
-					{
-						this->iceCandidates.emplace_back(tcpServer, icePriority);
-					}
-					else
-					{
-						this->iceCandidates.emplace_back(tcpServer, icePriority, announcedAddress);
-
-						if (exposeInternalIp)
-						{
-							this->iceCandidates.emplace_back(tcpServer, icePriority - 1000);
-						}
-					}
-
-					if (listenInfo->sendBufferSize() != 0)
-					{
-						// NOTE: This may throw.
-						tcpServer->SetSendBufferSize(listenInfo->sendBufferSize());
-					}
-
-					if (listenInfo->recvBufferSize() != 0)
-					{
-						// NOTE: This may throw.
-						tcpServer->SetRecvBufferSize(listenInfo->recvBufferSize());
-					}
-
-					MS_DEBUG_TAG(
-					  info,
-					  "TCP sockets buffer sizes [send:%" PRIu32 ", recv:%" PRIu32 "]",
-					  tcpServer->GetSendBufferSize(),
-					  tcpServer->GetRecvBufferSize());
-				}
-
-				// Decrement initial ICE local preference for next IP.
-				iceLocalPreferenceDecrement += 100;
+				announcedAddress = listenInfo->announcedAddress()->str();
 			}
 
-			auto iceConsentTimeoutSec = options->iceConsentTimeout();
+			const bool exposeInternalIp = listenInfo->exposeInternalIp();
 
-			// Create a ICE server.
-			this->iceServer = std::make_unique<RTC::ICE::IceServer>(
-			  this,
-			  this->shared,
-			  Utils::Crypto::GetRandomString(32),
-			  Utils::Crypto::GetRandomString(32),
-			  iceConsentTimeoutSec);
+			RTC::Transport::SocketFlags flags;
 
-			// Create a DTLS transport.
-			this->dtlsTransport = std::make_unique<RTC::DtlsTransport>(this, this->shared);
+			flags.ipv6Only     = listenInfo->flags()->ipv6Only();
+			flags.udpReusePort = listenInfo->flags()->udpReusePort();
 
-			// NOTE: This may throw.
-			this->shared->GetChannelMessageRegistrator()->RegisterHandler(
-			  this->id,
-			  /*channelRequestHandler*/ this,
-			  /*channelNotificationHandler*/ this);
+			const uint16_t iceLocalPreference =
+			  IceCandidateDefaultLocalPriority - iceLocalPreferenceDecrement;
+			const uint32_t icePriority = generateIceCandidatePriority(iceLocalPreference);
+
+			if (listenInfo->protocol() == FBS::Transport::Protocol::UDP)
+			{
+				std::unique_ptr<RTC::UdpSocket> udpSocketUniquePtr;
+
+				if (listenInfo->portRange()->min() != 0 && listenInfo->portRange()->max() != 0)
+				{
+					RTC::PortManager::PortRangeKey portRangeKey;
+
+					udpSocketUniquePtr = std::make_unique<RTC::UdpSocket>(
+					  this,
+					  this->shared,
+					  ip,
+					  announcedAddress,
+					  listenInfo->portRange()->min(),
+					  listenInfo->portRange()->max(),
+					  flags,
+					  portRangeKey);
+				}
+				else if (listenInfo->port() != 0)
+				{
+					udpSocketUniquePtr = std::make_unique<RTC::UdpSocket>(
+					  this, this->shared, ip, announcedAddress, listenInfo->port(), flags);
+				}
+				// NOTE: This is temporal to allow deprecated usage of worker port range.
+				// In the future this should throw since |port| or |portRange| will be
+				// required.
+				else
+				{
+					RTC::PortManager::PortRangeKey portRangeKey;
+
+					udpSocketUniquePtr = std::make_unique<RTC::UdpSocket>(
+					  this,
+					  this->shared,
+					  ip,
+					  announcedAddress,
+					  Settings::configuration.rtcMinPort,
+					  Settings::configuration.rtcMaxPort,
+					  flags,
+					  portRangeKey);
+				}
+
+				auto* const udpSocket = udpSocketUniquePtr.get();
+
+				this->udpSockets.push_back(std::move(udpSocketUniquePtr));
+
+				if (announcedAddress.empty())
+				{
+					this->iceCandidates.emplace_back(udpSocket, icePriority);
+				}
+				else
+				{
+					this->iceCandidates.emplace_back(udpSocket, icePriority, announcedAddress);
+
+					if (exposeInternalIp)
+					{
+						this->iceCandidates.emplace_back(udpSocket, icePriority - 1000);
+					}
+				}
+
+				if (listenInfo->sendBufferSize() != 0)
+				{
+					// NOTE: This may throw.
+					udpSocket->SetSendBufferSize(listenInfo->sendBufferSize());
+				}
+
+				if (listenInfo->recvBufferSize() != 0)
+				{
+					// NOTE: This may throw.
+					udpSocket->SetRecvBufferSize(listenInfo->recvBufferSize());
+				}
+
+				MS_DEBUG_TAG(
+				  info,
+				  "UDP socket buffer sizes [send:%" PRIu32 ", recv:%" PRIu32 "]",
+				  udpSocket->GetSendBufferSize(),
+				  udpSocket->GetRecvBufferSize());
+			}
+			else if (listenInfo->protocol() == FBS::Transport::Protocol::TCP)
+			{
+				std::unique_ptr<RTC::TcpServer> tcpServerUniquePtr;
+
+				if (listenInfo->portRange()->min() != 0 && listenInfo->portRange()->max() != 0)
+				{
+					RTC::PortManager::PortRangeKey portRangeKey{};
+
+					tcpServerUniquePtr = std::make_unique<RTC::TcpServer>(
+					  this,
+					  this,
+					  this->shared,
+					  ip,
+					  announcedAddress,
+					  listenInfo->portRange()->min(),
+					  listenInfo->portRange()->max(),
+					  flags,
+					  portRangeKey);
+				}
+				else if (listenInfo->port() != 0)
+				{
+					tcpServerUniquePtr = std::make_unique<RTC::TcpServer>(
+					  this, this, this->shared, ip, announcedAddress, listenInfo->port(), flags);
+				}
+				// NOTE: This is temporal to allow deprecated usage of worker port range.
+				// In the future this should throw since |port| or |portRange| will be
+				// required.
+				else
+				{
+					RTC::PortManager::PortRangeKey portRangeKey{};
+
+					tcpServerUniquePtr = std::make_unique<RTC::TcpServer>(
+					  this,
+					  this,
+					  this->shared,
+					  ip,
+					  announcedAddress,
+					  Settings::configuration.rtcMinPort,
+					  Settings::configuration.rtcMaxPort,
+					  flags,
+					  portRangeKey);
+				}
+
+				auto* const tcpServer = tcpServerUniquePtr.get();
+
+				this->tcpServers.push_back(std::move(tcpServerUniquePtr));
+
+				if (announcedAddress.empty())
+				{
+					this->iceCandidates.emplace_back(tcpServer, icePriority);
+				}
+				else
+				{
+					this->iceCandidates.emplace_back(tcpServer, icePriority, announcedAddress);
+
+					if (exposeInternalIp)
+					{
+						this->iceCandidates.emplace_back(tcpServer, icePriority - 1000);
+					}
+				}
+
+				if (listenInfo->sendBufferSize() != 0)
+				{
+					// NOTE: This may throw.
+					tcpServer->SetSendBufferSize(listenInfo->sendBufferSize());
+				}
+
+				if (listenInfo->recvBufferSize() != 0)
+				{
+					// NOTE: This may throw.
+					tcpServer->SetRecvBufferSize(listenInfo->recvBufferSize());
+				}
+
+				MS_DEBUG_TAG(
+				  info,
+				  "TCP sockets buffer sizes [send:%" PRIu32 ", recv:%" PRIu32 "]",
+				  tcpServer->GetSendBufferSize(),
+				  tcpServer->GetRecvBufferSize());
+			}
+
+			// Decrement initial ICE local preference for next IP.
+			iceLocalPreferenceDecrement += 100;
 		}
-		catch (const MediaSoupError&)
-		{
-			// Must delete everything since the destructor won't be called.
 
-			this->dtlsTransport.reset();
+		const auto iceConsentTimeoutSec = options->iceConsentTimeout();
 
-			this->iceServer.reset();
+		// Create a ICE server.
+		this->iceServer = std::make_unique<RTC::ICE::IceServer>(
+		  this,
+		  this->shared,
+		  Utils::Crypto::GetRandomString(32),
+		  Utils::Crypto::GetRandomString(32),
+		  iceConsentTimeoutSec);
 
-			for (auto& kv : this->udpSockets)
-			{
-				auto* udpSocket = kv.first;
+		// Create a DTLS transport.
+		this->dtlsTransport = std::make_unique<RTC::DtlsTransport>(this, this->shared);
 
-				delete udpSocket;
-			}
-			this->udpSockets.clear();
-
-			for (auto& kv : this->tcpServers)
-			{
-				auto* tcpServer = kv.first;
-
-				delete tcpServer;
-			}
-			this->tcpServers.clear();
-
-			this->iceCandidates.clear();
-
-			throw;
-		}
+		// NOTE: This may throw.
+		this->shared->GetChannelMessageRegistrator()->RegisterHandler(
+		  this->id,
+		  /*channelRequestHandler*/ this,
+		  /*channelNotificationHandler*/ this);
 	}
 
 	/**
@@ -300,45 +278,32 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		try
+		if (iceCandidates.empty())
 		{
-			if (iceCandidates.empty())
-			{
-				MS_THROW_TYPE_ERROR("empty iceCandidates");
-			}
-
-			auto iceConsentTimeoutSec = options->iceConsentTimeout();
-
-			// Create a ICE server.
-			this->iceServer = std::make_unique<RTC::ICE::IceServer>(
-			  this,
-			  this->shared,
-			  Utils::Crypto::GetRandomString(32),
-			  Utils::Crypto::GetRandomString(32),
-			  iceConsentTimeoutSec);
-
-			// Create a DTLS transport.
-			this->dtlsTransport = std::make_unique<RTC::DtlsTransport>(this, this->shared);
-
-			// Notify the webRtcTransportListener.
-			this->webRtcTransportListener->OnWebRtcTransportCreated(this);
-
-			// NOTE: This may throw.
-			this->shared->GetChannelMessageRegistrator()->RegisterHandler(
-			  this->id,
-			  /*channelRequestHandler*/ this,
-			  /*channelNotificationHandler*/ this);
+			MS_THROW_TYPE_ERROR("empty iceCandidates");
 		}
-		catch (const MediaSoupError&)
-		{
-			// Must delete everything since the destructor won't be called.
 
-			this->dtlsTransport.reset();
+		const auto iceConsentTimeoutSec = options->iceConsentTimeout();
 
-			this->iceServer.reset();
+		// Create a ICE server.
+		this->iceServer = std::make_unique<RTC::ICE::IceServer>(
+		  this,
+		  this->shared,
+		  Utils::Crypto::GetRandomString(32),
+		  Utils::Crypto::GetRandomString(32),
+		  iceConsentTimeoutSec);
 
-			throw;
-		}
+		// Create a DTLS transport.
+		this->dtlsTransport = std::make_unique<RTC::DtlsTransport>(this, this->shared);
+
+		// NOTE: This may throw.
+		this->shared->GetChannelMessageRegistrator()->RegisterHandler(
+		  this->id,
+		  /*channelRequestHandler*/ this,
+		  /*channelNotificationHandler*/ this);
+
+		// Notify the webRtcTransportListener.
+		this->webRtcTransportListener->OnWebRtcTransportCreated(this);
 	}
 
 	WebRtcTransport::~WebRtcTransport()
@@ -356,29 +321,11 @@ namespace RTC
 		// to be sent.
 		this->dtlsTransport.reset();
 
+		// Must delete the ICE server here, since it would otherwise be destroyed
+		// after the UDP sockets and TCP servers, and its destructor notifies the
+		// removal of every tuple, which closes the TCP connections owned by those
+		// TCP servers.
 		this->iceServer.reset();
-
-		for (auto& kv : this->udpSockets)
-		{
-			auto* udpSocket = kv.first;
-
-			delete udpSocket;
-		}
-		this->udpSockets.clear();
-
-		for (auto& kv : this->tcpServers)
-		{
-			auto* tcpServer = kv.first;
-
-			delete tcpServer;
-		}
-		this->tcpServers.clear();
-
-		this->iceCandidates.clear();
-
-		this->srtpSendSession.reset();
-
-		this->srtpRecvSession.reset();
 
 		// Notify the webRtcTransportListener.
 		if (this->webRtcTransportListener)
@@ -393,13 +340,14 @@ namespace RTC
 		MS_TRACE();
 
 		// Add iceParameters.
-		auto iceParameters = FBS::WebRtcTransport::CreateIceParametersDirect(
+		const auto iceParameters = FBS::WebRtcTransport::CreateIceParametersDirect(
 		  builder,
 		  this->iceServer->GetUsernameFragment().c_str(),
 		  this->iceServer->GetPassword().c_str(),
 		  true);
 
 		std::vector<flatbuffers::Offset<FBS::WebRtcTransport::IceCandidate>> iceCandidates;
+
 		iceCandidates.reserve(this->iceCandidates.size());
 
 		for (const auto& iceCandidate : this->iceCandidates)
@@ -408,7 +356,7 @@ namespace RTC
 		}
 
 		// Add iceState.
-		auto iceState = RTC::ICE::IceServer::IceStateToFbs(this->iceServer->GetState());
+		const auto iceState = RTC::ICE::IceServer::IceStateToFbs(this->iceServer->GetState());
 
 		// Add iceSelectedTuple.
 		flatbuffers::Offset<FBS::Transport::Tuple> iceSelectedTuple;
@@ -423,21 +371,22 @@ namespace RTC
 
 		for (const auto& fingerprint : RTC::DtlsTransport::GetLocalFingerprints())
 		{
-			auto algorithm    = DtlsTransport::AlgorithmToFbs(fingerprint.algorithm);
-			const auto& value = fingerprint.value;
+			const auto algorithm = DtlsTransport::AlgorithmToFbs(fingerprint.algorithm);
+			const auto& value    = fingerprint.value;
 
 			fingerprints.emplace_back(
 			  FBS::WebRtcTransport::CreateFingerprintDirect(builder, algorithm, value.c_str()));
 		}
 
 		// Add dtlsParameters.role.
-		auto dtlsRole  = DtlsTransport::RoleToFbs(this->dtlsRole);
-		auto dtlsState = DtlsTransport::StateToFbs(this->dtlsTransport->GetState());
+		const auto dtlsRole  = DtlsTransport::RoleToFbs(this->dtlsRole);
+		const auto dtlsState = DtlsTransport::StateToFbs(this->dtlsTransport->GetState());
 
 		// Add base transport dump.
-		auto base = Transport::FillBuffer(builder);
+		const auto base = Transport::FillBuffer(builder);
+
 		// Add dtlsParameters.
-		auto dtlsParameters = FBS::WebRtcTransport::CreateDtlsParametersDirect(
+		const auto dtlsParameters = FBS::WebRtcTransport::CreateDtlsParametersDirect(
 		  builder, std::addressof(fingerprints), dtlsRole);
 
 		return FBS::WebRtcTransport::CreateDumpResponseDirect(
@@ -458,7 +407,7 @@ namespace RTC
 		MS_TRACE();
 
 		// Add iceState.
-		auto iceState = RTC::ICE::IceServer::IceStateToFbs(this->iceServer->GetState());
+		const auto iceState = RTC::ICE::IceServer::IceStateToFbs(this->iceServer->GetState());
 
 		// Add iceSelectedTuple.
 		flatbuffers::Offset<FBS::Transport::Tuple> iceSelectedTuple;
@@ -468,10 +417,10 @@ namespace RTC
 			iceSelectedTuple = this->iceServer->GetSelectedTuple()->FillBuffer(builder);
 		}
 
-		auto dtlsState = DtlsTransport::StateToFbs(this->dtlsTransport->GetState());
+		const auto dtlsState = DtlsTransport::StateToFbs(this->dtlsTransport->GetState());
 
 		// Base Transport stats.
-		auto base = Transport::FillBufferStats(builder);
+		const auto base = Transport::FillBufferStats(builder);
 
 		return FBS::WebRtcTransport::CreateGetStatsResponse(
 		  builder,
@@ -491,7 +440,7 @@ namespace RTC
 		{
 			case Channel::ChannelRequest::Method::TRANSPORT_GET_STATS:
 			{
-				auto responseOffset = FillBufferStats(request->GetBufferBuilder());
+				const auto responseOffset = FillBufferStats(request->GetBufferBuilder());
 
 				request->Accept(FBS::Response::Body::WebRtcTransport_GetStatsResponse, responseOffset);
 
@@ -500,7 +449,7 @@ namespace RTC
 
 			case Channel::ChannelRequest::Method::TRANSPORT_DUMP:
 			{
-				auto dumpOffset = FillBuffer(request->GetBufferBuilder());
+				const auto dumpOffset = FillBuffer(request->GetBufferBuilder());
 
 				request->Accept(FBS::Response::Body::WebRtcTransport_DumpResponse, dumpOffset);
 
@@ -569,9 +518,9 @@ namespace RTC
 				}
 
 				// Tell the caller about the selected local DTLS role.
-				auto dtlsLocalRole = DtlsTransport::RoleToFbs(this->dtlsRole);
+				const auto dtlsLocalRole = DtlsTransport::RoleToFbs(this->dtlsRole);
 
-				auto responseOffset =
+				const auto responseOffset =
 				  FBS::WebRtcTransport::CreateConnectResponse(request->GetBufferBuilder(), dtlsLocalRole);
 
 				request->Accept(FBS::Response::Body::WebRtcTransport_ConnectResponse, responseOffset);
@@ -590,7 +539,7 @@ namespace RTC
 				  "WebRtcTransport ICE usernameFragment and password changed [id:%s]", this->id.c_str());
 
 				// Reply with the updated ICE local parameters.
-				auto responseOffset = FBS::Transport::CreateRestartIceResponseDirect(
+				const auto responseOffset = FBS::Transport::CreateRestartIceResponseDirect(
 				  request->GetBufferBuilder(),
 				  this->iceServer->GetUsernameFragment().c_str(),
 				  this->iceServer->GetPassword().c_str(),
@@ -788,7 +737,7 @@ namespace RTC
 		}
 
 		const uint8_t* data = packet->GetBuffer();
-		auto len            = packet->GetLength();
+		size_t len          = packet->GetLength();
 
 		if (!this->srtpSendSession->EncryptRtp(std::addressof(data), std::addressof(len)))
 		{
@@ -806,38 +755,7 @@ namespace RTC
 		RTC::Transport::DataSent(len);
 	}
 
-	void WebRtcTransport::SendRtcpPacket(RTC::RTCP::Packet* packet)
-	{
-		MS_TRACE();
-
-		if (!IsConnected())
-		{
-			return;
-		}
-
-		const uint8_t* data = packet->GetData();
-		auto len            = packet->GetSize();
-
-		// Ensure there is sending SRTP session.
-		if (!this->srtpSendSession)
-		{
-			MS_WARN_DEV("ignoring RTCP packet due to non sending SRTP session");
-
-			return;
-		}
-
-		if (!this->srtpSendSession->EncryptRtcp(std::addressof(data), std::addressof(len)))
-		{
-			return;
-		}
-
-		this->iceServer->GetSelectedTuple()->Send(data, len);
-
-		// Increase send transmission.
-		RTC::Transport::DataSent(len);
-	}
-
-	void WebRtcTransport::SendRtcpPacket(const RTC::NEW_RTCP::Packet* packet)
+	void WebRtcTransport::SendRtcpPacket(const RTC::RTCP::Packet* packet)
 	{
 		MS_TRACE();
 
@@ -847,7 +765,7 @@ namespace RTC
 		}
 
 		const uint8_t* data = packet->GetBuffer();
-		auto len            = packet->GetLength();
+		size_t len          = packet->GetLength();
 
 		// Ensure there is sending SRTP session.
 		if (!this->srtpSendSession)
@@ -868,7 +786,7 @@ namespace RTC
 		RTC::Transport::DataSent(len);
 	}
 
-	void WebRtcTransport::SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet)
+	void WebRtcTransport::SendRtcpCompoundPacket(const RTC::RTCP::CompoundPacket* compoundPacket)
 	{
 		MS_TRACE();
 
@@ -877,10 +795,8 @@ namespace RTC
 			return;
 		}
 
-		packet->Serialize(RTC::RTCP::SerializationBuffer);
-
-		const uint8_t* data = packet->GetData();
-		auto len            = packet->GetSize();
+		const uint8_t* data = compoundPacket->GetBuffer();
+		size_t len          = compoundPacket->GetLength();
 
 		// Ensure there is sending SRTP session.
 		if (!this->srtpSendSession)
@@ -915,7 +831,7 @@ namespace RTC
 
 		if (!IsConnected())
 		{
-			MS_WARN_TAG(sctp, "DTLS not connected, cannot send SCTP data");
+			MS_WARN_TAG(sctp, "not connected, cannot send SCTP data");
 
 			return false;
 		}
@@ -982,7 +898,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		const auto* packet = RTC::ICE::StunPacket::Parse(data, len);
+		const std::unique_ptr<const RTC::ICE::StunPacket> packet{ RTC::ICE::StunPacket::Parse(data, len) };
 
 		if (!packet)
 		{
@@ -992,9 +908,7 @@ namespace RTC
 		}
 
 		// Pass it to the IceServer.
-		this->iceServer->ProcessStunPacket(packet, tuple);
-
-		delete packet;
+		this->iceServer->ProcessStunPacket(packet.get(), tuple);
 	}
 
 	void WebRtcTransport::OnDtlsDataReceived(
@@ -1073,7 +987,8 @@ namespace RTC
 		// Decrypt the SRTP packet.
 		if (!this->srtpRecvSession->DecryptSrtp(const_cast<uint8_t*>(data), std::addressof(len)))
 		{
-			const auto* packet = RTC::RTP::Packet::Parse(data, len, bufferLen);
+			const std::unique_ptr<const RTC::RTP::Packet> packet{ RTC::RTP::Packet::Parse(
+				data, len, bufferLen) };
 
 			if (!packet)
 			{
@@ -1087,14 +1002,12 @@ namespace RTC
 				  packet->GetSsrc(),
 				  packet->GetPayloadType(),
 				  packet->GetSequenceNumber());
-
-				delete packet;
 			}
 
 			return;
 		}
 
-		auto* packet = RTC::RTP::Packet::Parse(data, len, bufferLen);
+		const std::unique_ptr<RTC::RTP::Packet> packet{ RTC::RTP::Packet::Parse(data, len, bufferLen) };
 
 		if (!packet)
 		{
@@ -1107,7 +1020,7 @@ namespace RTC
 		this->iceServer->MayForceSelectedTuple(tuple);
 
 		// Pass the packet to the parent transport.
-		RTC::Transport::ReceiveRtpPacket(packet, receivedAtUs);
+		RTC::Transport::ReceiveRtpPacket(packet.get(), receivedAtUs);
 	}
 
 	void WebRtcTransport::OnRtcpDataReceived(
@@ -1156,9 +1069,10 @@ namespace RTC
 			return;
 		}
 
-		auto* packet = RTC::RTCP::Packet::Parse(data, len);
+		const std::unique_ptr<RTC::RTCP::CompoundPacket> compoundPacket{ RTC::RTCP::CompoundPacket::Parse(
+			data, len) };
 
-		if (!packet)
+		if (!compoundPacket)
 		{
 			MS_WARN_TAG(rtcp, "received data is not a valid RTCP compound or single packet");
 
@@ -1166,7 +1080,7 @@ namespace RTC
 		}
 
 		// Pass the packet to the parent transport.
-		RTC::Transport::ReceiveRtcpPacket(packet, receivedAtUs);
+		RTC::Transport::ReceiveRtcpPacket(compoundPacket.get(), receivedAtUs);
 	}
 
 	void WebRtcTransport::OnUdpSocketPacketReceived(
@@ -1174,7 +1088,7 @@ namespace RTC
 	  const uint8_t* data,
 	  size_t len,
 	  size_t bufferLen,
-	  const struct sockaddr* remoteAddr,
+	  const sockaddr* remoteAddr,
 	  int64_t receivedAtUs)
 	{
 		MS_TRACE();
@@ -1213,9 +1127,9 @@ namespace RTC
 	}
 
 	void WebRtcTransport::OnIceServerSendStunPacket(
-	  const RTC::ICE::IceServer* /*iceServer*/,
+	  RTC::ICE::IceServer* /*iceServer*/,
 	  const RTC::ICE::StunPacket* packet,
-	  RTC::TransportTuple* tuple)
+	  const RTC::TransportTuple* tuple)
 	{
 		MS_TRACE();
 
@@ -1227,7 +1141,7 @@ namespace RTC
 	}
 
 	void WebRtcTransport::OnIceServerLocalUsernameFragmentAdded(
-	  const RTC::ICE::IceServer* /*iceServer*/, const std::string& usernameFragment)
+	  RTC::ICE::IceServer* /*iceServer*/, const std::string& usernameFragment)
 	{
 		MS_TRACE();
 
@@ -1239,7 +1153,7 @@ namespace RTC
 	}
 
 	void WebRtcTransport::OnIceServerLocalUsernameFragmentRemoved(
-	  const RTC::ICE::IceServer* /*iceServer*/, const std::string& usernameFragment)
+	  RTC::ICE::IceServer* /*iceServer*/, const std::string& usernameFragment)
 	{
 		MS_TRACE();
 
@@ -1251,7 +1165,7 @@ namespace RTC
 	}
 
 	void WebRtcTransport::OnIceServerTupleAdded(
-	  const RTC::ICE::IceServer* /*iceServer*/, RTC::TransportTuple* tuple)
+	  RTC::ICE::IceServer* /*iceServer*/, const RTC::TransportTuple* tuple)
 	{
 		MS_TRACE();
 
@@ -1262,7 +1176,7 @@ namespace RTC
 	}
 
 	void WebRtcTransport::OnIceServerTupleRemoved(
-	  const RTC::ICE::IceServer* /*iceServer*/, RTC::TransportTuple* tuple)
+	  RTC::ICE::IceServer* /*iceServer*/, RTC::TransportTuple* tuple)
 	{
 		MS_TRACE();
 
@@ -1279,7 +1193,7 @@ namespace RTC
 	}
 
 	void WebRtcTransport::OnIceServerSelectedTuple(
-	  const RTC::ICE::IceServer* /*iceServer*/, RTC::TransportTuple* /*tuple*/)
+	  RTC::ICE::IceServer* /*iceServer*/, const RTC::TransportTuple* /*tuple*/)
 	{
 		MS_TRACE();
 
@@ -1292,11 +1206,10 @@ namespace RTC
 
 		MS_DEBUG_TAG(ice, "ICE selected tuple");
 
-		// Notify the Node WebRtcTransport.
-		auto tuple = this->iceServer->GetSelectedTuple()->FillBuffer(
+		const auto tuple = this->iceServer->GetSelectedTuple()->FillBuffer(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder());
 
-		auto notification = FBS::WebRtcTransport::CreateIceSelectedTupleChangeNotification(
+		const auto notification = FBS::WebRtcTransport::CreateIceSelectedTupleChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(), tuple);
 
 		this->shared->GetChannelNotifier()->Emit(
@@ -1310,14 +1223,13 @@ namespace RTC
 		RTC::Transport::RouteChanged();
 	}
 
-	void WebRtcTransport::OnIceServerConnected(const RTC::ICE::IceServer* /*iceServer*/)
+	void WebRtcTransport::OnIceServerConnected(RTC::ICE::IceServer* /*iceServer*/)
 	{
 		MS_TRACE();
 
 		MS_DEBUG_TAG(ice, "ICE connected");
 
-		// Notify the Node WebRtcTransport.
-		auto iceStateChangeOffset = FBS::WebRtcTransport::CreateIceStateChangeNotification(
+		const auto iceStateChangeOffset = FBS::WebRtcTransport::CreateIceStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::WebRtcTransport::IceState::CONNECTED);
 
@@ -1337,14 +1249,13 @@ namespace RTC
 		}
 	}
 
-	void WebRtcTransport::OnIceServerCompleted(const RTC::ICE::IceServer* /*iceServer*/)
+	void WebRtcTransport::OnIceServerCompleted(RTC::ICE::IceServer* /*iceServer*/)
 	{
 		MS_TRACE();
 
 		MS_DEBUG_TAG(ice, "ICE completed");
 
-		// Notify the Node WebRtcTransport.
-		auto iceStateChangeOffset = FBS::WebRtcTransport::CreateIceStateChangeNotification(
+		const auto iceStateChangeOffset = FBS::WebRtcTransport::CreateIceStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::WebRtcTransport::IceState::COMPLETED);
 
@@ -1364,14 +1275,13 @@ namespace RTC
 		}
 	}
 
-	void WebRtcTransport::OnIceServerDisconnected(const RTC::ICE::IceServer* /*iceServer*/)
+	void WebRtcTransport::OnIceServerDisconnected(RTC::ICE::IceServer* /*iceServer*/)
 	{
 		MS_TRACE();
 
 		MS_DEBUG_TAG(ice, "ICE disconnected");
 
-		// Notify the Node WebRtcTransport.
-		auto iceStateChangeOffset = FBS::WebRtcTransport::CreateIceStateChangeNotification(
+		const auto iceStateChangeOffset = FBS::WebRtcTransport::CreateIceStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::WebRtcTransport::IceState::DISCONNECTED);
 
@@ -1388,14 +1298,13 @@ namespace RTC
 		}
 	}
 
-	void WebRtcTransport::OnDtlsTransportConnecting(const RTC::DtlsTransport* /*dtlsTransport*/)
+	void WebRtcTransport::OnDtlsTransportConnecting(RTC::DtlsTransport* /*dtlsTransport*/)
 	{
 		MS_TRACE();
 
 		MS_DEBUG_TAG(dtls, "DTLS connecting");
 
-		// Notify the Node WebRtcTransport.
-		auto dtlsStateChangeOffset = FBS::WebRtcTransport::CreateDtlsStateChangeNotification(
+		const auto dtlsStateChangeOffset = FBS::WebRtcTransport::CreateDtlsStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::WebRtcTransport::DtlsState::CONNECTING);
 
@@ -1407,11 +1316,11 @@ namespace RTC
 	}
 
 	void WebRtcTransport::OnDtlsTransportConnected(
-	  const RTC::DtlsTransport* /*dtlsTransport*/,
+	  RTC::DtlsTransport* /*dtlsTransport*/,
 	  RTC::SrtpSession::CryptoSuite srtpCryptoSuite,
-	  uint8_t* srtpLocalKey,
+	  const uint8_t* srtpLocalKey,
 	  size_t srtpLocalKeyLen,
-	  uint8_t* srtpRemoteKey,
+	  const uint8_t* srtpRemoteKey,
 	  size_t srtpRemoteKeyLen,
 	  std::string& remoteCert)
 	{
@@ -1439,11 +1348,11 @@ namespace RTC
 			this->srtpRecvSession = std::make_unique<RTC::SrtpSession>(
 			  RTC::SrtpSession::Type::INBOUND, srtpCryptoSuite, srtpRemoteKey, srtpRemoteKeyLen);
 
-			// Notify the Node WebRtcTransport.
-			auto dtlsStateChangeOffset = FBS::WebRtcTransport::CreateDtlsStateChangeNotificationDirect(
-			  this->shared->GetChannelNotifier()->GetBufferBuilder(),
-			  FBS::WebRtcTransport::DtlsState::CONNECTED,
-			  remoteCert.c_str());
+			const auto dtlsStateChangeOffset =
+			  FBS::WebRtcTransport::CreateDtlsStateChangeNotificationDirect(
+			    this->shared->GetChannelNotifier()->GetBufferBuilder(),
+			    FBS::WebRtcTransport::DtlsState::CONNECTED,
+			    remoteCert.c_str());
 
 			this->shared->GetChannelNotifier()->Emit(
 			  this->id,
@@ -1462,14 +1371,13 @@ namespace RTC
 		}
 	}
 
-	void WebRtcTransport::OnDtlsTransportFailed(const RTC::DtlsTransport* /*dtlsTransport*/)
+	void WebRtcTransport::OnDtlsTransportFailed(RTC::DtlsTransport* /*dtlsTransport*/)
 	{
 		MS_TRACE();
 
 		MS_WARN_TAG(dtls, "DTLS failed");
 
-		// Notify the Node WebRtcTransport.
-		auto dtlsStateChangeOffset = FBS::WebRtcTransport::CreateDtlsStateChangeNotification(
+		const auto dtlsStateChangeOffset = FBS::WebRtcTransport::CreateDtlsStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::WebRtcTransport::DtlsState::FAILED);
 
@@ -1480,14 +1388,13 @@ namespace RTC
 		  dtlsStateChangeOffset);
 	}
 
-	void WebRtcTransport::OnDtlsTransportClosed(const RTC::DtlsTransport* /*dtlsTransport*/)
+	void WebRtcTransport::OnDtlsTransportClosed(RTC::DtlsTransport* /*dtlsTransport*/)
 	{
 		MS_TRACE();
 
 		MS_WARN_TAG(dtls, "DTLS remotely closed");
 
-		// Notify the Node WebRtcTransport.
-		auto dtlsStateChangeOffset = FBS::WebRtcTransport::CreateDtlsStateChangeNotification(
+		const auto dtlsStateChangeOffset = FBS::WebRtcTransport::CreateDtlsStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::WebRtcTransport::DtlsState::CLOSED);
 
@@ -1502,7 +1409,7 @@ namespace RTC
 	}
 
 	void WebRtcTransport::OnDtlsTransportSendData(
-	  const RTC::DtlsTransport* /*dtlsTransport*/, const uint8_t* data, size_t len)
+	  RTC::DtlsTransport* /*dtlsTransport*/, const uint8_t* data, size_t len)
 	{
 		MS_TRACE();
 
@@ -1520,7 +1427,7 @@ namespace RTC
 	}
 
 	void WebRtcTransport::OnDtlsTransportApplicationDataReceived(
-	  const RTC::DtlsTransport* /*dtlsTransport*/, const uint8_t* data, size_t len, int64_t receivedAtUs)
+	  RTC::DtlsTransport* /*dtlsTransport*/, const uint8_t* data, size_t len, int64_t receivedAtUs)
 	{
 		MS_TRACE();
 

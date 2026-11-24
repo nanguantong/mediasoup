@@ -3,9 +3,12 @@
 
 #include "common.hpp"
 #include "handles/SendCallbacks.hpp"
-#include "RTC/NEW_RTCP/packet/Packet.hpp"
+#include "RTC/RTCP/packet/CompoundPacket.hpp"
+#include "RTC/RTCP/packet/Packet.hpp"
 #include "RTC/Transport.hpp"
 #include "SharedInterface.hpp"
+#include <FBS/directTransport.h>
+#include <string>
 
 namespace RTC
 {
@@ -17,11 +20,13 @@ namespace RTC
 		  const std::string& id,
 		  RTC::Transport::Listener* listener,
 		  const FBS::DirectTransport::DirectTransportOptions* options);
+
 		~DirectTransport() override;
 
 	public:
 		flatbuffers::Offset<FBS::DirectTransport::GetStatsResponse> FillBufferStats(
 		  flatbuffers::FlatBufferBuilder& builder);
+
 		flatbuffers::Offset<FBS::DirectTransport::DumpResponse> FillBuffer(
 		  flatbuffers::FlatBufferBuilder& builder) const;
 
@@ -30,22 +35,31 @@ namespace RTC
 		{
 			return false;
 		}
+
 		bool IsPipe() const override
 		{
 			return false;
 		}
+
 		bool IsConnected() const override;
+
 		size_t GetPacketOverhead() const override;
+
 		void SendRtpPacket(RTC::Consumer* consumer, RTC::RTP::Packet* packet, onSendCallback cb = {}) override;
-		void SendRtcpPacket(RTC::RTCP::Packet* packet) override;
-		void SendRtcpPacket(const RTC::NEW_RTCP::Packet* packet) override;
-		void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) override;
+
+		void SendRtcpPacket(const RTC::RTCP::Packet* packet) override;
+
+		void SendRtcpCompoundPacket(const RTC::RTCP::CompoundPacket* compoundPacket) override;
+
 		void SendMessage(
 		  RTC::DataConsumer* dataConsumer,
 		  RTC::SCTP::Message message,
 		  onMessageQueuedCallback cb = {}) override;
+
 		bool SendData(const uint8_t* data, size_t len) override;
+
 		void RecvStreamClosed(uint32_t ssrc) override;
+
 		void SendStreamClosed(uint32_t ssrc) override;
 
 		/* Methods inherited from Channel::ChannelSocket::RequestHandler. */

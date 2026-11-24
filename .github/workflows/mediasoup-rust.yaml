@@ -7,8 +7,20 @@ on:
       - 'rust/**'
       - '!rust/CHANGELOG.md'
       - 'worker/**'
-      - '!worker/package.json'
-      - '!worker/package-lock.json'
+      - '!worker/**/*.md'
+      - '!worker/.clang-format'
+      - '!worker/.clang-tidy'
+      - '!worker/.clangd'
+      - '!worker/Dockerfile*'
+      - '!worker/deps/**'
+      - '!worker/fuzzer/**'
+      - '!worker/meson.build'
+      - '!worker/mocks/**'
+      - '!worker/ruff.toml'
+      - '!worker/scripts/**'
+      - '!worker/subprojects/.clang-tidy'
+      - '!worker/test/**'
+      - '!worker/ubsan_suppressions.txt'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
@@ -19,8 +31,20 @@ on:
       - 'rust/**'
       - '!rust/CHANGELOG.md'
       - 'worker/**'
-      - '!worker/package.json'
-      - '!worker/package-lock.json'
+      - '!worker/**/*.md'
+      - '!worker/.clang-format'
+      - '!worker/.clang-tidy'
+      - '!worker/.clangd'
+      - '!worker/Dockerfile*'
+      - '!worker/deps/**'
+      - '!worker/fuzzer/**'
+      - '!worker/meson.build'
+      - '!worker/mocks/**'
+      - '!worker/ruff.toml'
+      - '!worker/scripts/**'
+      - '!worker/subprojects/.clang-tidy'
+      - '!worker/test/**'
+      - '!worker/ubsan_suppressions.txt'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
@@ -72,6 +96,8 @@ jobs:
           - os: ubuntu-26.04-arm
             run-test-in-debug-mode: true
           - os: macos-15
+            run-test-in-debug-mode: true
+          - os: macos-26
             run-test-in-debug-mode: true
           - os: windows-2022
           - os: windows-2025

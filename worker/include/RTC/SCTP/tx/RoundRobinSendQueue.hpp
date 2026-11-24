@@ -228,7 +228,7 @@ namespace RTC
 				// An enqueued message and metadata.
 				struct Item
 				{
-					explicit Item(uint32_t outgoingMessageId, Message msg, MessageAttributes attributes)
+					Item(uint32_t outgoingMessageId, Message msg, MessageAttributes attributes)
 					  : outgoingMessageId(outgoingMessageId),
 					    message(std::move(msg)),
 					    attributes(attributes),
@@ -245,8 +245,8 @@ namespace RTC
 					size_t remainingLength;
 					// If set, an allocated message ID and SSN. Will be allocated when the
 					// first fragment is sent.
-					std::optional<uint32_t> mid{ std::nullopt };
-					std::optional<uint16_t> ssn{ std::nullopt };
+					std::optional<uint32_t> mid;
+					std::optional<uint16_t> ssn;
 					// The current Fragment Sequence Number, incremented for each fragment.
 					uint32_t currentFsn{ 0 };
 				};

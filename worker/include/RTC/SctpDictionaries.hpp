@@ -10,6 +10,7 @@ namespace RTC
 	{
 	public:
 		SctpStreamParameters() = default;
+
 		explicit SctpStreamParameters(const FBS::SctpParameters::SctpStreamParameters* data);
 
 		flatbuffers::Offset<FBS::SctpParameters::SctpStreamParameters> FillBuffer(

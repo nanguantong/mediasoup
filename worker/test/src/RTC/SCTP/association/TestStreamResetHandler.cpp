@@ -18,18 +18,21 @@
 #include "mocks/include/MockShared.hpp"
 #include "mocks/include/RTC/SCTP/association/MockAssociationListener.hpp"
 #include "mocks/include/RTC/SCTP/association/MockTransmissionControlBlockContext.hpp"
+#include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <span>
 #include <vector>
 
-namespace
+SCENARIO("SCTP RTC::SCTP::StreamResetHandler", "[sctp][streamresethandler]")
 {
-	constexpr uint32_t Arwnd{ 131072 };
-	constexpr uint32_t LocalInitialTsn{ 0 };
-	constexpr uint32_t RemoteInitialTsn{ 0 };
-	constexpr int64_t InitialNowUs{ 10000 * 1000 };
-	constexpr int64_t RtoMs{ 250 };
-	const std::vector<uint8_t> ShortPayload{ 1, 2, 3, 4 };
+	// NOTE: These are `static` because the local class and the lambdas below use
+	// them without capturing them.
+	static constexpr uint32_t Arwnd{ 131072 };
+	static constexpr uint32_t LocalInitialTsn{ 0 };
+	static constexpr uint32_t RemoteInitialTsn{ 0 };
+	static constexpr int64_t InitialNowUs{ 10000 * 1000 };
+	static constexpr int64_t RtoMs{ 250 };
+	static constexpr std::array<uint8_t, 4> ShortPayload{ 1, 2, 3, 4 };
 
 	/**
 	 * A RTC::SCTP::StreamResetHandler under test, together with all the (real)
@@ -85,7 +88,7 @@ namespace
 		      std::addressof(this->retransmissionQueue))
 		{
 			this->tcbContext.WillGetCurrentRtoUsOnce(
-			  []()
+			  []() -> int64_t
 			  {
 				  return static_cast<int64_t>(RtoMs * 1000);
 			  });
@@ -152,8 +155,9 @@ namespace
 		BackoffTimerListener backoffTimerListener;
 		RetransmissionQueueListener retransmissionQueueListener;
 		mocks::RTC::SCTP::MockAssociationListener associationListener;
-		RTC::SCTP::AssociationListenerDeferrer associationListenerDeferrer{ std::addressof(
-			this->associationListener) };
+		RTC::SCTP::AssociationListenerDeferrer associationListenerDeferrer{
+			std::addressof(this->associationListener),
+		};
 		mocks::MockShared shared;
 		mocks::RTC::SCTP::MockTransmissionControlBlockContext tcbContext;
 		const std::unique_ptr<BackoffTimerHandleInterface> delayedAckTimer;
@@ -164,10 +168,7 @@ namespace
 		RTC::SCTP::RetransmissionQueue retransmissionQueue;
 		RTC::SCTP::StreamResetHandler streamResetHandler;
 	};
-} // namespace
 
-SCENARIO("SCTP RTC::SCTP::StreamResetHandler", "[sctp][streamresethandler]")
-{
 	SECTION("a chunk with no parameters returns an error")
 	{
 		TestStreamResetHandler test;
@@ -463,6 +464,62 @@ SCENARIO("SCTP RTC::SCTP::StreamResetHandler", "[sctp][streamresethandler]")
 		REQUIRE(test.associationListener.HasStreamsResetFailedForStreamId(42) == true);
 	}
 
+	SECTION("a response with an unknown result returns an error and keeps the request")
+	{
+		TestStreamResetHandler test;
+
+		test.streamResetHandler.ResetStreams(std::vector<uint16_t>{ 42 });
+
+		REQUIRE(test.streamResetHandler.ShouldSendStreamResetRequest() == true);
+
+		const auto packet = test.tcbContext.CreatePacket();
+
+		REQUIRE(test.streamResetHandler.AddStreamResetRequest(packet.get()) == true);
+
+		const auto* parameter =
+		  packet->GetFirstChunkOfType<RTC::SCTP::ReConfigChunk>()
+		    ->GetFirstParameterOfType<RTC::SCTP::OutgoingSsnResetRequestParameter>();
+
+		REQUIRE(parameter);
+
+		const uint32_t reqSeqNbr = parameter->GetReconfigurationRequestSequenceNumber();
+
+		// Build a RE-CONFIG response with an unknown result.
+		std::vector<uint8_t> responseBuffer1(test.sctpOptions.mtu);
+		const std::unique_ptr<RTC::SCTP::ReConfigChunk> responseChunk1{ RTC::SCTP::ReConfigChunk::Factory(
+			responseBuffer1.data(), responseBuffer1.size()) };
+
+		auto* response1 =
+		  responseChunk1->BuildParameterInPlace<RTC::SCTP::ReconfigurationResponseParameter>();
+
+		response1->SetReconfigurationResponseSequenceNumber(reqSeqNbr);
+		// NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+		response1->SetResult(static_cast<RTC::SCTP::ReconfigurationResponseParameter::Result>(7));
+		response1->Consolidate();
+
+		test.HandleReceivedReConfigChunk(responseChunk1.get());
+
+		REQUIRE(test.associationListener.HasErrored() == true);
+		REQUIRE(test.associationListener.HasStreamsResetPerformedForStreamId(42) == false);
+		REQUIRE(test.associationListener.HasStreamsResetFailedForStreamId(42) == false);
+
+		// The request is still pending, so a valid response to it completes it.
+		std::vector<uint8_t> responseBuffer2(test.sctpOptions.mtu);
+		const std::unique_ptr<RTC::SCTP::ReConfigChunk> responseChunk2{ RTC::SCTP::ReConfigChunk::Factory(
+			responseBuffer2.data(), responseBuffer2.size()) };
+
+		auto* response2 =
+		  responseChunk2->BuildParameterInPlace<RTC::SCTP::ReconfigurationResponseParameter>();
+
+		response2->SetReconfigurationResponseSequenceNumber(reqSeqNbr);
+		response2->SetResult(RTC::SCTP::ReconfigurationResponseParameter::Result::SUCCESS_PERFORMED);
+		response2->Consolidate();
+
+		test.HandleReceivedReConfigChunk(responseChunk2.get());
+
+		REQUIRE(test.associationListener.HasStreamsResetPerformedForStreamId(42) == true);
+	}
+
 	SECTION("an incoming stream reset request returns nothing performed")
 	{
 		TestStreamResetHandler test;
@@ -570,7 +627,7 @@ SCENARIO("SCTP RTC::SCTP::StreamResetHandler", "[sctp][streamresethandler]")
 			    /*mid*/ 0,
 			    /*fsn*/ 0,
 			    /*ppid*/ ppid,
-			    /*payload*/ ShortPayload,
+			    /*payload*/ std::vector<uint8_t>(ShortPayload.begin(), ShortPayload.end()),
 			    /*isBeginning*/ true,
 			    /*isEnd*/ true,
 			    /*isUnordered*/ false));
@@ -587,7 +644,7 @@ SCENARIO("SCTP RTC::SCTP::StreamResetHandler", "[sctp][streamresethandler]")
 
 			const auto payload = message->GetPayload();
 
-			REQUIRE(std::vector<uint8_t>(payload.begin(), payload.end()) == ShortPayload);
+			REQUIRE(std::ranges::equal(payload, ShortPayload));
 		};
 
 		// A first message is received and delivered, so stream 1 now expects SSN 1.
@@ -716,7 +773,7 @@ SCENARIO("SCTP RTC::SCTP::StreamResetHandler", "[sctp][streamresethandler]")
 			    /*mid*/ 0,
 			    /*fsn*/ 0,
 			    /*ppid*/ ppid,
-			    /*payload*/ ShortPayload,
+			    /*payload*/ std::vector<uint8_t>(ShortPayload.begin(), ShortPayload.end()),
 			    /*isBeginning*/ true,
 			    /*isEnd*/ true,
 			    /*isUnordered*/ false));
@@ -733,7 +790,7 @@ SCENARIO("SCTP RTC::SCTP::StreamResetHandler", "[sctp][streamresethandler]")
 
 			const auto payload = message->GetPayload();
 
-			REQUIRE(std::vector<uint8_t>(payload.begin(), payload.end()) == ShortPayload);
+			REQUIRE(std::ranges::equal(payload, ShortPayload));
 		};
 
 		const std::vector<uint16_t> resetStreamIds{ 1, 2 };
@@ -843,7 +900,7 @@ SCENARIO("SCTP RTC::SCTP::StreamResetHandler", "[sctp][streamresethandler]")
 			    /*mid*/ 0,
 			    /*fsn*/ 0,
 			    /*ppid*/ ppid,
-			    /*payload*/ ShortPayload,
+			    /*payload*/ std::vector<uint8_t>(ShortPayload.begin(), ShortPayload.end()),
 			    /*isBeginning*/ true,
 			    /*isEnd*/ true,
 			    /*isUnordered*/ false));
@@ -860,7 +917,7 @@ SCENARIO("SCTP RTC::SCTP::StreamResetHandler", "[sctp][streamresethandler]")
 
 			const auto payload = message->GetPayload();
 
-			REQUIRE(std::vector<uint8_t>(payload.begin(), payload.end()) == ShortPayload);
+			REQUIRE(std::ranges::equal(payload, ShortPayload));
 		};
 
 		handleReceivedOrderedData(

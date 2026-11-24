@@ -1,13 +1,14 @@
 #include "common.hpp"
-#include "FBS/rtpParameters.h"
-#include "FBS/transport.h"
 #include "RTC/Consumer.hpp"
+#include "RTC/RTCP/packet/Packet.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RTP/RtpStream.hpp"
 #include "RTC/RTP/RtpStreamRecv.hpp"
 #include "RTC/RtpDictionaries.hpp"
-#include "flatbuffers/buffer.h"
 #include "mocks/include/MockShared.hpp"
+#include <FBS/rtpParameters.h>
+#include <FBS/transport.h>
+#include <flatbuffers/buffer.h>
 #include <catch2/catch_test_macros.hpp>
 
 namespace
@@ -29,7 +30,8 @@ namespace
 		{
 		}
 
-		void OnRtpStreamSendRtcpPacket(RTC::RTP::RtpStreamRecv* rtpStream, RTC::RTCP::Packet* packet) override
+		void OnRtpStreamSendRtcpPacket(
+		  RTC::RTP::RtpStreamRecv* rtpStream, const RTC::RTCP::Packet* packet) override
 		{
 		}
 
@@ -40,6 +42,15 @@ namespace
 
 		void OnRtpStreamSpatialLayerActivityChanged(
 		  RTC::RTP::RtpStreamRecv* /*rtpStream*/, uint8_t /*spatialLayer*/, bool /*isActive*/) override
+		{
+		}
+
+		void OnRtpStreamRestarted(
+		  RTC::RTP::RtpStreamRecv* /*rtpStream*/, const RTC::RTP::Packet* /*packet*/) override
+		{
+		}
+
+		void OnRtpStreamKeyFrameRequired(RTC::RTP::RtpStreamRecv* /*rtpStream*/) override
 		{
 		}
 	};
@@ -234,7 +245,7 @@ SCENARIO("Consumer with SimpleProducerStreamManager", "[rtp][consumer]")
 		0xFF, 0xFF, 0xFF, 0xFF,
 		0xFF, 0xFF, 0xFF, 0xFF,
 		0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF,
+		0xFF, 0xFF, 0xFF, 0xFF
 	};
 	// clang-format on
 
@@ -325,6 +336,47 @@ SCENARIO("Consumer with SimpleProducerStreamManager", "[rtp][consumer]")
 		packet->SetSequenceNumber(seq++);
 		// Remove the payload so it won't be sent.
 		packet->RemovePayload();
+		sharedPacket.reset();
+
+		fixture.consumer->SendRtpPacket(packet, sharedPacket);
+
+		fixture.listener->Verify(3);
+
+		delete packet;
+	}
+
+	SECTION("a packet whose sequence number was already dropped is not forwarded")
+	{
+		Fixture fixture;
+
+		// Indicate that the transport is connected in order to activate the consumer.
+		dynamic_cast<RTC::Consumer*>(fixture.consumer.get())->TransportConnected();
+
+		auto* packet = RTC::RTP::Packet::Parse(buffer, originalPacketLength + 64);
+		std::shared_ptr<RTC::RTP::Packet> sharedPacket{ nullptr };
+
+		uint16_t seq{ 1 };
+
+		for (; seq <= 3; ++seq)
+		{
+			packet->SetSequenceNumber(seq);
+			packet->SetPayloadType(payloadType);
+			sharedPacket.reset();
+
+			fixture.consumer->SendRtpPacket(packet, sharedPacket);
+		}
+
+		// This sequence number is dropped, its payload type is not supported.
+		packet->SetSequenceNumber(seq);
+		packet->SetPayloadType(payloadType + 1);
+		sharedPacket.reset();
+
+		fixture.consumer->SendRtpPacket(packet, sharedPacket);
+
+		// A duplicate of it arrives, now with a supported payload type. `Input()`
+		// generates no output for an already dropped sequence number, so the packet
+		// must not be forwarded with an unset one.
+		packet->SetPayloadType(payloadType);
 		sharedPacket.reset();
 
 		fixture.consumer->SendRtpPacket(packet, sharedPacket);

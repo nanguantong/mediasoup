@@ -53,13 +53,6 @@ SCENARIO("NackGenerator generator", "[rtp][rtcp][nack]")
 		{
 			return true;
 		}
-		void RtpPacketChanged(RTC::RTP::Packet* packet) override
-		{
-		}
-		std::unique_ptr<RTC::RTP::Codecs::PayloadDescriptor::Encoder> GetEncoder() const override
-		{
-			return nullptr;
-		}
 		void Encode(
 		  RTC::RTP::Packet* /*packet*/, RTC::RTP::Codecs::PayloadDescriptor::Encoder* /*encoder*/) override
 		{
@@ -142,9 +135,8 @@ SCENARIO("NackGenerator generator", "[rtp][rtcp][nack]")
 		{
 			listener.Reset(input);
 
-			auto* tpdh = new TestPayloadDescriptorHandler(input.isKeyFrame);
-
-			packet->SetPayloadDescriptorHandler(tpdh);
+			packet->SetPayloadDescriptorHandler(
+			  std::make_unique<TestPayloadDescriptorHandler>(input.isKeyFrame));
 			packet->SetSequenceNumber(input.seq);
 			nackGenerator.ReceivePacket(packet.get(), /*isRecovered*/ false);
 
@@ -182,7 +174,7 @@ SCENARIO("NackGenerator generator", "[rtp][rtcp][nack]")
 			{ 2379, false, 0, 0, false, 0 },
 			{ 2380, false, 0, 0, false, 0 },
 			{ 2254, false, 0, 0, false, 0 },
-			{ 2250, false, 0, 0, false, 0 },
+			{ 2250, false, 0, 0, false, 0 }
 		};
 		// clang-format on
 

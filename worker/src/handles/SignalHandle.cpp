@@ -8,6 +8,8 @@
 
 /* Static methods for UV callbacks. */
 
+// libuv imposes the callback signature.
+// NOLINTNEXTLINE(misc-const-correctness)
 inline static void onSignal(uv_signal_t* handle, int signum)
 {
 	MS_TRACE();
@@ -49,7 +51,8 @@ void SignalHandle::AddSignal(int signum, const std::string& name)
 	}
 
 	int err;
-	auto* uvHandle = new uv_signal_t;
+
+	auto* const uvHandle = new uv_signal_t;
 
 	uvHandle->data = static_cast<void*>(this);
 
@@ -66,6 +69,8 @@ void SignalHandle::AddSignal(int signum, const std::string& name)
 
 	if (err != 0)
 	{
+		uv_close(reinterpret_cast<uv_handle_t*>(uvHandle), static_cast<uv_close_cb>(onCloseSignal));
+
 		MS_THROW_ERROR("uv_signal_start() failed for signal %s: %s", name.c_str(), uv_strerror(err));
 	}
 
@@ -84,7 +89,7 @@ void SignalHandle::InternalClose()
 
 	this->closed = true;
 
-	for (auto* uvHandle : this->uvHandles)
+	for (auto* const uvHandle : this->uvHandles)
 	{
 		uv_close(reinterpret_cast<uv_handle_t*>(uvHandle), static_cast<uv_close_cb>(onCloseSignal));
 	}

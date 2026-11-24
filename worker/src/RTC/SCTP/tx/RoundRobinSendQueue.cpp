@@ -5,10 +5,12 @@
 #include "Logger.hpp"
 #include "RTC/SCTP/packet/UserData.hpp"
 #include "RTC/SCTP/public/SctpTypes.hpp"
-#include <set>
 #include <span>
-#include <string>
 #include <tuple> // std::forward_as_tuple()
+#ifdef MS_TEST
+#include <set>
+#include <string>
+#endif
 
 namespace RTC
 {
@@ -27,7 +29,7 @@ namespace RTC
 		    defaultStreamBufferedAmountLowThreshold(defaultStreamBufferedAmountLowThreshold),
 		    scheduler(mtu),
 		    totalBufferedAmountThresholdWatcher(
-		      [this]()
+		      [this]() -> void
 		      {
 			      this->associationListener.OnAssociationTotalBufferedAmountLow();
 		      })
@@ -63,7 +65,7 @@ namespace RTC
 				.expiresAtUs        = sendMessageOptions.lifetimeMs.has_value()
 				                        ? nowUs + (sendMessageOptions.lifetimeMs.value() * 1000) + 1
 				                        : Types::ExpiresAtUsInfinite,
-				.lifecycleId        = sendMessageOptions.lifecycleId,
+				.lifecycleId        = sendMessageOptions.lifecycleId
 			};
 
 			const uint16_t streamId = message.GetStreamId();
@@ -84,7 +86,9 @@ namespace RTC
 				return this->defaultPriority;
 			}
 
-			return it->second.GetPriority();
+			const OutgoingStream& stream = it->second;
+
+			return stream.GetPriority();
 		}
 
 		void RoundRobinSendQueue::SetStreamPriority(uint16_t streamId, uint16_t priority)
@@ -311,7 +315,7 @@ namespace RTC
 			    std::addressof(this->scheduler),
 			    streamId,
 			    this->defaultPriority,
-			    [this, streamId]()
+			    [this, streamId]() -> void
 			    {
 				    this->associationListener.OnAssociationStreamBufferedAmountLow(streamId);
 			    }));
@@ -327,9 +331,11 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			std::set<uint16_t> expectedActiveStreamIds;
+			// NOTE: This check walks every stream, so it only runs in tests.
+#ifdef MS_TEST
 			const std::set<uint16_t> actualActiveStreamIds = this->scheduler.GetActiveStreamsForTesting();
 
+			std::set<uint16_t> expectedActiveStreamIds;
 			size_t totalBufferedAmount{ 0 };
 
 			for (const auto& [streamId, stream] : this->streams)
@@ -344,16 +350,16 @@ namespace RTC
 
 			if (expectedActiveStreamIds != actualActiveStreamIds)
 			{
-				const auto join = [](const auto& set)
+				const auto join = [](const std::set<uint16_t>& set) -> std::string
 				{
 					std::string out;
-
 					size_t i{ 0 };
+
 					for (const auto& v : set)
 					{
 						if (i++ != 0)
 						{
-							out += ",";
+							out += ',';
 						}
 
 						out += std::to_string(v);
@@ -374,6 +380,7 @@ namespace RTC
 			  "total buffered amount mismatch [actual=[%zu], expected=[%zu]]",
 			  totalBufferedAmount,
 			  this->totalBufferedAmountThresholdWatcher.GetValue());
+#endif
 		}
 
 		void RoundRobinSendQueue::ThresholdWatcher::Decrease(size_t bytes)
@@ -760,6 +767,8 @@ namespace RTC
 		{
 			MS_TRACE();
 
+			// NOTE: This check walks every queued item, so it only runs in tests.
+#ifdef MS_TEST
 			size_t bytes{ 0 };
 
 			for (const auto& item : this->items)
@@ -770,6 +779,7 @@ namespace RTC
 			MS_ASSERT(
 			  bytes == this->bufferedAmountThresholdWatcher.GetValue(),
 			  "bytes != this->bufferedAmountThresholdWatcher.GetValue()");
+#endif
 		}
 	} // namespace SCTP
 } // namespace RTC

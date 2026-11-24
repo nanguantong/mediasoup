@@ -34,7 +34,7 @@ BackoffTimerHandle::BackoffTimerHandle(BackoffTimerHandleOptions options)
 	if (this->baseTimeoutMs > BackoffTimerHandleInterface::MaxTimeoutMs)
 	{
 		MS_THROW_TYPE_ERROR(
-		  "[%s] options.maxBackoffTimeoutMs (%" PRIi64 " ms) cannot be greater than %" PRIi64 " ms",
+		  "[%s] options.baseTimeoutMs (%" PRIi64 " ms) cannot be greater than %" PRIi64 " ms",
 		  this->label.c_str(),
 		  this->baseTimeoutMs,
 		  BackoffTimerHandleInterface::MaxTimeoutMs);
@@ -135,7 +135,7 @@ void BackoffTimerHandle::OnTimer(TimerHandleInterface* /*timer*/)
 	this->running =
 	  !this->maxRestarts.has_value() || this->expirationCount <= this->maxRestarts.value();
 
-	int64_t baseTimeoutMs{ this->baseTimeoutMs };
+	auto baseTimeoutMs{ this->baseTimeoutMs };
 	bool stop{ false };
 
 	// Call the listener by passing base timeout as reference so the parent has
@@ -156,7 +156,7 @@ void BackoffTimerHandle::OnTimer(TimerHandleInterface* /*timer*/)
 	// the `running` flag.
 	if (this->running)
 	{
-		auto nextTimeoutMs = ComputeNextTimeoutMs();
+		const auto nextTimeoutMs = ComputeNextTimeoutMs();
 
 		this->timer->Start(nextTimeoutMs);
 	}

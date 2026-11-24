@@ -4,6 +4,7 @@
 #include "common.hpp"
 #include "RTC/Producer.hpp"
 #include "RTC/RTP/Packet.hpp"
+#include <FBS/transport.h>
 #include <ankerl/unordered_dense.h>
 #include <string>
 
@@ -14,17 +15,21 @@ namespace RTC
 	public:
 		flatbuffers::Offset<FBS::Transport::RtpListener> FillBuffer(
 		  flatbuffers::FlatBufferBuilder& builder) const;
+
 		void AddProducer(RTC::Producer* producer);
+
 		void RemoveProducer(RTC::Producer* producer);
+
 		RTC::Producer* GetProducer(const RTC::RTP::Packet* packet);
+
 		RTC::Producer* GetProducer(uint32_t ssrc) const;
 
 	public:
 		// Table of SSRC / Producer pairs.
 		ankerl::unordered_dense::map<uint32_t, RTC::Producer*> ssrcTable;
-		//  Table of MID / Producer pairs.
+		// Table of MID / Producer pairs.
 		ankerl::unordered_dense::map<std::string, RTC::Producer*> midTable;
-		//  Table of RID / Producer pairs.
+		// Table of RID / Producer pairs.
 		ankerl::unordered_dense::map<std::string, RTC::Producer*> ridTable;
 	};
 } // namespace RTC

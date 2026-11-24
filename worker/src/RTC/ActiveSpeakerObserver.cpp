@@ -4,7 +4,7 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "RTC/RtpDictionaries.hpp"
-#include <cmath> // std::log()
+#include <cmath> // std::log(), std::sqrt()
 
 namespace RTC
 {
@@ -70,6 +70,7 @@ namespace RTC
 		const uint32_t littleLen       = littles.size();
 		const uint32_t bigLen          = bigs.size();
 		const uint32_t littleLenPerBig = littleLen / bigLen;
+
 		bool changed{ false };
 
 		for (uint32_t b = 0, l = 0; b < bigLen; ++b)
@@ -78,14 +79,17 @@ namespace RTC
 
 			for (const uint32_t lEnd = l + littleLenPerBig; l < lEnd; ++l)
 			{
+				// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 				if (littles[l] > threashold)
 				{
 					++sum;
 				}
 			}
 
+			// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 			if (bigs[b] != sum)
 			{
+				// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 				bigs[b] = sum;
 				changed = true;
 			}
@@ -101,18 +105,9 @@ namespace RTC
 	  const FBS::ActiveSpeakerObserver::ActiveSpeakerObserverOptions* options)
 	  : RTC::RtpObserver(shared, id, listener),
 	    periodicTimer(shared->CreateTimer(this, "active-speaker-observer")),
-	    intervalMs(options->interval())
+	    intervalMs(std::clamp<int64_t>(options->interval(), 100, 5000))
 	{
 		MS_TRACE();
-
-		if (this->intervalMs < 100)
-		{
-			this->intervalMs = 100;
-		}
-		else if (this->intervalMs > 5000)
-		{
-			this->intervalMs = 5000;
-		}
 
 		this->periodicTimer->Start(this->intervalMs, this->intervalMs);
 
@@ -128,16 +123,6 @@ namespace RTC
 		MS_TRACE();
 
 		this->shared->GetChannelMessageRegistrator()->UnregisterHandler(this->id);
-
-		// Must clear all entries in this->mapProducerSpeakers since RemoveProducer()
-		// won't be called for each existing Producer if the ActiveSpeakerObserver or
-		// its parent Router are directly closed.
-		for (auto& kv : this->mapProducerSpeakers)
-		{
-			auto* producerSpeaker = kv.second;
-			delete producerSpeaker;
-		}
-		this->mapProducerSpeakers.clear();
 	}
 
 	void ActiveSpeakerObserver::AddProducer(RTC::Producer* producer)
@@ -149,30 +134,27 @@ namespace RTC
 			MS_THROW_TYPE_ERROR("not an audio Producer");
 		}
 
-		if (this->mapProducerSpeakers.find(producer->id) != this->mapProducerSpeakers.end())
+		if (this->mapProducerSpeakers.contains(producer->id))
 		{
 			MS_THROW_ERROR("Producer already in map");
 		}
 
-		this->mapProducerSpeakers[producer->id] = new ProducerSpeaker(this->shared, producer);
+		this->mapProducerSpeakers[producer->id] =
+		  std::make_unique<ProducerSpeaker>(this->shared, producer);
 	}
 
 	void ActiveSpeakerObserver::RemoveProducer(RTC::Producer* producer)
 	{
 		MS_TRACE();
 
-		auto it = this->mapProducerSpeakers.find(producer->id);
+		const auto it = this->mapProducerSpeakers.find(producer->id);
 
 		if (it == this->mapProducerSpeakers.end())
 		{
 			return;
 		}
 
-		auto* producerSpeaker = it->second;
-
-		delete producerSpeaker;
-
-		this->mapProducerSpeakers.erase(producer->id);
+		this->mapProducerSpeakers.erase(it);
 
 		if (producer->id == this->dominantId)
 		{
@@ -186,11 +168,11 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		auto it = this->mapProducerSpeakers.find(producer->id);
+		const auto it = this->mapProducerSpeakers.find(producer->id);
 
 		if (it != this->mapProducerSpeakers.end())
 		{
-			auto* producerSpeaker = it->second;
+			auto* const producerSpeaker = it->second.get();
 
 			producerSpeaker->speaker->paused = true;
 		}
@@ -200,11 +182,11 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		auto it = this->mapProducerSpeakers.find(producer->id);
+		const auto it = this->mapProducerSpeakers.find(producer->id);
 
 		if (it != this->mapProducerSpeakers.end())
 		{
-			auto* producerSpeaker = it->second;
+			auto* const producerSpeaker = it->second.get();
 
 			producerSpeaker->speaker->paused = false;
 		}
@@ -229,12 +211,12 @@ namespace RTC
 
 		const uint8_t volume = 127 - level;
 
-		auto it = this->mapProducerSpeakers.find(producer->id);
+		const auto it = this->mapProducerSpeakers.find(producer->id);
 
 		if (it != this->mapProducerSpeakers.end())
 		{
-			auto* producerSpeaker = it->second;
-			const int64_t nowMs   = this->shared->GetTimeMs();
+			const auto* producerSpeaker = it->second.get();
+			const int64_t nowMs         = this->shared->GetTimeMs();
 
 			producerSpeaker->speaker->LevelChanged(volume, nowMs);
 		}
@@ -279,7 +261,7 @@ namespace RTC
 
 		if (!this->mapProducerSpeakers.empty() && CalculateActiveSpeaker())
 		{
-			auto notification = FBS::ActiveSpeakerObserver::CreateDominantSpeakerNotificationDirect(
+			const auto notification = FBS::ActiveSpeakerObserver::CreateDominantSpeakerNotificationDirect(
 			  this->shared->GetChannelNotifier()->GetBufferBuilder(), this->dominantId.c_str());
 
 			this->shared->GetChannelNotifier()->Emit(
@@ -295,6 +277,7 @@ namespace RTC
 		MS_TRACE();
 
 		std::string newDominantId;
+
 		const int32_t speakerCount = this->mapProducerSpeakers.size();
 
 		if (speakerCount == 0)
@@ -303,22 +286,24 @@ namespace RTC
 		}
 		else if (speakerCount == 1)
 		{
-			auto it               = this->mapProducerSpeakers.begin();
-			auto* producerSpeaker = it->second;
-			newDominantId         = producerSpeaker->producer->id;
+			const auto it               = this->mapProducerSpeakers.begin();
+			const auto* producerSpeaker = it->second.get();
+
+			newDominantId = producerSpeaker->producer->id;
 		}
 		else
 		{
-			Speaker* dominantSpeaker = (this->dominantId.empty())
+			Speaker* dominantSpeaker = this->dominantId.empty()
 			                             ? nullptr
 			                             : this->mapProducerSpeakers.at(this->dominantId)->speaker.get();
 
 			if (dominantSpeaker == nullptr)
 			{
-				auto it               = this->mapProducerSpeakers.begin();
-				newDominantId         = it->first;
-				auto* producerSpeaker = it->second;
-				dominantSpeaker       = producerSpeaker->speaker.get();
+				const auto it               = this->mapProducerSpeakers.begin();
+				const auto* producerSpeaker = it->second.get();
+
+				newDominantId   = it->first;
+				dominantSpeaker = producerSpeaker->speaker.get();
 			}
 			else
 			{
@@ -326,13 +311,14 @@ namespace RTC
 			}
 
 			dominantSpeaker->EvalActivityScores();
+
 			double newDominantC2 = C2;
 
-			for (auto& kv : this->mapProducerSpeakers)
+			for (const auto& kv : this->mapProducerSpeakers)
 			{
-				auto* producerSpeaker = kv.second;
-				auto* speaker         = producerSpeaker->speaker.get();
-				const auto& id        = producerSpeaker->producer->id;
+				const auto* producerSpeaker = kv.second.get();
+				auto* const speaker         = producerSpeaker->speaker.get();
+				const auto& id              = producerSpeaker->producer->id;
 
 				if (id == this->dominantId || speaker->paused)
 				{
@@ -374,12 +360,12 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		for (auto& kv : this->mapProducerSpeakers)
+		for (const auto& kv : this->mapProducerSpeakers)
 		{
-			auto* producerSpeaker = kv.second;
-			auto* speaker         = producerSpeaker->speaker.get();
-			const auto& id        = producerSpeaker->producer->id;
-			const int64_t idleMs  = nowMs - speaker->lastLevelChangeAtMs;
+			const auto* producerSpeaker = kv.second.get();
+			auto* const speaker         = producerSpeaker->speaker.get();
+			const auto& id              = producerSpeaker->producer->id;
+			const int64_t idleMs        = nowMs - speaker->lastLevelChangeAtMs;
 
 			if (SpeakerIdleTimeoutMs < idleMs && (this->dominantId.empty() || id != this->dominantId))
 			{
@@ -480,7 +466,7 @@ namespace RTC
 
 			this->lastLevelChangeAtMs = nowMs;
 
-			int8_t b{ 0 };
+			uint8_t b{ 0 };
 
 			if (level < MinLevel)
 			{
@@ -503,6 +489,7 @@ namespace RTC
 
 			for (uint32_t i{ 0 }; i < intervalsUpdated; ++i)
 			{
+				// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 				this->levels[this->nextLevelIndex] = b;
 				this->nextLevelIndex               = (this->nextLevelIndex + 1) % LevelsBuffLen;
 			}
@@ -522,8 +509,9 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		const int8_t minLevel = this->minLevel + SubunitLengthN1;
-		bool changed          = false;
+		const uint32_t minLevel = this->minLevel + SubunitLengthN1;
+
+		bool changed = false;
 
 		for (uint32_t i = 0; i < ImmediateBuffLen; ++i)
 		{
@@ -533,7 +521,9 @@ namespace RTC
 			const size_t levelIndex = this->nextLevelIndex >= (i + 1)
 			                            ? this->nextLevelIndex - i - 1
 			                            : this->nextLevelIndex + LevelsBuffLen - i - 1;
-			uint8_t level           = this->levels[levelIndex];
+
+			// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+			auto level = this->levels[levelIndex];
 
 			if (level < minLevel)
 			{
@@ -542,8 +532,10 @@ namespace RTC
 
 			const uint8_t immediate = (level / SubunitLengthN1);
 
+			// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 			if (this->immediates[i] != immediate)
 			{
+				// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 				this->immediates[i] = immediate;
 				changed             = true;
 			}
@@ -570,6 +562,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
+		// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 		this->immediateActivityScore = computeActivityScore(this->immediates[0], N1, 0.5, 0.78);
 	}
 
@@ -577,6 +570,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
+		// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 		this->mediumActivityScore = computeActivityScore(this->mediums[0], N2, 0.5, 24);
 	}
 
@@ -584,19 +578,20 @@ namespace RTC
 	{
 		MS_TRACE();
 
+		// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
 		this->longActivityScore = computeActivityScore(this->longs[0], N3, 0.5, 47);
 	}
 
-	void ActiveSpeakerObserver::Speaker::UpdateMinLevel(int8_t level)
+	void ActiveSpeakerObserver::Speaker::UpdateMinLevel(uint8_t level)
 	{
 		MS_TRACE();
 
-		if (level == MinLevel)
+		if (std::cmp_equal(level, MinLevel))
 		{
 			return;
 		}
 
-		if ((this->minLevel == MinLevel) || (this->minLevel > level))
+		if ((this->minLevel == MinLevel) || std::cmp_greater(this->minLevel, level))
 		{
 			this->minLevel              = level;
 			this->nextMinLevel          = MinLevel;
@@ -611,7 +606,7 @@ namespace RTC
 			}
 			else
 			{
-				this->nextMinLevel = std::min<int>(this->nextMinLevel, level);
+				this->nextMinLevel = std::min(this->nextMinLevel, level);
 
 				this->nextMinLevelWindowLen++;
 
@@ -628,7 +623,7 @@ namespace RTC
 						newMinLevel = MaxLevel;
 					}
 
-					this->minLevel              = static_cast<int8_t>(newMinLevel);
+					this->minLevel              = static_cast<uint8_t>(newMinLevel);
 					this->nextMinLevel          = MinLevel;
 					this->nextMinLevelWindowLen = 0;
 				}

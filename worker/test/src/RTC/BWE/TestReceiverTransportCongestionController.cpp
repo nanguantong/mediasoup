@@ -1,8 +1,8 @@
 #include "common.hpp"
 #include "RTC/BWE/ReceiverTransportCongestionController.hpp"
-#include "RTC/NEW_RTCP/packet/Packet.hpp"
-#include "RTC/NEW_RTCP/packet/RembPacket.hpp"
-#include "RTC/RTP/HeaderExtensionIds.hpp"
+#include "RTC/RTCP/packet/Packet.hpp"
+#include "RTC/RTCP/packet/RembPacket.hpp"
+#include "RTC/RTP/ExtensionMapping.hpp"
 #include "RTC/RTP/Packet.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "Utils.hpp"
@@ -20,13 +20,13 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 	public:
 		void OnReceiverTransportCongestionControllerSendRtcpPacket(
 		  RTC::BWE::ReceiverTransportCongestionController* /*receiverTransportCongestionControl*/,
-		  const RTC::NEW_RTCP::Packet* packet) override
+		  const RTC::RTCP::Packet* packet) override
 		{
 			this->rtcpTypes.push_back(packet->GetType());
 
-			if (packet->GetType() == RTC::NEW_RTCP::Packet::PacketType::PSFB)
+			if (packet->GetType() == RTC::RTCP::Packet::PacketType::PSFB)
 			{
-				const auto* rembPacket = static_cast<const RTC::NEW_RTCP::RembPacket*>(packet);
+				const auto* rembPacket = static_cast<const RTC::RTCP::RembPacket*>(packet);
 
 				this->rembBitrates.push_back(rembPacket->GetBitrate());
 				this->rembSsrcs.push_back(rembPacket->GetSsrcs());
@@ -34,7 +34,7 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 		}
 
 	public:
-		std::vector<RTC::NEW_RTCP::Packet::PacketType> rtcpTypes;
+		std::vector<RTC::RTCP::Packet::PacketType> rtcpTypes;
 		std::vector<int64_t> rembBitrates;
 		std::vector<std::vector<uint32_t>> rembSsrcs;
 	};
@@ -49,7 +49,7 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 	constexpr size_t PayloadSize{ 1000 };
 	// Packets a burst is made of, which is what the estimation of the incoming link
 	// is drawn from.
-	constexpr int Probes{ 5 };
+	constexpr uint16_t Probes{ 5 };
 	constexpr std::string_view FeedbackTimerLabel{ "transport-wide-cc-feedback-generator-send" };
 
 	int64_t nowUs{ BaseTimeUs };
@@ -80,13 +80,13 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 			 rtpCommon::DataBuffer }
 		};
 
-		REQUIRE(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions) == true);
+		REQUIRE(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::OneByte, extensions) == true);
 
-		RTC::RTP::HeaderExtensionIds headerExtensionIds;
+		RTC::RTP::ExtensionMapping extensionMapping;
 
-		headerExtensionIds.transportWideCc01 = TransportWideCc01Id;
+		extensionMapping.transportWideCc01 = TransportWideCc01Id;
 
-		packet->AssignExtensionIds(headerExtensionIds);
+		packet->SetExtensionMapping(extensionMapping);
 		packet->SetPayloadLength(PayloadSize);
 
 		REQUIRE(packet->UpdateTransportWideCc01(wideSeqNumber));
@@ -110,13 +110,13 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 			{ RTC::RtpHeaderExtensionUri::Type::ABS_SEND_TIME, AbsSendTimeId, /*len*/ 3, rtpCommon::DataBuffer }
 		};
 
-		REQUIRE(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions) == true);
+		REQUIRE(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::OneByte, extensions) == true);
 
-		RTC::RTP::HeaderExtensionIds headerExtensionIds;
+		RTC::RTP::ExtensionMapping extensionMapping;
 
-		headerExtensionIds.absSendTime = AbsSendTimeId;
+		extensionMapping.absSendTime = AbsSendTimeId;
 
-		packet->AssignExtensionIds(headerExtensionIds);
+		packet->SetExtensionMapping(extensionMapping);
 		packet->SetPayloadLength(PayloadSize);
 
 		REQUIRE(packet->UpdateAbsSendTime(Utils::Time::TimeUsToAbsSendTime(sendTimeUs)));
@@ -153,7 +153,7 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 		REQUIRE(timer->EvaluateHasExpired());
 
 		REQUIRE(listener.rtcpTypes.size() == 1);
-		REQUIRE(listener.rtcpTypes.at(0) == RTC::NEW_RTCP::Packet::PacketType::RTPFB);
+		REQUIRE(listener.rtcpTypes.at(0) == RTC::RTCP::Packet::PacketType::RTPFB);
 
 		// The estimating is the remote sender's job for such a packet.
 		REQUIRE(receiverTransportCongestionControl.GetAvailableBitrate().has_value() == false);
@@ -187,7 +187,7 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 		REQUIRE(timer->EvaluateHasExpired());
 
 		REQUIRE(listener.rtcpTypes.size() == 1);
-		REQUIRE(listener.rtcpTypes.at(0) == RTC::NEW_RTCP::Packet::PacketType::RTPFB);
+		REQUIRE(listener.rtcpTypes.at(0) == RTC::RTCP::Packet::PacketType::RTPFB);
 	}
 
 	SECTION("a packet carrying only abs-send-time is estimated here and announced as a REMB")
@@ -201,7 +201,7 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 
 		// A burst of packets spaced evenly, which is what the estimation is drawn
 		// from at the beginning of a call.
-		for (int idx{ 0 }; idx < Probes; ++idx)
+		for (uint16_t idx{ 0 }; idx < Probes; ++idx)
 		{
 			nowUs += 10 * 1000;
 
@@ -212,7 +212,7 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 		}
 
 		REQUIRE(listener.rtcpTypes.size() == 1);
-		REQUIRE(listener.rtcpTypes.at(0) == RTC::NEW_RTCP::Packet::PacketType::PSFB);
+		REQUIRE(listener.rtcpTypes.at(0) == RTC::RTCP::Packet::PacketType::PSFB);
 		REQUIRE(listener.rembBitrates.at(0) > 0);
 
 		// What went out is what is reported as available.
@@ -249,7 +249,7 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 		// The abs-send-time stream was estimated here and announced right away,
 		// while the transport-cc one waits for the periodic feedback.
 		REQUIRE(listener.rtcpTypes.size() == 1);
-		REQUIRE(listener.rtcpTypes.at(0) == RTC::NEW_RTCP::Packet::PacketType::PSFB);
+		REQUIRE(listener.rtcpTypes.at(0) == RTC::RTCP::Packet::PacketType::PSFB);
 
 		// And only the abs-send-time stream is in the REMB, since the other one is
 		// not estimated here at all.
@@ -264,7 +264,7 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 		REQUIRE(timer->EvaluateHasExpired());
 
 		REQUIRE(listener.rtcpTypes.size() == 2);
-		REQUIRE(listener.rtcpTypes.at(1) == RTC::NEW_RTCP::Packet::PacketType::RTPFB);
+		REQUIRE(listener.rtcpTypes.at(1) == RTC::RTCP::Packet::PacketType::RTPFB);
 	}
 
 	SECTION("a stream that is removed stops being announced")
@@ -275,7 +275,7 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 		  std::addressof(listener), std::addressof(shared), {});
 
 		// A burst where two streams alternate, so that the estimation applies to both.
-		for (int idx{ 0 }; idx < Probes; ++idx)
+		for (uint16_t idx{ 0 }; idx < Probes; ++idx)
 		{
 			nowUs += 10 * 1000;
 
@@ -310,7 +310,7 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 		  std::addressof(listener), std::addressof(shared), {});
 
 		// The very same burst that gives an estimation when it carries video.
-		for (int idx{ 0 }; idx < Probes; ++idx)
+		for (uint16_t idx{ 0 }; idx < Probes; ++idx)
 		{
 			nowUs += 10 * 1000;
 
@@ -350,7 +350,7 @@ SCENARIO("BWE ReceiverTransportCongestionController", "[bwe][receivertransportco
 		REQUIRE(timer->EvaluateHasExpired());
 
 		REQUIRE(listener.rtcpTypes.size() == 1);
-		REQUIRE(listener.rtcpTypes.at(0) == RTC::NEW_RTCP::Packet::PacketType::RTPFB);
+		REQUIRE(listener.rtcpTypes.at(0) == RTC::RTCP::Packet::PacketType::RTPFB);
 	}
 
 	SECTION("the cap is announced even for a packet that is only reported back")

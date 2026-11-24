@@ -6,7 +6,9 @@
 #include <deque>
 #include <map>
 #include <set>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mocks
@@ -27,11 +29,15 @@ namespace mocks
 
 				void OnAssociationConnecting() override
 				{
+					++this->onAssociationConnectingCalls;
+
 					this->connecting = true;
 				}
 
 				void OnAssociationConnected() override
 				{
+					++this->onAssociationConnectedCalls;
+
 					this->connecting = false;
 					this->connected  = true;
 				}
@@ -49,6 +55,8 @@ namespace mocks
 				void OnAssociationClosed(
 				  ::RTC::SCTP::Types::ErrorKind errorKind, std::string_view errorMessage) override
 				{
+					++this->onAssociationClosedCalls;
+
 					this->connecting         = false;
 					this->connected          = false;
 					this->closed             = true;
@@ -149,9 +157,19 @@ namespace mocks
 					return this->connecting;
 				}
 
+				size_t CountOnAssociationConnectingCalls() const
+				{
+					return this->onAssociationConnectingCalls;
+				}
+
 				bool IsConnected() const
 				{
 					return this->connected;
+				}
+
+				size_t CountOnAssociationConnectedCalls() const
+				{
+					return this->onAssociationConnectedCalls;
 				}
 
 				bool HasRestarted() const
@@ -179,6 +197,11 @@ namespace mocks
 					return this->closed;
 				}
 
+				size_t CountOnAssociationClosedCalls() const
+				{
+					return this->onAssociationClosedCalls;
+				}
+
 				::RTC::SCTP::Types::ErrorKind GetClosedErrorKind() const
 				{
 					return this->closedErrorKind;
@@ -204,12 +227,12 @@ namespace mocks
 					return this->erroredErrorMessage;
 				}
 
-				bool HasOnStreamBufferedAmountLowBeenCalledWithStreamId(uint64_t streamId) const
+				bool HasOnStreamBufferedAmountLowBeenCalledWithStreamId(uint16_t streamId) const
 				{
 					return this->onStreamBufferedAmountLowCalls.contains(streamId);
 				}
 
-				size_t CountOnStreamBufferedAmountLowCallsWithStreamId(uint64_t streamId) const
+				size_t CountOnStreamBufferedAmountLowCallsWithStreamId(uint16_t streamId) const
 				{
 					if (!this->onStreamBufferedAmountLowCalls.contains(streamId))
 					{
@@ -280,7 +303,7 @@ namespace mocks
 						return {};
 					}
 
-					const auto packet = std::move(this->sentPackets.front());
+					auto packet = std::move(this->sentPackets.front());
 
 					this->sentPackets.pop_front();
 
@@ -334,12 +357,15 @@ namespace mocks
 
 			private:
 				// Observable state for tests.
+				size_t onAssociationConnectingCalls{ 0 };
 				bool connecting{ false };
+				size_t onAssociationConnectedCalls{ 0 };
 				bool connected{ false };
 				bool restarted{ false };
 				bool failed{ false };
 				::RTC::SCTP::Types::ErrorKind failedErrorKind;
 				std::string failedErrorMessage;
+				size_t onAssociationClosedCalls{ 0 };
 				bool closed{ false };
 				::RTC::SCTP::Types::ErrorKind closedErrorKind;
 				std::string closedErrorMessage;

@@ -2,26 +2,31 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "RTC/Transport.hpp"
-#include "FBS/sctpAssociation.h"
-#include "FBS/transport.h"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "RTC/Consts.hpp"
-#include "RTC/Consumer.hpp"
-#include "RTC/RTCP/FeedbackPs.hpp"
-#include "RTC/RTCP/FeedbackPsAfb.hpp"
-#include "RTC/RTCP/FeedbackPsFir.hpp"
-#include "RTC/RTCP/FeedbackPsRemb.hpp"
-#include "RTC/RTCP/FeedbackRtpNack.hpp"
-#include "RTC/RTCP/FeedbackRtpTransport.hpp"
-#include "RTC/RTCP/XrDelaySinceLastRr.hpp"
-#include "RTC/RTCP/XrReceiverReferenceTime.hpp"
+#include "RTC/RTCP/packet/AnyPayloadSpecificFeedbackPacket.hpp"
+#include "RTC/RTCP/packet/AnyTransportLayerFeedbackPacket.hpp"
+#include "RTC/RTCP/packet/ByePacket.hpp"
+#include "RTC/RTCP/packet/ExtendedReport.hpp"
+#include "RTC/RTCP/packet/FirPacket.hpp"
+#include "RTC/RTCP/packet/NackPacket.hpp"
+#include "RTC/RTCP/packet/ReceiverReportPacket.hpp"
+#include "RTC/RTCP/packet/RembPacket.hpp"
+#include "RTC/RTCP/packet/SdesPacket.hpp"
+#include "RTC/RTCP/packet/SenderReportPacket.hpp"
+#include "RTC/RTCP/packet/TransportWideCcPacket.hpp"
+#include "RTC/RTCP/packet/XrPacket.hpp"
+#include "RTC/RTCP/packet/extendedReports/DlrrExtendedReport.hpp"
+#include "RTC/RTCP/packet/extendedReports/RrtExtendedReport.hpp"
+#include "RTC/RTP/RtpStreamSend.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "RTC/SCTP/association/Association.hpp"
 #include "RTC/SCTP/packet/parameters/ZeroChecksumAcceptableParameter.hpp"
 #include "RTC/SCTP/public/SctpOptions.hpp"
 #include "RTC/SubchannelsCodec.hpp"
 #include "Utils.hpp"
+#include <FBS/sctpAssociation.h>
 #ifdef MS_RTC_LOGGER_RTP
 #include "RTC/RtcLogger/RtpPacket.hpp"
 #endif
@@ -31,6 +36,10 @@ namespace RTC
 {
 	/* Static. */
 
+	// Buffer in which the RTCP compound packets to send are built.
+	// NOTE: Every compound packet built in it is sent right away, before the
+	// buffer is used again.
+	alignas(4) static thread_local uint8_t RtcpCompoundPacketBuffer[RTC::Consts::OutgoingRtcpPacketMaxSize];
 	// Highest bitrate the API may ask for (bps), which anything higher is brought
 	// down to. A limit above what the bandwidth estimation deals in is not a
 	// limit, and it also keeps `Types::BitrateInfinite` out of the estimators,
@@ -66,6 +75,8 @@ namespace RTC
 	    sendRtxTransmission(shared, /*ignorePaddingOnlyPackets*/ false, 1000),
 	    sendProbationTransmission(shared, /*ignorePaddingOnlyPackets*/ false, 100),
 	    rttCalculator(this, shared),
+	    rtcpSsrc(Utils::Crypto::GetRandomUInt<uint32_t>(0, 0xFFFFFFFF)),
+	    rtcpCname(Utils::Crypto::GetRandomString(19)),
 	    maxSendMessageSize(options->maxSendMessageSize()),
 	    maxReceiveMessageSize(options->maxReceiveMessageSize())
 #ifdef MS_RTC_LOGGER_SEND_BURST
@@ -88,19 +99,19 @@ namespace RTC
 			this->minOutgoingBitrate = AbsoluteMinBitrate;
 			this->maxOutgoingBitrate = AbsoluteMaxBitrate;
 
-			if (auto maxIncomingBitrate = options->maxIncomingBitrate(); maxIncomingBitrate.has_value())
+			if (const auto maxIncomingBitrate = options->maxIncomingBitrate(); maxIncomingBitrate.has_value())
 			{
 				this->maxIncomingBitrate =
 				  static_cast<int64_t>(std::min<uint64_t>(maxIncomingBitrate.value(), AbsoluteMaxBitrate));
 			}
 
-			if (auto minOutgoingBitrate = options->minOutgoingBitrate(); minOutgoingBitrate.has_value())
+			if (const auto minOutgoingBitrate = options->minOutgoingBitrate(); minOutgoingBitrate.has_value())
 			{
 				this->minOutgoingBitrate =
 				  static_cast<int64_t>(std::min<uint64_t>(minOutgoingBitrate.value(), AbsoluteMaxBitrate));
 			}
 
-			if (auto maxOutgoingBitrate = options->maxOutgoingBitrate(); maxOutgoingBitrate.has_value())
+			if (const auto maxOutgoingBitrate = options->maxOutgoingBitrate(); maxOutgoingBitrate.has_value())
 			{
 				this->maxOutgoingBitrate =
 				  static_cast<int64_t>(std::min<uint64_t>(maxOutgoingBitrate.value(), AbsoluteMaxBitrate));
@@ -109,7 +120,7 @@ namespace RTC
 			this->initialAvailableOutgoingBitrate = DefaultInitialAvailableOutgoingBitrate;
 
 			if (
-			  auto initialAvailableOutgoingBitrate = options->initialAvailableOutgoingBitrate();
+			  const auto initialAvailableOutgoingBitrate = options->initialAvailableOutgoingBitrate();
 			  initialAvailableOutgoingBitrate.has_value())
 			{
 				this->initialAvailableOutgoingBitrate = static_cast<int64_t>(
@@ -181,47 +192,6 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		// The destructor must delete and clear everything silently.
-
-		// Delete all Producers.
-		for (auto& kv : this->mapProducers)
-		{
-			auto* producer = kv.second;
-
-			delete producer;
-		}
-		this->mapProducers.clear();
-
-		// Delete all Consumers.
-		for (auto& kv : this->mapConsumers)
-		{
-			auto* consumer = kv.second;
-
-			delete consumer;
-		}
-		this->mapConsumers.clear();
-		this->mapSsrcConsumer.clear();
-		this->mapRtxSsrcConsumer.clear();
-
-		// Delete all DataProducers.
-		for (auto& kv : this->mapDataProducers)
-		{
-			auto* dataProducer = kv.second;
-
-			delete dataProducer;
-		}
-		this->mapDataProducers.clear();
-
-		// Delete all DataConsumers.
-		for (auto& kv : this->mapDataConsumers)
-		{
-			auto* dataConsumer = kv.second;
-
-			delete dataConsumer;
-		}
-		this->mapDataConsumers.clear();
-		this->mapSctpStreamIdDataConsumers.clear();
-
 		// NOTE: We don't close `this->sctpAssociation` here since the
 		// `SetDestroying()` method has already been called by the Transport
 		// subclass and it closed the SCTP association.
@@ -242,53 +212,49 @@ namespace RTC
 		// this method.
 
 		// Close all Producers.
-		for (auto& kv : this->mapProducers)
+		for (const auto& kv : this->mapProducers)
 		{
-			auto* producer = kv.second;
+			auto* const producer = kv.second.get();
 
 			// Notify the listener.
 			this->listener->OnTransportProducerClosed(this, producer);
-
-			delete producer;
 		}
+
 		this->mapProducers.clear();
 
 		// Delete all Consumers.
-		for (auto& kv : this->mapConsumers)
+		for (const auto& kv : this->mapConsumers)
 		{
-			auto* consumer = kv.second;
+			auto* const consumer = kv.second.get();
 
 			// Notify the listener.
 			this->listener->OnTransportConsumerClosed(this, consumer);
-
-			delete consumer;
 		}
+
 		this->mapConsumers.clear();
 		this->mapSsrcConsumer.clear();
 		this->mapRtxSsrcConsumer.clear();
 
 		// Delete all DataProducers.
-		for (auto& kv : this->mapDataProducers)
+		for (const auto& kv : this->mapDataProducers)
 		{
-			auto* dataProducer = kv.second;
+			auto* const dataProducer = kv.second.get();
 
 			// Notify the listener.
 			this->listener->OnTransportDataProducerClosed(this, dataProducer);
-
-			delete dataProducer;
 		}
+
 		this->mapDataProducers.clear();
 
 		// Delete all DataConsumers.
-		for (auto& kv : this->mapDataConsumers)
+		for (const auto& kv : this->mapDataConsumers)
 		{
-			auto* dataConsumer = kv.second;
+			auto* const dataConsumer = kv.second.get();
 
 			// Notify the listener.
 			this->listener->OnTransportDataConsumerClosed(this, dataConsumer);
-
-			delete dataConsumer;
 		}
+
 		this->mapDataConsumers.clear();
 		this->mapSctpStreamIdDataConsumers.clear();
 	}
@@ -331,8 +297,8 @@ namespace RTC
 
 		for (const auto& kv : this->mapSsrcConsumer)
 		{
-			auto ssrc      = kv.first;
-			auto* consumer = kv.second;
+			const auto ssrc      = kv.first;
+			const auto* consumer = kv.second;
 
 			mapSsrcConsumerId.emplace_back(
 			  FBS::Common::CreateUint32StringDirect(builder, ssrc, consumer->id.c_str()));
@@ -343,8 +309,8 @@ namespace RTC
 
 		for (const auto& kv : this->mapRtxSsrcConsumer)
 		{
-			auto ssrc      = kv.first;
-			auto* consumer = kv.second;
+			const auto ssrc      = kv.first;
+			const auto* consumer = kv.second;
 
 			mapRtxSsrcConsumerId.emplace_back(
 			  FBS::Common::CreateUint32StringDirect(builder, ssrc, consumer->id.c_str()));
@@ -370,26 +336,26 @@ namespace RTC
 			dataConsumerIds.emplace_back(builder.CreateString(dataConsumerId));
 		}
 
-		// Add headerExtensionIds.
-		auto recvRtpHeaderExtensions = FBS::Transport::CreateRecvRtpHeaderExtensions(
+		// Add recvRtpExtensionMapping.
+		const auto recvRtpHeaderExtensions = FBS::Transport::CreateRecvRtpHeaderExtensions(
 		  builder,
-		  this->recvRtpHeaderExtensionIds.mid != 0
-		    ? flatbuffers::Optional<uint8_t>(this->recvRtpHeaderExtensionIds.mid)
+		  this->recvRtpExtensionMapping.mid != 0
+		    ? flatbuffers::Optional<uint8_t>(this->recvRtpExtensionMapping.mid)
 		    : flatbuffers::nullopt,
-		  this->recvRtpHeaderExtensionIds.rid != 0
-		    ? flatbuffers::Optional<uint8_t>(this->recvRtpHeaderExtensionIds.rid)
+		  this->recvRtpExtensionMapping.rid != 0
+		    ? flatbuffers::Optional<uint8_t>(this->recvRtpExtensionMapping.rid)
 		    : flatbuffers::nullopt,
-		  this->recvRtpHeaderExtensionIds.rrid != 0
-		    ? flatbuffers::Optional<uint8_t>(this->recvRtpHeaderExtensionIds.rrid)
+		  this->recvRtpExtensionMapping.rrid != 0
+		    ? flatbuffers::Optional<uint8_t>(this->recvRtpExtensionMapping.rrid)
 		    : flatbuffers::nullopt,
-		  this->recvRtpHeaderExtensionIds.absSendTime != 0
-		    ? flatbuffers::Optional<uint8_t>(this->recvRtpHeaderExtensionIds.absSendTime)
+		  this->recvRtpExtensionMapping.absSendTime != 0
+		    ? flatbuffers::Optional<uint8_t>(this->recvRtpExtensionMapping.absSendTime)
 		    : flatbuffers::nullopt,
-		  this->recvRtpHeaderExtensionIds.transportWideCc01 != 0
-		    ? flatbuffers::Optional<uint8_t>(this->recvRtpHeaderExtensionIds.transportWideCc01)
+		  this->recvRtpExtensionMapping.transportWideCc01 != 0
+		    ? flatbuffers::Optional<uint8_t>(this->recvRtpExtensionMapping.transportWideCc01)
 		    : flatbuffers::nullopt);
 
-		auto rtpListenerOffset = this->rtpListener.FillBuffer(builder);
+		const auto rtpListenerOffset = this->rtpListener.FillBuffer(builder);
 
 		flatbuffers::Offset<FBS::SctpParameters::SctpParameters> sctpParameters;
 		FBS::SctpAssociation::SctpState sctpState{ FBS::SctpAssociation::SctpState::NEW };
@@ -715,20 +681,14 @@ namespace RTC
 				CheckNoProducer(producerId, request->methodCStr);
 
 				// This may throw.
-				auto* producer = new RTC::Producer(this->shared, producerId, this, body);
+				auto producerUniquePtr =
+				  std::make_unique<RTC::Producer>(this->shared, producerId, this, this->rtcpSsrc, body);
+
+				auto* const producer = producerUniquePtr.get();
 
 				// Insert the Producer into the RtpListener.
-				// This may throw. If so, delete the Producer and throw.
-				try
-				{
-					this->rtpListener.AddProducer(producer);
-				}
-				catch (const MediaSoupError&)
-				{
-					delete producer;
-
-					throw;
-				}
+				// This may throw.
+				this->rtpListener.AddProducer(producer);
 
 				// Notify the listener.
 				// This may throw if a Producer with same id already exists.
@@ -740,13 +700,11 @@ namespace RTC
 				{
 					this->rtpListener.RemoveProducer(producer);
 
-					delete producer;
-
 					throw;
 				}
 
 				// Insert into the map.
-				this->mapProducers[producerId] = producer;
+				this->mapProducers[producerId] = std::move(producerUniquePtr);
 
 				// Take this Producer into account for the capture time estimation of its
 				// sender.
@@ -754,59 +712,58 @@ namespace RTC
 					const auto& cname = producer->GetRtpParameters().rtcp.cname;
 
 					this->mapCnameRemoteCaptureTimeEstimator[cname].UpdateSource(
-					  producer->GetRtpHeaderExtensionIds().absCaptureTime != 0);
+					  producer->GetRtpExtensionMapping().absCaptureTime != 0);
 				}
 
 				MS_DEBUG_DEV("Producer created [producerId:%s]", producerId.c_str());
 
 				// Take the transport related RTP header extensions of the Producer and
 				// add them to the Transport.
-				// NOTE: Producer::GetRtpHeaderExtensionIds() returns the original
+				// NOTE: Producer::GetRtpExtensionMapping() returns the original
 				// header extension ids of the Producer (and not their mapped values).
-				const auto& producerRtpHeaderExtensionIds = producer->GetRtpHeaderExtensionIds();
+				const auto& producerRtpExtensionMapping = producer->GetRtpExtensionMapping();
 
-				if (producerRtpHeaderExtensionIds.mid != 0)
+				if (producerRtpExtensionMapping.mid != 0)
 				{
-					this->recvRtpHeaderExtensionIds.mid = producerRtpHeaderExtensionIds.mid;
+					this->recvRtpExtensionMapping.mid = producerRtpExtensionMapping.mid;
 				}
 
-				if (producerRtpHeaderExtensionIds.rid != 0)
+				if (producerRtpExtensionMapping.rid != 0)
 				{
-					this->recvRtpHeaderExtensionIds.rid = producerRtpHeaderExtensionIds.rid;
+					this->recvRtpExtensionMapping.rid = producerRtpExtensionMapping.rid;
 				}
 
-				if (producerRtpHeaderExtensionIds.rrid != 0)
+				if (producerRtpExtensionMapping.rrid != 0)
 				{
-					this->recvRtpHeaderExtensionIds.rrid = producerRtpHeaderExtensionIds.rrid;
+					this->recvRtpExtensionMapping.rrid = producerRtpExtensionMapping.rrid;
 				}
 
-				if (producerRtpHeaderExtensionIds.absSendTime != 0)
+				if (producerRtpExtensionMapping.absSendTime != 0)
 				{
-					this->recvRtpHeaderExtensionIds.absSendTime = producerRtpHeaderExtensionIds.absSendTime;
+					this->recvRtpExtensionMapping.absSendTime = producerRtpExtensionMapping.absSendTime;
 				}
 
-				if (producerRtpHeaderExtensionIds.transportWideCc01 != 0)
+				if (producerRtpExtensionMapping.transportWideCc01 != 0)
 				{
-					this->recvRtpHeaderExtensionIds.transportWideCc01 =
-					  producerRtpHeaderExtensionIds.transportWideCc01;
+					this->recvRtpExtensionMapping.transportWideCc01 =
+					  producerRtpExtensionMapping.transportWideCc01;
 				}
 
-				if (producerRtpHeaderExtensionIds.dependencyDescriptor != 0)
+				if (producerRtpExtensionMapping.dependencyDescriptor != 0)
 				{
-					this->recvRtpHeaderExtensionIds.dependencyDescriptor =
-					  producerRtpHeaderExtensionIds.dependencyDescriptor;
+					this->recvRtpExtensionMapping.dependencyDescriptor =
+					  producerRtpExtensionMapping.dependencyDescriptor;
 				}
 
 				// NOTE: Not transport related, but needed here so that received packets carry
 				// its id and `RtpStreamRecv` can read the extension off them.
-				if (producerRtpHeaderExtensionIds.absCaptureTime != 0)
+				if (producerRtpExtensionMapping.absCaptureTime != 0)
 				{
-					this->recvRtpHeaderExtensionIds.absCaptureTime =
-					  producerRtpHeaderExtensionIds.absCaptureTime;
+					this->recvRtpExtensionMapping.absCaptureTime = producerRtpExtensionMapping.absCaptureTime;
 				}
 
 				// Create status response.
-				auto responseOffset = FBS::Transport::CreateProduceResponse(
+				const auto responseOffset = FBS::Transport::CreateProduceResponse(
 				  request->GetBufferBuilder(), FBS::RtpParameters::Type(producer->GetType()));
 
 				request->Accept(FBS::Response::Body::Transport_ProduceResponse, responseOffset);
@@ -855,30 +812,24 @@ namespace RTC
 				CheckNoConsumer(consumerId, request->methodCStr);
 
 				// This may throw.
-				auto* consumer = new RTC::Consumer(this->shared, consumerId, producerId, this, body);
+				auto consumerUniquePtr =
+				  std::make_unique<RTC::Consumer>(this->shared, consumerId, producerId, this, body);
+
+				auto* const consumer = consumerUniquePtr.get();
 
 				// Notify the listener.
 				// This may throw if no Producer is found.
-				try
-				{
-					this->listener->OnTransportNewConsumer(this, consumer, producerId);
-				}
-				catch (const MediaSoupError&)
-				{
-					delete consumer;
-
-					throw;
-				}
+				this->listener->OnTransportNewConsumer(this, consumer, producerId);
 
 				// Insert into the maps.
-				this->mapConsumers[consumerId] = consumer;
+				this->mapConsumers[consumerId] = std::move(consumerUniquePtr);
 
-				for (auto ssrc : consumer->GetMediaSsrcs())
+				for (const auto ssrc : consumer->GetMediaSsrcs())
 				{
 					this->mapSsrcConsumer[ssrc] = consumer;
 				}
 
-				for (auto ssrc : consumer->GetRtxSsrcs())
+				for (const auto ssrc : consumer->GetRtxSsrcs())
 				{
 					this->mapRtxSsrcConsumer[ssrc] = consumer;
 				}
@@ -898,8 +849,8 @@ namespace RTC
 					  static_cast<uint8_t>(preferredLayers.temporal));
 				}
 
-				auto scoreOffset    = consumer->FillBufferScore(request->GetBufferBuilder());
-				auto responseOffset = FBS::Transport::CreateConsumeResponse(
+				const auto scoreOffset    = consumer->FillBufferScore(request->GetBufferBuilder());
+				const auto responseOffset = FBS::Transport::CreateConsumeResponse(
 				  request->GetBufferBuilder(),
 				  consumer->IsPaused(),
 				  consumer->IsProducerPaused(),
@@ -961,8 +912,10 @@ namespace RTC
 				CheckNoDataProducer(dataProducerId, request->methodCStr);
 
 				// This may throw.
-				auto* dataProducer = new RTC::DataProducer(
+				auto dataProducerUniquePtr = std::make_unique<RTC::DataProducer>(
 				  this->shared, dataProducerId, this->maxReceiveMessageSize, this, body);
+
+				auto* const dataProducer = dataProducerUniquePtr.get();
 
 				// Verify the type of the DataProducer.
 				switch (dataProducer->GetType())
@@ -971,8 +924,6 @@ namespace RTC
 					{
 						if (!this->sctpAssociation)
 						{
-							delete dataProducer;
-
 							MS_THROW_TYPE_ERROR(
 							  "cannot create a DataProducer of type 'sctp', SCTP not enabled in this Transport");
 						}
@@ -984,8 +935,6 @@ namespace RTC
 					{
 						if (!this->direct)
 						{
-							delete dataProducer;
-
 							MS_THROW_TYPE_ERROR(
 							  "cannot create a DataProducer of type 'direct', not a direct Transport");
 						}
@@ -997,17 +946,8 @@ namespace RTC
 				if (dataProducer->GetType() == RTC::DataProducer::Type::SCTP)
 				{
 					// Insert the DataProducer into the SctpListener.
-					// This may throw. If so, delete the DataProducer and throw.
-					try
-					{
-						this->sctpListener.AddDataProducer(dataProducer);
-					}
-					catch (const MediaSoupError&)
-					{
-						delete dataProducer;
-
-						throw;
-					}
+					// This may throw.
+					this->sctpListener.AddDataProducer(dataProducer);
 				}
 
 				// Notify the listener.
@@ -1023,17 +963,15 @@ namespace RTC
 						this->sctpListener.RemoveDataProducer(dataProducer);
 					}
 
-					delete dataProducer;
-
 					throw;
 				}
 
 				// Insert into the map.
-				this->mapDataProducers[dataProducerId] = dataProducer;
+				this->mapDataProducers[dataProducerId] = std::move(dataProducerUniquePtr);
 
 				MS_DEBUG_DEV("DataProducer created [dataProducerId:%s]", dataProducerId.c_str());
 
-				auto dumpOffset = dataProducer->FillBuffer(request->GetBufferBuilder());
+				const auto dumpOffset = dataProducer->FillBuffer(request->GetBufferBuilder());
 
 				request->Accept(FBS::Response::Body::DataProducer_DumpResponse, dumpOffset);
 
@@ -1062,14 +1000,10 @@ namespace RTC
 				CheckNoDataConsumer(dataConsumerId, request->methodCStr);
 
 				// This may throw.
-				auto* dataConsumer = new RTC::DataConsumer(
-				  this->shared,
-				  dataConsumerId,
-				  dataProducerId,
-				  this,
-				  body,
-				  this->maxSendMessageSize,
-				  this->IsPipe());
+				auto dataConsumerUniquePtr = std::make_unique<RTC::DataConsumer>(
+				  this->shared, dataConsumerId, dataProducerId, this, body, this->maxSendMessageSize, IsPipe());
+
+				auto* const dataConsumer = dataConsumerUniquePtr.get();
 
 				// Verify the type of the DataConsumer.
 				switch (dataConsumer->GetType())
@@ -1078,24 +1012,13 @@ namespace RTC
 					{
 						if (!this->sctpAssociation)
 						{
-							delete dataConsumer;
-
 							MS_THROW_TYPE_ERROR(
 							  "cannot create a DataConsumer of type 'sctp', SCTP not enabled in this Transport");
 						}
 
-						try
-						{
-							// This may throw.
-							CheckNoSctpDataConsumer(
-							  dataConsumer->GetSctpStreamParameters().streamId, request->methodCStr);
-						}
-						catch (const MediaSoupError&)
-						{
-							delete dataConsumer;
-
-							throw;
-						}
+						// This may throw.
+						CheckNoSctpDataConsumer(
+						  dataConsumer->GetSctpStreamParameters().streamId, request->methodCStr);
 
 						break;
 					}
@@ -1104,8 +1027,6 @@ namespace RTC
 					{
 						if (!this->direct)
 						{
-							delete dataConsumer;
-
 							MS_THROW_TYPE_ERROR(
 							  "cannot create a DataConsumer of type 'direct', not a direct Transport");
 						}
@@ -1116,19 +1037,10 @@ namespace RTC
 
 				// Notify the listener.
 				// This may throw if no DataProducer is found.
-				try
-				{
-					this->listener->OnTransportNewDataConsumer(this, dataConsumer, dataProducerId);
-				}
-				catch (const MediaSoupError&)
-				{
-					delete dataConsumer;
-
-					throw;
-				}
+				this->listener->OnTransportNewDataConsumer(this, dataConsumer, dataProducerId);
 
 				// Insert into the maps.
-				this->mapDataConsumers[dataConsumerId] = dataConsumer;
+				this->mapDataConsumers[dataConsumerId] = std::move(dataConsumerUniquePtr);
 
 				if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
 				{
@@ -1141,7 +1053,7 @@ namespace RTC
 				  dataConsumerId.c_str(),
 				  dataProducerId.c_str());
 
-				auto dumpOffset = dataConsumer->FillBuffer(request->GetBufferBuilder());
+				const auto dumpOffset = dataConsumer->FillBuffer(request->GetBufferBuilder());
 
 				request->Accept(FBS::Response::Body::DataConsumer_DumpResponse, dumpOffset);
 
@@ -1193,14 +1105,16 @@ namespace RTC
 				const auto* body = request->data->body_as<FBS::Transport::CloseProducerRequest>();
 
 				// This may throw.
-				RTC::Producer* producer =
+				RTC::Producer* const producer =
 				  AssertAndGetProducerById(body->producerId()->str(), request->methodCStr);
+
+				// Remove it from the map. The extracted entry also keeps the Producer
+				// alive, so `producer` remains valid below, and deletes it when leaving
+				// this block.
+				const auto extractedProducer = this->mapProducers.extract(producer->id);
 
 				// Remove it from the RtpListener.
 				this->rtpListener.RemoveProducer(producer);
-
-				// Remove it from the map.
-				this->mapProducers.erase(producer->id);
 
 				// Remove the capture time estimator of its sender once its last Producer
 				// is gone.
@@ -1209,9 +1123,9 @@ namespace RTC
 
 					const bool cnameStillInUse = std::ranges::any_of(
 					  this->mapProducers,
-					  [&cname](const auto& kv)
+					  [&cname](const std::pair<std::string, std::unique_ptr<RTC::Producer>>& kv) -> bool
 					  {
-						  const auto* otherProducer = kv.second;
+						  const auto* otherProducer = kv.second.get();
 
 						  return otherProducer->GetRtpParameters().rtcp.cname == cname;
 					  });
@@ -1225,7 +1139,7 @@ namespace RTC
 				// Tell the child class to clear associated SSRCs.
 				for (const auto& kv : producer->GetRtpStreams())
 				{
-					auto* rtpStream = kv.first;
+					const auto* const rtpStream = kv.first;
 
 					RecvStreamClosed(rtpStream->GetSsrc());
 
@@ -1250,9 +1164,6 @@ namespace RTC
 
 				MS_DEBUG_DEV("Producer closed [producerId:%s]", producer->id.c_str());
 
-				// Delete it.
-				delete producer;
-
 				request->Accept();
 
 				break;
@@ -1263,13 +1174,15 @@ namespace RTC
 				const auto* body = request->data->body_as<FBS::Transport::CloseConsumerRequest>();
 
 				// This may throw.
-				RTC::Consumer* consumer =
+				RTC::Consumer* const consumer =
 				  AssertAndGetConsumerById(body->consumerId()->str(), request->methodCStr);
 
-				// Remove it from the maps.
-				this->mapConsumers.erase(consumer->id);
+				// Remove it from the maps. The extracted entry also keeps the Consumer
+				// alive, so `consumer` remains valid below, and deletes it when leaving
+				// this block.
+				const auto extractedConsumer = this->mapConsumers.extract(consumer->id);
 
-				for (auto ssrc : consumer->GetMediaSsrcs())
+				for (const auto ssrc : consumer->GetMediaSsrcs())
 				{
 					this->mapSsrcConsumer.erase(ssrc);
 
@@ -1277,7 +1190,7 @@ namespace RTC
 					SendStreamClosed(ssrc);
 				}
 
-				for (auto ssrc : consumer->GetRtxSsrcs())
+				for (const auto ssrc : consumer->GetRtxSsrcs())
 				{
 					this->mapRtxSsrcConsumer.erase(ssrc);
 
@@ -1289,9 +1202,6 @@ namespace RTC
 				this->listener->OnTransportConsumerClosed(this, consumer);
 
 				MS_DEBUG_DEV("Consumer closed [consumerId:%s]", consumer->id.c_str());
-
-				// Delete it.
-				delete consumer;
 
 				request->Accept();
 
@@ -1317,17 +1227,19 @@ namespace RTC
 				const auto* body = request->data->body_as<FBS::Transport::CloseDataProducerRequest>();
 
 				// This may throw.
-				RTC::DataProducer* dataProducer =
+				RTC::DataProducer* const dataProducer =
 				  AssertAndGetDataProducerById(body->dataProducerId()->str(), request->methodCStr);
+
+				// Remove it from the map. The extracted entry also keeps the
+				// DataProducer alive, so `dataProducer` remains valid below, and deletes
+				// it when leaving this block.
+				const auto extractedDataProducer = this->mapDataProducers.extract(dataProducer->id);
 
 				if (dataProducer->GetType() == RTC::DataProducer::Type::SCTP)
 				{
 					// Remove it from the SctpListener.
 					this->sctpListener.RemoveDataProducer(dataProducer);
 				}
-
-				// Remove it from the map.
-				this->mapDataProducers.erase(dataProducer->id);
 
 				// https://datatracker.ietf.org/doc/html/rfc8831#section-6.7
 				//
@@ -1347,9 +1259,6 @@ namespace RTC
 
 				MS_DEBUG_DEV("DataProducer closed [dataProducerId:%s]", dataProducer->id.c_str());
 
-				// Delete it.
-				delete dataProducer;
-
 				request->Accept();
 
 				break;
@@ -1365,11 +1274,13 @@ namespace RTC
 				const auto* body = request->data->body_as<FBS::Transport::CloseDataConsumerRequest>();
 
 				// This may throw.
-				RTC::DataConsumer* dataConsumer =
+				RTC::DataConsumer* const dataConsumer =
 				  AssertAndGetDataConsumerById(body->dataConsumerId()->str(), request->methodCStr);
 
-				// Remove it from the maps.
-				this->mapDataConsumers.erase(dataConsumer->id);
+				// Remove it from the maps. The extracted entry also keeps the
+				// DataConsumer alive, so `dataConsumer` remains valid below, and deletes
+				// it when leaving this block.
+				const auto extractedDataConsumer = this->mapDataConsumers.extract(dataConsumer->id);
 
 				if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
 				{
@@ -1391,9 +1302,6 @@ namespace RTC
 
 				MS_DEBUG_DEV("DataConsumer closed [dataConsumerId:%s]", dataConsumer->id.c_str());
 
-				// Delete it.
-				delete dataConsumer;
-
 				request->Accept();
 
 				break;
@@ -1410,13 +1318,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		switch (notification->data->event())
-		{
-			default:
-			{
-				MS_ERROR("unknown event '%s'", notification->eventCStr);
-			}
-		}
+		MS_ERROR("unknown event '%s'", notification->eventCStr);
 	}
 
 	void Transport::SetDestroying()
@@ -1445,9 +1347,9 @@ namespace RTC
 		MayCreateReceiverTransportCongestionController();
 
 		// Tell all Consumers.
-		for (auto& kv : this->mapConsumers)
+		for (const auto& kv : this->mapConsumers)
 		{
-			auto* consumer = kv.second;
+			auto* const consumer = kv.second.get();
 
 			consumer->TransportConnected();
 		}
@@ -1473,7 +1375,7 @@ namespace RTC
 		}
 
 		// Start the RTCP timer.
-		this->rtcpTimer->Start(RTC::RTCP::MaxVideoIntervalMs / 2);
+		this->rtcpTimer->Start(RTC::Consts::MaxVideoRtcpIntervalMs / 2);
 	}
 
 	void Transport::Disconnected()
@@ -1481,9 +1383,9 @@ namespace RTC
 		MS_TRACE();
 
 		// Tell all Consumers.
-		for (auto& kv : this->mapConsumers)
+		for (const auto& kv : this->mapConsumers)
 		{
-			auto* consumer = kv.second;
+			auto* const consumer = kv.second.get();
 
 			consumer->TransportDisconnected();
 		}
@@ -1527,10 +1429,10 @@ namespace RTC
 
 		// Apply the Transport RTP header extension ids so the RTP listener can use
 		// them.
-		packet->AssignExtensionIds(this->recvRtpHeaderExtensionIds);
+		packet->SetExtensionMapping(this->recvRtpExtensionMapping);
 
 		// Get the associated Producer.
-		RTC::Producer* producer = this->rtpListener.GetProducer(packet);
+		RTC::Producer* const producer = this->rtpListener.GetProducer(packet);
 
 		// NOTE: Done before giving up on a packet with no Producer, since its
 		// arrival still has to be reported back. A remote peer may well close a
@@ -1560,8 +1462,6 @@ namespace RTC
 			// Tell the child class to remove this SSRC.
 			RecvStreamClosed(packet->GetSsrc());
 
-			delete packet;
-
 			return;
 		}
 
@@ -1572,7 +1472,7 @@ namespace RTC
 		//   producer->id.c_str());
 
 		// Pass the RTP packet to the corresponding Producer.
-		auto result = producer->ReceiveRtpPacket(packet, receivedAtUs);
+		const auto result = producer->ReceiveRtpPacket(packet, receivedAtUs);
 
 		switch (result)
 		{
@@ -1600,24 +1500,18 @@ namespace RTC
 
 			default:;
 		}
-
-		delete packet;
 	}
 
-	void Transport::ReceiveRtcpPacket(RTC::RTCP::Packet* packet, int64_t receivedAtUs)
+	void Transport::ReceiveRtcpPacket(const RTC::RTCP::CompoundPacket* compoundPacket, int64_t receivedAtUs)
 	{
 		MS_TRACE();
 
 		// Handle each RTCP packet.
-		while (packet)
+		for (auto it = compoundPacket->PacketsBegin(); it != compoundPacket->PacketsEnd(); ++it)
 		{
+			const RTC::RTCP::Packet* packet = *it;
+
 			HandleRtcpPacket(packet, receivedAtUs);
-
-			auto* previousPacket = packet;
-
-			packet = packet->GetNext();
-
-			delete previousPacket;
 		}
 	}
 
@@ -1660,7 +1554,7 @@ namespace RTC
 			    ? std::nullopt
 			    : std::optional<int64_t>(sctpStreamParameters.maxPacketLifeTime.value()),
 			.maxRetransmissions =
-			  sctpStreamParameters.ordered ? std::nullopt : sctpStreamParameters.maxRetransmits,
+			  sctpStreamParameters.ordered ? std::nullopt : sctpStreamParameters.maxRetransmits
 			// NOTE: We don't set `lifecyleId` in production.
 		};
 
@@ -1681,7 +1575,7 @@ namespace RTC
 
 			case RTC::SCTP::Types::SendMessageStatus::ERROR_RESOURCE_EXHAUSTION:
 			{
-				const auto sendStatusStringView = RTC::SCTP::Types::sendMessageStatusToString(sendStatus);
+				const auto sendStatusStringView = RTC::SCTP::Types::SendMessageStatusToString(sendStatus);
 
 				MS_WARN_2TAGS(
 				  sctp,
@@ -1702,7 +1596,7 @@ namespace RTC
 
 			default:
 			{
-				const auto sendStatusStringView = RTC::SCTP::Types::sendMessageStatusToString(sendStatus);
+				const auto sendStatusStringView = RTC::SCTP::Types::SendMessageStatusToString(sendStatus);
 
 				MS_WARN_2TAGS(
 				  sctp,
@@ -1733,7 +1627,9 @@ namespace RTC
 			MS_THROW_NOT_FOUND_ERROR("Producer not found [method:%s]", method.c_str());
 		}
 
-		return it->second;
+		auto* const producer = it->second.get();
+
+		return producer;
 	}
 
 	RTC::Consumer* Transport::AssertAndGetConsumerById(
@@ -1748,7 +1644,9 @@ namespace RTC
 			MS_THROW_NOT_FOUND_ERROR("Consumer not found [method:%s]", method.c_str());
 		}
 
-		return it->second;
+		auto* const consumer = it->second.get();
+
+		return consumer;
 	}
 
 	RTC::Consumer* Transport::GetConsumerByMediaSsrc(uint32_t ssrc) const
@@ -1762,7 +1660,7 @@ namespace RTC
 			return nullptr;
 		}
 
-		auto* consumer = mapSsrcConsumerIt->second;
+		auto* const consumer = mapSsrcConsumerIt->second;
 
 		return consumer;
 	}
@@ -1778,7 +1676,7 @@ namespace RTC
 			return nullptr;
 		}
 
-		auto* consumer = mapRtxSsrcConsumerIt->second;
+		auto* const consumer = mapRtxSsrcConsumerIt->second;
 
 		return consumer;
 	}
@@ -1795,7 +1693,9 @@ namespace RTC
 			MS_THROW_NOT_FOUND_ERROR("DataProducer not found [method:%s]", method.c_str());
 		}
 
-		return it->second;
+		auto* const dataProducer = it->second.get();
+
+		return dataProducer;
 	}
 
 	RTC::DataConsumer* Transport::AssertAndGetDataConsumerById(
@@ -1810,7 +1710,9 @@ namespace RTC
 			MS_THROW_NOT_FOUND_ERROR("DataConsumer not found [method:%s]", method.c_str());
 		}
 
-		return it->second;
+		auto* const dataConsumer = it->second.get();
+
+		return dataConsumer;
 	}
 
 	RTC::DataConsumer* Transport::GetSctpDataConsumerByStreamId(uint16_t streamId) const
@@ -1824,7 +1726,9 @@ namespace RTC
 			return nullptr;
 		}
 
-		return it->second;
+		auto* const dataConsumer = it->second;
+
+		return dataConsumer;
 	}
 
 	void Transport::CheckNoProducer(const std::string& producerId, const std::string& method) const
@@ -1837,11 +1741,11 @@ namespace RTC
 		}
 	}
 
-	void Transport::CheckNoConsumer(const std::string& dataConsumerId, const std::string& method) const
+	void Transport::CheckNoConsumer(const std::string& consumerId, const std::string& method) const
 	{
 		MS_TRACE();
 
-		if (this->mapConsumers.contains(dataConsumerId))
+		if (this->mapConsumers.contains(consumerId))
 		{
 			MS_THROW_ERROR("a Consumer with same consumerId already exists [method:%s]", method.c_str());
 		}
@@ -1882,85 +1786,32 @@ namespace RTC
 		}
 	}
 
-	void Transport::HandleRtcpPacket(RTC::RTCP::Packet* packet, int64_t receivedAtUs)
+	void Transport::HandleRtcpPacket(const RTC::RTCP::Packet* packet, int64_t receivedAtUs)
 	{
 		MS_TRACE();
 
 		switch (packet->GetType())
 		{
-			case RTC::RTCP::Type::RR:
+			case RTC::RTCP::Packet::PacketType::RR:
 			{
-				auto* rr = static_cast<RTC::RTCP::ReceiverReportPacket*>(packet);
+				const auto* receiverReportPacket =
+				  static_cast<const RTC::RTCP::ReceiverReportPacket*>(packet);
 
-				// What all the streams this packet reports on lost between the previous
-				// report and this one, which is what the loss based estimation of the
-				// sending side is drawn from.
-				int64_t lostPackets{ 0 };
-				int64_t expectedPackets{ 0 };
-
-				for (auto it = rr->Begin(); it != rr->End(); ++it)
-				{
-					auto& report   = *it;
-					auto* consumer = GetConsumerByMediaSsrc(report->GetSsrc());
-
-					if (!consumer)
-					{
-						// Special case for the RTP probator.
-						if (report->GetSsrc() == RTC::Consts::BweProbeRtpSsrc)
-						{
-							continue;
-						}
-
-						// Special case for (unused) RTCP-RR from the RTX stream.
-						if (GetConsumerByRtxSsrc(report->GetSsrc()) != nullptr)
-						{
-							continue;
-						}
-
-						MS_DEBUG_TAG(
-						  rtcp,
-						  "no Consumer found for received Receiver Report [ssrc:%" PRIu32 "]",
-						  report->GetSsrc());
-
-						continue;
-					}
-
-					const auto receiverReportResult = consumer->ReceiveRtcpReceiverReport(report, receivedAtUs);
-
-					if (receiverReportResult.rttMs.has_value())
-					{
-						this->rttCalculator.AddRtt(
-						  static_cast<int64_t>(receiverReportResult.rttMs.value()),
-						  Utils::Time::TimeUsToMs(receivedAtUs));
-					}
-
-					if (receiverReportResult.loss.has_value())
-					{
-						const auto& lossValue = receiverReportResult.loss.value();
-
-						lostPackets += lossValue.lostPackets;
-						expectedPackets += lossValue.expectedPackets;
-					}
-				}
-
-				if (this->senderTransportCongestionController)
-				{
-					this->senderTransportCongestionController->ReceiveRtcpReceiverReport(
-					  lostPackets, expectedPackets);
-				}
+				HandleRtcpReportBlocks(receiverReportPacket, receivedAtUs);
 
 				break;
 			}
 
-			case RTC::RTCP::Type::PSFB:
+			case RTC::RTCP::Packet::PacketType::PSFB:
 			{
-				auto* feedback = static_cast<RTC::RTCP::FeedbackPsPacket*>(packet);
+				const auto* feedback =
+				  static_cast<const RTC::RTCP::AnyPayloadSpecificFeedbackPacket*>(packet);
 
 				switch (feedback->GetMessageType())
 				{
-					case RTC::RTCP::FeedbackPs::MessageType::PLI:
+					case RTC::RTCP::AnyPayloadSpecificFeedbackPacket::MessageType::PLI:
 					{
-						auto* consumer = GetConsumerByMediaSsrc(feedback->GetMediaSsrc());
+						auto* const consumer = GetConsumerByMediaSsrc(feedback->GetMediaSsrc());
 
 						if (feedback->GetMediaSsrc() == RTC::Consts::BweProbeRtpSsrc)
 						{
@@ -1985,23 +1836,23 @@ namespace RTC
 						  feedback->GetSenderSsrc(),
 						  feedback->GetMediaSsrc());
 
-						consumer->ReceiveKeyFrameRequest(
-						  RTC::RTCP::FeedbackPs::MessageType::PLI, feedback->GetMediaSsrc());
+						consumer->ReceiveRtcpKeyFrameRequest(
+						  RTC::RTCP::AnyPayloadSpecificFeedbackPacket::MessageType::PLI,
+						  feedback->GetMediaSsrc());
 
 						break;
 					}
 
-					case RTC::RTCP::FeedbackPs::MessageType::FIR:
+					case RTC::RTCP::AnyPayloadSpecificFeedbackPacket::MessageType::FIR:
 					{
+						const auto* firPacket = static_cast<const RTC::RTCP::FirPacket*>(feedback);
+
 						// Must iterate FIR items.
-						auto* fir = static_cast<RTC::RTCP::FeedbackPsFirPacket*>(packet);
-
-						for (auto it = fir->Begin(); it != fir->End(); ++it)
+						for (const auto& item : firPacket->GetItems())
 						{
-							auto& item     = *it;
-							auto* consumer = GetConsumerByMediaSsrc(item->GetSsrc());
+							auto* const consumer = GetConsumerByMediaSsrc(item.ssrc);
 
-							if (item->GetSsrc() == RTC::Consts::BweProbeRtpSsrc)
+							if (item.ssrc == RTC::Consts::BweProbeRtpSsrc)
 							{
 								continue;
 							}
@@ -2013,7 +1864,7 @@ namespace RTC
 								  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 ", item ssrc:%" PRIu32 "]",
 								  feedback->GetSenderSsrc(),
 								  feedback->GetMediaSsrc(),
-								  item->GetSsrc());
+								  item.ssrc);
 
 								continue;
 							}
@@ -2024,25 +1875,24 @@ namespace RTC
 							  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 ", item ssrc:%" PRIu32 "]",
 							  feedback->GetSenderSsrc(),
 							  feedback->GetMediaSsrc(),
-							  item->GetSsrc());
+							  item.ssrc);
 
-							consumer->ReceiveKeyFrameRequest(feedback->GetMessageType(), item->GetSsrc());
+							consumer->ReceiveRtcpKeyFrameRequest(feedback->GetMessageType(), item.ssrc);
 						}
 
 						break;
 					}
 
-					case RTC::RTCP::FeedbackPs::MessageType::AFB:
+					case RTC::RTCP::AnyPayloadSpecificFeedbackPacket::MessageType::AFB:
 					{
-						auto* afb = static_cast<RTC::RTCP::FeedbackPsAfbPacket*>(feedback);
-
-						if (afb->GetApplication() == RTC::RTCP::FeedbackPsAfbPacket::Application::REMB)
+						if (RTC::RTCP::RembPacket::IsRemb(feedback->GetBuffer(), feedback->GetLength()))
 						{
 							if (this->sendSupportsRemb && this->senderTransportCongestionController)
 							{
-								const auto* remb = static_cast<RTC::RTCP::FeedbackPsRembPacket*>(afb);
+								const auto* rembPacket = static_cast<const RTC::RTCP::RembPacket*>(feedback);
 
-								this->senderTransportCongestionController->ReceiveEstimatedBitrate(remb->GetBitrate());
+								this->senderTransportCongestionController->ReceiveEstimatedBitrate(
+								  rembPacket->GetBitrate());
 							}
 
 							break;
@@ -2051,9 +1901,8 @@ namespace RTC
 						{
 							MS_DEBUG_TAG(
 							  rtcp,
-							  "ignoring unsupported %s feedback PS AFB packet "
+							  "ignoring unsupported feedback PS AFB packet "
 							  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
-							  RTC::RTCP::FeedbackPsPacket::MessageTypeToString(feedback->GetMessageType()).c_str(),
 							  feedback->GetSenderSsrc(),
 							  feedback->GetMediaSsrc());
 
@@ -2065,9 +1914,9 @@ namespace RTC
 					{
 						MS_DEBUG_TAG(
 						  rtcp,
-						  "ignoring unsupported %s feedback packet "
-						  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
-						  RTC::RTCP::FeedbackPsPacket::MessageTypeToString(feedback->GetMessageType()).c_str(),
+						  "ignoring unsupported feedback PS packet "
+						  "[message type:%" PRIu8 ", sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
+						  static_cast<uint8_t>(feedback->GetMessageType()),
 						  feedback->GetSenderSsrc(),
 						  feedback->GetMediaSsrc());
 					}
@@ -2076,17 +1925,17 @@ namespace RTC
 				break;
 			}
 
-			case RTC::RTCP::Type::RTPFB:
+			case RTC::RTCP::Packet::PacketType::RTPFB:
 			{
-				auto* feedback = static_cast<RTC::RTCP::FeedbackRtpPacket*>(packet);
-				auto* consumer = GetConsumerByMediaSsrc(feedback->GetMediaSsrc());
+				const auto* feedback = static_cast<const RTC::RTCP::AnyTransportLayerFeedbackPacket*>(packet);
+				auto* const consumer = GetConsumerByMediaSsrc(feedback->GetMediaSsrc());
 
-				// If no Consumer is found and this is not a Transport Feedback for the
-				// probation SSRC or any Consumer RTX SSRC, ignore it.
+				// If no Consumer is found and this is neither a Transport Feedback nor a
+				// feedback for the probation SSRC, ignore it.
 				if (
-				  !consumer && feedback->GetMessageType() != RTC::RTCP::FeedbackRtp::MessageType::TCC &&
-				  (feedback->GetMediaSsrc() != RTC::Consts::BweProbeRtpSsrc ||
-					 !GetConsumerByRtxSsrc(feedback->GetMediaSsrc())))
+				  !consumer &&
+				  feedback->GetMessageType() != RTC::RTCP::AnyTransportLayerFeedbackPacket::MessageType::TCC &&
+				  feedback->GetMediaSsrc() != RTC::Consts::BweProbeRtpSsrc)
 				{
 					MS_DEBUG_TAG(
 					  rtcp,
@@ -2100,35 +1949,30 @@ namespace RTC
 
 				switch (feedback->GetMessageType())
 				{
-					case RTC::RTCP::FeedbackRtp::MessageType::NACK:
+					case RTC::RTCP::AnyTransportLayerFeedbackPacket::MessageType::NACK:
 					{
+						// NACKs for the probation SSRC are legitimate but ignored on purpose.
 						if (!consumer)
 						{
-							MS_DEBUG_TAG(
-							  rtcp,
-							  "no Consumer found for received NACK feedback packet "
-							  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
-							  feedback->GetSenderSsrc(),
-							  feedback->GetMediaSsrc());
-
 							break;
 						}
 
-						auto* nackPacket = static_cast<RTC::RTCP::FeedbackRtpNackPacket*>(packet);
+						const auto* nackPacket = static_cast<const RTC::RTCP::NackPacket*>(feedback);
 
-						consumer->ReceiveNack(nackPacket);
+						consumer->ReceiveRtcpNackPacket(nackPacket);
 
 						break;
 					}
 
-					case RTC::RTCP::FeedbackRtp::MessageType::TCC:
+					case RTC::RTCP::AnyTransportLayerFeedbackPacket::MessageType::TCC:
 					{
-						auto* feedback = static_cast<RTC::RTCP::FeedbackRtpTransportPacket*>(packet);
+						const auto* transportWideCcPacket =
+						  static_cast<const RTC::RTCP::TransportWideCcPacket*>(feedback);
 
 						if (this->sendSupportsTransportCc && this->senderTransportCongestionController)
 						{
 							this->senderTransportCongestionController->ReceiveTransportWideCcFeedback(
-							  feedback, receivedAtUs);
+							  transportWideCcPacket, receivedAtUs);
 						}
 
 						break;
@@ -2138,9 +1982,9 @@ namespace RTC
 					{
 						MS_DEBUG_TAG(
 						  rtcp,
-						  "ignoring unsupported %s feedback packet "
-						  "[sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
-						  RTC::RTCP::FeedbackRtpPacket::MessageTypeToString(feedback->GetMessageType()).c_str(),
+						  "ignoring unsupported feedback RTP packet "
+						  "[message type:%" PRIu8 ", sender ssrc:%" PRIu32 ", media ssrc:%" PRIu32 "]",
+						  static_cast<uint8_t>(feedback->GetMessageType()),
 						  feedback->GetSenderSsrc(),
 						  feedback->GetMediaSsrc());
 					}
@@ -2149,33 +1993,34 @@ namespace RTC
 				break;
 			}
 
-			case RTC::RTCP::Type::SR:
+			case RTC::RTCP::Packet::PacketType::SR:
 			{
-				auto* sr = static_cast<RTC::RTCP::SenderReportPacket*>(packet);
+				const auto* senderReportPacket = static_cast<const RTC::RTCP::SenderReportPacket*>(packet);
+				auto* const producer = this->rtpListener.GetProducer(senderReportPacket->GetSsrc());
 
-				// Even if Sender Report packet can only contains one report.
-				for (auto it = sr->Begin(); it != sr->End(); ++it)
+				if (!producer)
 				{
-					auto& report   = *it;
-					auto* producer = this->rtpListener.GetProducer(report->GetSsrc());
+					MS_DEBUG_TAG(
+					  rtcp,
+					  "no Producer found for received Sender Report [ssrc:%" PRIu32 "]",
+					  senderReportPacket->GetSsrc());
+				}
+				else
+				{
+					producer->ReceiveRtcpSenderReportPacket(senderReportPacket, receivedAtUs);
+				}
 
-					if (!producer)
-					{
-						MS_DEBUG_TAG(
-						  rtcp,
-						  "no Producer found for received Sender Report [ssrc:%" PRIu32 "]",
-						  report->GetSsrc());
-
-						continue;
-					}
-
-					producer->ReceiveRtcpSenderReport(report, receivedAtUs);
+				// A Sender Report also carries report blocks about the streams we send,
+				// same as a Receiver Report.
+				if (senderReportPacket->GetNumberOfReportBlocks() > 0)
+				{
+					HandleRtcpReportBlocks(senderReportPacket, receivedAtUs);
 				}
 
 				break;
 			}
 
-			case RTC::RTCP::Type::SDES:
+			case RTC::RTCP::Packet::PacketType::SDES:
 			{
 				// According to RFC 3550 section 6.1 "a CNAME item MUST be included in
 				// each compound RTCP packet". So this is true even for compound
@@ -2187,50 +2032,72 @@ namespace RTC
 				break;
 			}
 
-			case RTC::RTCP::Type::BYE:
+			case RTC::RTCP::Packet::PacketType::BYE:
 			{
-				MS_DEBUG_TAG(rtcp, "ignoring received RTCP BYE");
+				const auto* byePacket = static_cast<const RTC::RTCP::ByePacket*>(packet);
+
+				// A source that leaves expects no answer to its Receiver Reference Time.
+				for (const auto ssrc : byePacket->GetSsrcs())
+				{
+					this->receivedReceiverReferenceTimes.erase(ssrc);
+				}
 
 				break;
 			}
 
-			case RTC::RTCP::Type::XR:
+			case RTC::RTCP::Packet::PacketType::XR:
 			{
-				auto* xr = static_cast<RTC::RTCP::ExtendedReportPacket*>(packet);
+				const auto* xrPacket = static_cast<const RTC::RTCP::XrPacket*>(packet);
 
-				for (auto it = xr->Begin(); it != xr->End(); ++it)
+				for (auto it = xrPacket->ExtendedReportsBegin(); it != xrPacket->ExtendedReportsEnd(); ++it)
 				{
-					auto& report = *it;
+					const RTC::RTCP::ExtendedReport* extendedReport = *it;
 
-					switch (report->GetType())
+					switch (extendedReport->GetType())
 					{
-						case RTC::RTCP::ExtendedReportBlock::Type::DLRR:
+						case RTC::RTCP::ExtendedReport::BlockType::DLRR:
 						{
-							auto* dlrr = static_cast<RTC::RTCP::DelaySinceLastRr*>(report);
+							const auto* dlrrExtendedReport =
+							  static_cast<const RTC::RTCP::DlrrExtendedReport*>(extendedReport);
 
-							for (auto it2 = dlrr->Begin(); it2 != dlrr->End(); ++it2)
+							for (const RTC::RTCP::DlrrExtendedReport::SubBlock& subBlock :
+							     dlrrExtendedReport->GetSubBlocks())
 							{
-								auto& ssrcInfo = *it2;
-
-								// SSRC should be filled in the sub-block.
-								if (ssrcInfo->GetSsrc() == 0)
+								// Only a sub-block that answers a Receiver Reference Time sent by
+								// this Transport is about this Transport.
+								if (subBlock.ssrc != this->rtcpSsrc)
 								{
-									ssrcInfo->SetSsrc(xr->GetSsrc());
-								}
-
-								auto* producer = this->rtpListener.GetProducer(ssrcInfo->GetSsrc());
-
-								if (!producer)
-								{
-									MS_DEBUG_TAG(
-									  rtcp,
-									  "no Producer found for received Sender Extended Report [ssrc:%" PRIu32 "]",
-									  ssrcInfo->GetSsrc());
-
 									continue;
 								}
 
-								const auto rttMs = producer->ReceiveRtcpXrDelaySinceLastRr(ssrcInfo, receivedAtUs);
+								// The round trip is the one of the path to the remote endpoint,
+								// whatever SSRC it sends the XR packet with.
+								auto* const producer = this->rtpListener.GetProducer(xrPacket->GetSsrc());
+								std::optional<float> rttMs;
+
+								// The XR packet comes with the SSRC of a stream of a Producer, which
+								// keeps the round trip time as measured on it.
+								if (producer)
+								{
+									rttMs =
+									  producer->ReceiveRtcpDlrrSubBlock(xrPacket->GetSsrc(), subBlock, receivedAtUs);
+								}
+								// Otherwise it comes with a SSRC that the remote endpoint only uses
+								// for RTCP. If no Receiver Reference Time from this Transport has
+								// reached the remote endpoint yet, there is nothing to measure.
+								else if (subBlock.lastReceiverReport != 0)
+								{
+									const Utils::Time::Ntp ntp =
+									  Utils::Time::TimeUsToNtp(receivedAtUs + this->shared->GetNtpOffsetUs());
+									const uint32_t compactNtp = Utils::Time::NtpToCompactNtp(ntp);
+
+									// NOTE: The subtraction wraps around along with the compact NTP
+									// representation, which is what the conversion expects.
+									rttMs = static_cast<float>(Utils::Time::CompactNtpRttToTimeUs(
+									          compactNtp - subBlock.delaySinceLastReceiverReport -
+									          subBlock.lastReceiverReport)) /
+									        1000;
+								}
 
 								if (rttMs.has_value())
 								{
@@ -2242,16 +2109,29 @@ namespace RTC
 							break;
 						}
 
-						case RTC::RTCP::ExtendedReportBlock::Type::RRT:
+						case RTC::RTCP::ExtendedReport::BlockType::RRT:
 						{
-							auto* rrt = static_cast<RTC::RTCP::ReceiverReferenceTime*>(report);
+							const auto* rrtExtendedReport =
+							  static_cast<const RTC::RTCP::RrtExtendedReport*>(extendedReport);
+							const uint32_t ssrc = xrPacket->GetSsrc();
 
-							for (auto& kv : this->mapConsumers)
+							if (
+							  this->receivedReceiverReferenceTimes.size() >=
+							    RTC::Consts::MaxNumberOfRtcpReceiverReferenceTimes &&
+							  !this->receivedReceiverReferenceTimes.contains(ssrc))
 							{
-								auto* consumer = kv.second;
+								MS_WARN_TAG(
+								  rtcp,
+								  "discarding received Receiver Reference Time, too many stored [ssrc:%" PRIu32 "]",
+								  ssrc);
 
-								consumer->ReceiveRtcpXrReceiverReferenceTime(rrt, receivedAtUs);
+								break;
 							}
+
+							this->receivedReceiverReferenceTimes[ssrc] = ReceivedReceiverReferenceTime{
+								.compactNtp   = Utils::Time::NtpToCompactNtp(rrtExtendedReport->GetNtp()),
+								.receivedAtUs = receivedAtUs
+							};
 
 							break;
 						}
@@ -2273,61 +2153,453 @@ namespace RTC
 		}
 	}
 
+	void Transport::HandleRtcpReportBlocks(
+	  const RTC::RTCP::AnyReportPacket* reportPacket, int64_t receivedAtUs)
+	{
+		MS_TRACE();
+
+		int64_t lostPackets{ 0 };
+		int64_t expectedPackets{ 0 };
+
+		for (const auto& reportBlock : reportPacket->GetReportBlocks())
+		{
+			auto* const consumer = GetConsumerByMediaSsrc(reportBlock.ssrc);
+
+			if (!consumer)
+			{
+				// Special case for the RTP probator.
+				if (reportBlock.ssrc == RTC::Consts::BweProbeRtpSsrc)
+				{
+					continue;
+				}
+
+				// Special case for (unused) report block of the RTX stream.
+				if (GetConsumerByRtxSsrc(reportBlock.ssrc) != nullptr)
+				{
+					continue;
+				}
+
+				MS_DEBUG_TAG(
+				  rtcp, "no Consumer found for received report block [ssrc:%" PRIu32 "]", reportBlock.ssrc);
+
+				continue;
+			}
+
+			const auto receiverReportResult = consumer->ReceiveRtcpReportBlock(reportBlock, receivedAtUs);
+
+			if (receiverReportResult.rttMs.has_value())
+			{
+				this->rttCalculator.AddRtt(
+				  static_cast<int64_t>(receiverReportResult.rttMs.value()),
+				  Utils::Time::TimeUsToMs(receivedAtUs));
+			}
+
+			if (receiverReportResult.loss.has_value())
+			{
+				const auto& lossValue = receiverReportResult.loss.value();
+
+				lostPackets += lossValue.lostPackets;
+				expectedPackets += lossValue.expectedPackets;
+			}
+		}
+
+		if (this->senderTransportCongestionController)
+		{
+			this->senderTransportCongestionController->ReceiveRtcpReceiverReport(
+			  lostPackets, expectedPackets);
+		}
+	}
+
 	void Transport::SendRtcp(int64_t nowUs)
 	{
 		MS_TRACE();
 
 		const auto ntp = Utils::Time::TimeUsToNtp(nowUs + this->shared->GetNtpOffsetUs());
 
-		auto packet = std::make_unique<RTC::RTCP::CompoundPacket>();
+		std::unique_ptr<RTC::RTCP::CompoundPacket> compoundPacket;
 
-		for (auto& kv : this->mapConsumers)
+		// Send streams whose Sender Report is in the compound packet. Their SDES
+		// chunks go in the SDES packet that follows the reports.
+		std::vector<RTC::RTP::RtpStreamSend*> senderReportRtpStreams;
+
+		// Length of the SDES chunks of those streams.
+		size_t sdesChunksLength{ 0 };
+
+		// Number of DLRR sub-blocks in the XR packet that follows the reports, one
+		// per received Receiver Reference Time it answers.
+		size_t numDlrrSubBlocks{ 0 };
+
+		// Receiver Report packet being built, if any.
+		RTC::RTCP::ReceiverReportPacket* receiverReportPacket{ nullptr };
+
+		// Whether some report block is in a Receiver Report of the compound
+		// packet, which makes the XR packet carry a Receiver Reference Time.
+		bool hasReceiverReports{ false };
+
+		// Whether there is a Receiver Report packet in the compound packet, even
+		// one with no report block.
+		bool hasReceiverReportPacket{ false };
+
+		// Whether some Consumer or Producer is due to report, which is what makes
+		// an empty Receiver Report go out when there is nothing to report.
+		bool rtcpDue{ false };
+
+		// Length of the SDES chunk of this Transport, which goes in every compound
+		// packet carrying a Receiver Report or an XR packet, since both are sent
+		// with its RTCP SSRC.
+		const size_t ownSdesChunkLength =
+		  RTC::RTCP::SdesPacket::ComputeChunkLengthFor({ this->rtcpCname.size() });
+
+		// Length of the SDES and XR packets that follow the reports in the
+		// compound packet.
+		const auto computeTrailingLength = [ownSdesChunkLength](
+		                                     size_t chunksLength,
+		                                     size_t numSenderReports,
+		                                     size_t numSubBlocks,
+		                                     bool withReceiverReports) -> size_t
 		{
-			auto* const consumer = kv.second;
+			const bool withXrPacket = withReceiverReports || numSubBlocks > 0;
+			size_t trailingLength{ 0 };
+			size_t extendedReportsLength{ 0 };
 
-			for (auto& sendStreamItems : consumer->GetRtcp(nowUs))
+			if (numSenderReports > 0 || withXrPacket)
 			{
-				// If the items do not fit in the compound packet, send it and add them
-				// to a new one.
-				if (!packet->AddSendStreamItems(sendStreamItems))
+				trailingLength += RTC::RTCP::SdesPacket::ComputeLengthFor(
+				  chunksLength + (withXrPacket ? ownSdesChunkLength : 0));
+			}
+
+			if (numSubBlocks > 0)
+			{
+				extendedReportsLength += RTC::RTCP::DlrrExtendedReport::ComputeLengthFor(numSubBlocks);
+			}
+
+			if (withReceiverReports)
+			{
+				extendedReportsLength += RTC::RTCP::RrtExtendedReport::RrtExtendedReportLength;
+			}
+
+			if (extendedReportsLength > 0)
+			{
+				trailingLength += RTC::RTCP::XrPacket::ComputeLengthFor(extendedReportsLength);
+			}
+
+			return trailingLength;
+		};
+
+		// Start a new compound packet.
+		const auto startCompoundPacket = [this,
+		                                  &compoundPacket,
+		                                  &senderReportRtpStreams,
+		                                  &sdesChunksLength,
+		                                  &numDlrrSubBlocks,
+		                                  &hasReceiverReports,
+		                                  &hasReceiverReportPacket]() -> void
+		{
+			compoundPacket.reset();
+			compoundPacket.reset(
+			  RTC::RTCP::CompoundPacket::Factory(
+			    RtcpCompoundPacketBuffer, sizeof(RtcpCompoundPacketBuffer)));
+
+			senderReportRtpStreams.clear();
+			sdesChunksLength = 0;
+			numDlrrSubBlocks = std::min(
+			  this->receivedReceiverReferenceTimes.size(),
+			  RTC::Consts::MaxRtcpDelaySinceLastReceiverReportSubBlocks);
+			hasReceiverReports      = false;
+			hasReceiverReportPacket = false;
+		};
+
+		// Consolidate the Receiver Report packet being built, if any.
+		const auto consolidateReceiverReportPacket = [&receiverReportPacket]() -> void
+		{
+			if (!receiverReportPacket)
+			{
+				return;
+			}
+
+			receiverReportPacket->Consolidate();
+
+			receiverReportPacket = nullptr;
+		};
+
+		// Add the SDES and XR packets that follow the reports and send the
+		// compound packet, if it has any report.
+		const auto sendCompoundPacket = [this,
+		                                 &ntp,
+		                                 nowUs,
+		                                 ownSdesChunkLength,
+		                                 &compoundPacket,
+		                                 &senderReportRtpStreams,
+		                                 &numDlrrSubBlocks,
+		                                 &hasReceiverReports,
+		                                 &hasReceiverReportPacket,
+		                                 &consolidateReceiverReportPacket]() -> void
+		{
+			consolidateReceiverReportPacket();
+
+			if (senderReportRtpStreams.empty() && !hasReceiverReportPacket)
+			{
+				return;
+			}
+
+			// The XR packet goes whenever there is a report block, whose Receiver
+			// Reference Time it carries, or some DLRR sub-block to send.
+			const bool withXrPacket = hasReceiverReports || numDlrrSubBlocks > 0;
+			// The Receiver Report and XR packets are sent with the RTCP SSRC of this
+			// Transport, whose CNAME must then be in the SDES packet.
+			const bool withOwnSdesChunk = hasReceiverReportPacket || withXrPacket;
+
+			if (!senderReportRtpStreams.empty() || withOwnSdesChunk)
+			{
+				auto* const sdesPacket = compoundPacket->BuildPacketInPlace<RTC::RTCP::SdesPacket>();
+
+				if (withOwnSdesChunk)
 				{
-					SendRtcpCompoundPacket(packet.get());
+					MS_ASSERT(
+					  sdesPacket->GetAvailableLength() >= ownSdesChunkLength,
+					  "SDES chunk does not fit in the RTCP compound packet");
 
-					packet = std::make_unique<RTC::RTCP::CompoundPacket>();
+					sdesPacket->AddChunk(this->rtcpSsrc);
+					sdesPacket->AddItem(RTC::RTCP::SdesPacket::ItemType::CNAME, this->rtcpCname);
+				}
 
-					const bool added = packet->AddSendStreamItems(sendStreamItems);
+				for (const auto* const rtpStream : senderReportRtpStreams)
+				{
+					const bool added = rtpStream->AddRtcpSdesChunk(sdesPacket);
 
-					MS_ASSERT(added, "send stream items do not fit in an empty RTCP compound packet");
+					MS_ASSERT(added, "SDES chunk does not fit in the RTCP compound packet");
+				}
+
+				sdesPacket->Consolidate();
+			}
+
+			if (withXrPacket)
+			{
+				auto* const xrPacket = compoundPacket->BuildPacketInPlace<RTC::RTCP::XrPacket>();
+
+				xrPacket->SetSsrc(this->rtcpSsrc);
+
+				if (hasReceiverReports)
+				{
+					auto* const rrtExtendedReport =
+					  xrPacket->BuildExtendedReportInPlace<RTC::RTCP::RrtExtendedReport>();
+
+					rrtExtendedReport->SetNtp(ntp);
+					rrtExtendedReport->Consolidate();
+				}
+
+				if (numDlrrSubBlocks > 0)
+				{
+					auto* const dlrrExtendedReport =
+					  xrPacket->BuildExtendedReportInPlace<RTC::RTCP::DlrrExtendedReport>();
+
+					// SSRCs whose received Receiver Reference Time is answered here, so it is
+					// not answered again.
+					std::vector<uint32_t> answeredSsrcs;
+
+					answeredSsrcs.reserve(numDlrrSubBlocks);
+
+					for (const auto& [ssrc, receivedReceiverReferenceTime] :
+					     this->receivedReceiverReferenceTimes)
+					{
+						if (answeredSsrcs.size() == numDlrrSubBlocks)
+						{
+							break;
+						}
+
+						// Get delay in microseconds.
+						const int64_t delayUs = nowUs - receivedReceiverReferenceTime.receivedAtUs;
+						// Express delay in units of 1/65536 seconds.
+						auto dlrr = static_cast<uint32_t>(static_cast<uint64_t>(delayUs / 1000000) << 16);
+
+						dlrr |= static_cast<uint32_t>(((delayUs % 1000000) * 65536) / 1000000);
+
+						MS_ASSERT(
+						  dlrrExtendedReport->GetAvailableLength() >=
+						    RTC::RTCP::DlrrExtendedReport::SubBlockLength,
+						  "DLRR sub-block does not fit in the RTCP compound packet");
+
+						dlrrExtendedReport->AddSubBlock(
+						  RTC::RTCP::DlrrExtendedReport::SubBlock{ .ssrc = ssrc,
+							                                         .lastReceiverReport =
+							                                           receivedReceiverReferenceTime.compactNtp,
+							                                         .delaySinceLastReceiverReport = dlrr });
+
+						answeredSsrcs.push_back(ssrc);
+					}
+
+					dlrrExtendedReport->Consolidate();
+
+					for (const auto ssrc : answeredSsrcs)
+					{
+						this->receivedReceiverReferenceTimes.erase(ssrc);
+					}
+				}
+
+				xrPacket->Consolidate();
+			}
+
+			SendRtcpCompoundPacket(compoundPacket.get());
+		};
+
+		// Add a report block about the given stream, or about its RTX stream, to
+		// the Receiver Report packet being built, starting a new one if needed.
+		const auto addReportBlock = [this,
+		                             nowUs,
+		                             &compoundPacket,
+		                             &senderReportRtpStreams,
+		                             &sdesChunksLength,
+		                             &numDlrrSubBlocks,
+		                             &receiverReportPacket,
+		                             &hasReceiverReports,
+		                             &hasReceiverReportPacket,
+		                             &computeTrailingLength,
+		                             &startCompoundPacket,
+		                             &consolidateReceiverReportPacket,
+		                             &sendCompoundPacket](
+		                              RTC::RTP::RtpStreamRecv* rtpStream, bool rtx) -> void
+		{
+			if (receiverReportPacket && receiverReportPacket->GetNumberOfReportBlocks() == RTC::RTCP::AnyReportPacket::MaxReportBlocks)
+			{
+				consolidateReceiverReportPacket();
+			}
+
+			// The report block, the header of a new Receiver Report packet if none is
+			// being built, and the packets that follow the reports.
+			const size_t requiredLength =
+			  RTC::RTCP::AnyReportPacket::ReportBlockLength +
+			  (receiverReportPacket ? 0 : RTC::RTCP::ReceiverReportPacket::ComputeLengthFor(0)) +
+			  computeTrailingLength(
+			    sdesChunksLength,
+			    senderReportRtpStreams.size(),
+			    numDlrrSubBlocks,
+			    /*withReceiverReports*/ true);
+			const size_t availableLength = receiverReportPacket
+			                                 ? receiverReportPacket->GetAvailableLength()
+			                                 : compoundPacket->GetAvailableLength();
+
+			// NOTE: The SDES packet may already be full with the chunks of the
+			// Sender Reports, and the first Receiver Report brings in the chunk of
+			// this Transport.
+			if (availableLength < requiredLength || senderReportRtpStreams.size() == RTC::RTCP::SdesPacket::MaxChunks)
+			{
+				sendCompoundPacket();
+				startCompoundPacket();
+			}
+
+			if (!receiverReportPacket)
+			{
+				receiverReportPacket = compoundPacket->BuildPacketInPlace<RTC::RTCP::ReceiverReportPacket>();
+
+				receiverReportPacket->SetSsrc(this->rtcpSsrc);
+
+				hasReceiverReportPacket = true;
+			}
+
+			const bool added = rtx ? rtpStream->AddRtxRtcpReportBlock(receiverReportPacket, nowUs)
+			                       : rtpStream->AddRtcpReportBlock(receiverReportPacket, nowUs);
+
+			MS_ASSERT(added, "report block does not fit in the RTCP compound packet");
+
+			hasReceiverReports = true;
+		};
+
+		startCompoundPacket();
+
+		for (const auto& kv : this->mapConsumers)
+		{
+			auto* const consumer = kv.second.get();
+
+			if (!consumer->IsRtcpDue(nowUs))
+			{
+				continue;
+			}
+
+			rtcpDue = true;
+
+			consumer->SetRtcpSentAtUs(nowUs);
+
+			for (auto* const rtpStream : consumer->GetRtpStreams())
+			{
+				if (!rtpStream->HasRtcpSenderReport(nowUs))
+				{
+					continue;
+				}
+
+				const size_t sdesChunkLength = rtpStream->GetRtcpSdesChunkLength();
+				// The Sender Report, and the packets that follow the reports with the
+				// SDES chunk of this stream.
+				const size_t requiredLength =
+				  RTC::RTCP::SenderReportPacket::ComputeLengthFor(0) + computeTrailingLength(
+				                                                         sdesChunksLength + sdesChunkLength,
+				                                                         senderReportRtpStreams.size() + 1,
+				                                                         numDlrrSubBlocks,
+				                                                         hasReceiverReports);
+
+				// The chunk of this Transport counts if the compound packet carries an XR
+				// packet.
+				const size_t numSdesChunks =
+				  senderReportRtpStreams.size() + (hasReceiverReports || numDlrrSubBlocks > 0 ? 1 : 0);
+
+				if (numSdesChunks == RTC::RTCP::SdesPacket::MaxChunks || compoundPacket->GetAvailableLength() < requiredLength)
+				{
+					sendCompoundPacket();
+					startCompoundPacket();
+				}
+
+				const bool added = rtpStream->AddRtcpSenderReportPacket(compoundPacket.get(), nowUs);
+
+				MS_ASSERT(added, "Sender Report does not fit in the RTCP compound packet");
+
+				senderReportRtpStreams.push_back(rtpStream);
+				sdesChunksLength += sdesChunkLength;
+			}
+		}
+
+		for (const auto& kv : this->mapProducers)
+		{
+			auto* const producer = kv.second.get();
+
+			if (!producer->IsRtcpDue(nowUs))
+			{
+				continue;
+			}
+
+			rtcpDue = true;
+
+			producer->SetRtcpSentAtUs(nowUs);
+
+			for (const auto& rtpStreamKv : producer->GetRtpStreams())
+			{
+				auto* const rtpStream = rtpStreamKv.first;
+
+				if (rtpStream->HasRtcpReportBlock(nowUs))
+				{
+					addReportBlock(rtpStream, /*rtx*/ false);
+				}
+
+				if (rtpStream->HasRtxRtcpReportBlock(nowUs))
+				{
+					addReportBlock(rtpStream, /*rtx*/ true);
 				}
 			}
 		}
 
-		for (auto& kv : this->mapProducers)
+		// It is time to report but there is nothing to report on, so an empty
+		// Receiver Report goes instead (RFC 3550 section 6.4.2).
+		//
+		// NOTE: A compound packet with nothing in it means that none was sent
+		// before either, since a new one is only started to add something to it.
+		if (rtcpDue && senderReportRtpStreams.empty() && !hasReceiverReportPacket)
 		{
-			auto* const producer = kv.second;
+			receiverReportPacket = compoundPacket->BuildPacketInPlace<RTC::RTCP::ReceiverReportPacket>();
 
-			for (auto& receiverReport : producer->GetRtcp(nowUs))
-			{
-				// If the report does not fit in the compound packet, send it and add the
-				// report to a new one.
-				if (!packet->AddReceiverReport(receiverReport, ntp))
-				{
-					SendRtcpCompoundPacket(packet.get());
+			receiverReportPacket->SetSsrc(this->rtcpSsrc);
 
-					packet = std::make_unique<RTC::RTCP::CompoundPacket>();
-
-					const bool added = packet->AddReceiverReport(receiverReport, ntp);
-
-					MS_ASSERT(added, "Receiver Report does not fit in an empty RTCP compound packet");
-				}
-			}
+			hasReceiverReportPacket = true;
 		}
 
-		// Send the RTCP compound packet if there is any sender or receiver report.
-		if (packet->GetReceiverReportCount() > 0 || packet->GetSenderReportCount() > 0)
-		{
-			SendRtcpCompoundPacket(packet.get());
-		}
+		sendCompoundPacket();
 	}
 
 	bool Transport::MayCreateOrUpdateSenderTransportCongestionController()
@@ -2361,9 +2633,9 @@ namespace RTC
 			created = true;
 
 			// From now on the Consumers ask for bitrate instead of helping themselves.
-			for (auto& kv : this->mapConsumers)
+			for (const auto& kv : this->mapConsumers)
 			{
-				auto* consumer = kv.second;
+				auto* const consumer = kv.second.get();
 
 				consumer->SetBweManaged(true);
 			}
@@ -2413,7 +2685,8 @@ namespace RTC
 		  std::make_unique<RTC::BWE::ReceiverTransportCongestionController>(
 		    this,
 		    this->shared,
-		    RTC::BWE::ReceiverTransportCongestionController::ReceiverTransportCongestionControllerOptions{});
+		    RTC::BWE::ReceiverTransportCongestionController::ReceiverTransportCongestionControllerOptions{
+		      .rtcpSenderSsrc = this->rtcpSsrc });
 
 		// The cap travels to the remote peer in a REMB, so it could not be applied
 		// before this.
@@ -2472,9 +2745,9 @@ namespace RTC
 
 		candidates.reserve(this->mapConsumers.size());
 
-		for (auto& kv : this->mapConsumers)
+		for (const auto& kv : this->mapConsumers)
 		{
-			auto* const consumer = kv.second;
+			auto* const consumer = kv.second.get();
 
 			candidates.push_back(consumer);
 		}
@@ -2496,7 +2769,7 @@ namespace RTC
 
 		for (const auto& kv : this->mapConsumers)
 		{
-			const auto* const consumer = kv.second;
+			const auto* const consumer = kv.second.get();
 
 			totalDesiredBitrate += consumer->GetDesiredBitrate();
 		}
@@ -2523,7 +2796,7 @@ namespace RTC
 		const auto traceInfo = FBS::Transport::CreateProbationTraceInfo(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(), rtpPacketDump);
 
-		auto notification = FBS::Transport::CreateTraceNotification(
+		const auto notification = FBS::Transport::CreateTraceNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::Transport::TraceEventType::PROBATION,
 		  static_cast<uint64_t>(this->shared->GetTimeMs()),
@@ -2556,7 +2829,7 @@ namespace RTC
 		  static_cast<uint64_t>(this->maxOutgoingBitrate),
 		  static_cast<uint64_t>(this->senderTransportCongestionController->GetAvailableBitrate()));
 
-		auto notification = FBS::Transport::CreateTraceNotification(
+		const auto notification = FBS::Transport::CreateTraceNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::Transport::TraceEventType::BWE,
 		  static_cast<uint64_t>(this->shared->GetTimeMs()),
@@ -2594,7 +2867,10 @@ namespace RTC
 	}
 
 	void Transport::OnProducerRtpStreamScore(
-	  RTC::Producer* producer, RTC::RTP::RtpStreamRecv* rtpStream, uint8_t score, uint8_t previousScore)
+	  RTC::Producer* producer,
+	  const RTC::RTP::RtpStreamRecv* rtpStream,
+	  uint8_t score,
+	  uint8_t previousScore)
 	{
 		MS_TRACE();
 
@@ -2602,7 +2878,7 @@ namespace RTC
 	}
 
 	void Transport::OnProducerRtcpSenderReport(
-	  RTC::Producer* producer, RTC::RTP::RtpStreamRecv* rtpStream, bool first)
+	  RTC::Producer* producer, const RTC::RTP::RtpStreamRecv* rtpStream, bool first)
 	{
 		MS_TRACE();
 
@@ -2621,7 +2897,7 @@ namespace RTC
 	}
 
 	void Transport::OnProducerSpatialLayerActivityChanged(
-	  RTC::Producer* producer, RTC::RTP::RtpStreamRecv* rtpStream, uint8_t spatialLayer, bool isActive)
+	  RTC::Producer* producer, const RTC::RTP::RtpStreamRecv* rtpStream, uint8_t spatialLayer, bool isActive)
 	{
 		MS_TRACE();
 
@@ -2636,7 +2912,7 @@ namespace RTC
 		this->listener->OnTransportProducerRtpPacketReceived(this, producer, packet);
 	}
 
-	void Transport::OnProducerSendRtcpPacket(RTC::Producer* /*producer*/, RTC::RTCP::Packet* packet)
+	void Transport::OnProducerSendRtcpPacket(RTC::Producer* /*producer*/, const RTC::RTCP::Packet* packet)
 	{
 		MS_TRACE();
 
@@ -2726,7 +3002,7 @@ namespace RTC
 			const std::weak_ptr<RTC::BWE::SenderTransportCongestionController>
 			  senderTransportCongestionControllerWeakPtr(this->senderTransportCongestionController);
 
-			auto* shared = this->shared;
+			auto* const shared = this->shared;
 
 			SendRtpPacket(
 			  consumer,
@@ -2735,7 +3011,7 @@ namespace RTC
 			  {
 				  if (sent)
 				  {
-					  auto senderTransportCongestionController =
+					  const auto senderTransportCongestionController =
 					    senderTransportCongestionControllerWeakPtr.lock();
 
 					  if (senderTransportCongestionController)
@@ -2781,7 +3057,7 @@ namespace RTC
 			const std::weak_ptr<RTC::BWE::SenderTransportCongestionController>
 			  senderTransportCongestionControllerWeakPtr(this->senderTransportCongestionController);
 
-			auto* shared = this->shared;
+			auto* const shared = this->shared;
 
 			SendRtpPacket(
 			  consumer,
@@ -2790,7 +3066,7 @@ namespace RTC
 			  {
 				  if (sent)
 				  {
-					  auto senderTransportCongestionController =
+					  const auto senderTransportCongestionController =
 					    senderTransportCongestionControllerWeakPtr.lock();
 
 					  if (senderTransportCongestionController)
@@ -2815,7 +3091,7 @@ namespace RTC
 
 		if (!IsConnected())
 		{
-			MS_WARN_TAG(rtcp, "ignoring key rame request (transport not connected)");
+			MS_WARN_TAG(rtcp, "ignoring key frame request (transport not connected)");
 
 			return;
 		}
@@ -2838,10 +3114,11 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		// Remove it from the maps.
-		this->mapConsumers.erase(consumer->id);
+		// Remove it from the maps. The extracted entry also keeps the Consumer alive,
+		// so `consumer` remains valid below, and deletes it when leaving this block.
+		const auto extractedConsumer = this->mapConsumers.extract(consumer->id);
 
-		for (auto ssrc : consumer->GetMediaSsrcs())
+		for (const auto ssrc : consumer->GetMediaSsrcs())
 		{
 			this->mapSsrcConsumer.erase(ssrc);
 
@@ -2849,7 +3126,7 @@ namespace RTC
 			SendStreamClosed(ssrc);
 		}
 
-		for (auto ssrc : consumer->GetRtxSsrcs())
+		for (const auto ssrc : consumer->GetRtxSsrcs())
 		{
 			this->mapRtxSsrcConsumer.erase(ssrc);
 
@@ -2861,9 +3138,6 @@ namespace RTC
 		this->listener->OnTransportConsumerProducerClosed(this, consumer);
 
 		MS_DEBUG_DEV("Consumer closed [consumerId:%s]", consumer->id.c_str());
-
-		// Delete it.
-		delete consumer;
 
 		// What this one was putting in the link goes to whoever can use it, and what
 		// the remaining Consumers want is now less, which is an input of the probing.
@@ -2943,7 +3217,7 @@ namespace RTC
 	}
 
 	void Transport::OnDataConsumerSetBufferedAmountLowThreshold(
-	  const RTC::DataConsumer* dataConsumer, uint32_t bytes) const
+	  RTC::DataConsumer* dataConsumer, uint32_t bytes) const
 	{
 		MS_TRACE();
 
@@ -2961,8 +3235,10 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		// Remove it from the maps.
-		this->mapDataConsumers.erase(dataConsumer->id);
+		// Remove it from the maps. The extracted entry also keeps the DataConsumer
+		// alive, so `dataConsumer` remains valid below, and deletes it when leaving
+		// this block.
+		const auto extractedDataConsumer = this->mapDataConsumers.extract(dataConsumer->id);
 
 		if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
 		{
@@ -2983,9 +3259,6 @@ namespace RTC
 		this->listener->OnTransportDataConsumerDataProducerClosed(this, dataConsumer);
 
 		MS_DEBUG_DEV("DataConsumer closed [dataConsumerId:%s]", dataConsumer->id.c_str());
-
-		// Delete it.
-		delete dataConsumer;
 	}
 
 	bool Transport::OnAssociationSendData(const uint8_t* data, size_t len)
@@ -3010,8 +3283,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		// Notify the Node Transport.
-		auto sctpStateChangeNotification = FBS::Transport::CreateSctpStateChangeNotification(
+		const auto sctpStateChangeNotification = FBS::Transport::CreateSctpStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::SctpAssociation::SctpState::CONNECTING);
 
@@ -3029,12 +3301,13 @@ namespace RTC
 		// Notify the upper layer.
 
 		// First tell it about the SCTP negotiated capabilities.
-		auto sctpNegotiatedCapabilitiesOffset = FBS::SctpAssociation::CreateSctpNegotiatedCapabilities(
-		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
-		  this->sctpAssociation->GetNegotiatedMaxOutboundStreams(),
-		  this->sctpAssociation->GetNegotiatedMaxInboundStreams());
+		const auto sctpNegotiatedCapabilitiesOffset =
+		  FBS::SctpAssociation::CreateSctpNegotiatedCapabilities(
+		    this->shared->GetChannelNotifier()->GetBufferBuilder(),
+		    this->sctpAssociation->GetNegotiatedMaxOutboundStreams(),
+		    this->sctpAssociation->GetNegotiatedMaxInboundStreams());
 
-		auto sctpNegotiatedCapabilitiesNotification =
+		const auto sctpNegotiatedCapabilitiesNotification =
 		  FBS::Transport::CreateSctpNegotiatedCapabilitiesNotification(
 		    this->shared->GetChannelNotifier()->GetBufferBuilder(), sctpNegotiatedCapabilitiesOffset);
 
@@ -3045,7 +3318,7 @@ namespace RTC
 		  sctpNegotiatedCapabilitiesNotification);
 
 		// Then announce "connected" SCTP state.
-		auto sctpStateChangeNotification = FBS::Transport::CreateSctpStateChangeNotification(
+		const auto sctpStateChangeNotification = FBS::Transport::CreateSctpStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::SctpAssociation::SctpState::CONNECTED);
 
@@ -3066,7 +3339,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		const auto errorKindStringView = RTC::SCTP::Types::errorKindToString(errorKind);
+		const auto errorKindStringView = RTC::SCTP::Types::ErrorKindToString(errorKind);
 
 		if (errorKind == RTC::SCTP::Types::ErrorKind::SUCCESS || errorKind == RTC::SCTP::Types::ErrorKind::PEER_REPORTED)
 		{
@@ -3090,9 +3363,9 @@ namespace RTC
 		}
 
 		// Tell all DataConsumers.
-		for (auto& kv : this->mapDataConsumers)
+		for (const auto& kv : this->mapDataConsumers)
 		{
-			auto* dataConsumer = kv.second;
+			auto* const dataConsumer = kv.second.get();
 
 			if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
 			{
@@ -3100,8 +3373,7 @@ namespace RTC
 			}
 		}
 
-		// Notify the Node Transport.
-		auto sctpStateChangeNotification = FBS::Transport::CreateSctpStateChangeNotification(
+		const auto sctpStateChangeNotification = FBS::Transport::CreateSctpStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::SctpAssociation::SctpState::FAILED);
 
@@ -3116,7 +3388,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		const auto errorKindStringView = RTC::SCTP::Types::errorKindToString(errorKind);
+		const auto errorKindStringView = RTC::SCTP::Types::ErrorKindToString(errorKind);
 
 		if (errorKind == RTC::SCTP::Types::ErrorKind::SUCCESS || errorKind == RTC::SCTP::Types::ErrorKind::PEER_REPORTED)
 		{
@@ -3140,9 +3412,9 @@ namespace RTC
 		}
 
 		// Tell all DataConsumers.
-		for (auto& kv : this->mapDataConsumers)
+		for (const auto& kv : this->mapDataConsumers)
 		{
-			auto* dataConsumer = kv.second;
+			auto* const dataConsumer = kv.second.get();
 
 			if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
 			{
@@ -3150,8 +3422,7 @@ namespace RTC
 			}
 		}
 
-		// Notify the Node Transport.
-		auto sctpStateChangeNotification = FBS::Transport::CreateSctpStateChangeNotification(
+		const auto sctpStateChangeNotification = FBS::Transport::CreateSctpStateChangeNotification(
 		  this->shared->GetChannelNotifier()->GetBufferBuilder(),
 		  FBS::SctpAssociation::SctpState::CLOSED);
 
@@ -3173,7 +3444,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		const auto errorKindStringView = RTC::SCTP::Types::errorKindToString(errorKind);
+		const auto errorKindStringView = RTC::SCTP::Types::ErrorKindToString(errorKind);
 
 		MS_WARN_TAG(
 		  sctp,
@@ -3188,7 +3459,9 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		RTC::DataProducer* dataProducer = this->sctpListener.GetDataProducer(message.GetStreamId());
+		const uint16_t streamId = message.GetStreamId();
+
+		RTC::DataProducer* const dataProducer = this->sctpListener.GetDataProducer(streamId);
 
 		if (!dataProducer)
 		{
@@ -3196,7 +3469,7 @@ namespace RTC
 			  sctp,
 			  message,
 			  "no suitable DataProducer for received SCTP message [streamId:%" PRIu16 "]",
-			  message.GetStreamId());
+			  streamId);
 
 			return;
 		}
@@ -3210,7 +3483,7 @@ namespace RTC
 
 			// When this is a pipe transport, the subchannels, required subchannel and
 			// ignored subchannel may be encoded at the beginning of the message payload.
-			if (this->IsPipe())
+			if (IsPipe())
 			{
 				RTC::SubchannelsCodec::DecodeSubchannels(
 				  message, subchannels, requiredSubchannel, ignoredSubchannel);
@@ -3219,13 +3492,13 @@ namespace RTC
 			dataProducer->ReceiveMessage(
 			  std::move(message), subchannels, requiredSubchannel, ignoredSubchannel);
 		}
-		catch (std::exception& error)
+		catch (const std::exception& error)
 		{
 			MS_WARN_2TAGS(
 			  sctp,
 			  message,
 			  "DataProducer::ReceiveMessage() failed for received SCTP message [streamId:%" PRIu16 "]: %s",
-			  message.GetStreamId(),
+			  streamId,
 			  error.what());
 		}
 	}
@@ -3267,6 +3540,13 @@ namespace RTC
 
 			for (const auto streamId : inboundStreamIds)
 			{
+				// Ignore duplicated stream ids (the remote peer may send them), otherwise
+				// the same DataConsumer would be closed twice.
+				if (std::ranges::find(streamsToReset, streamId) != streamsToReset.end())
+				{
+					continue;
+				}
+
 				// Only reset the outgoing stream if there is a live DataConsumer
 				// using it. If the DataChannel was closed by the app, the DataConsumer
 				// will have already been closed and removed.
@@ -3274,7 +3554,7 @@ namespace RTC
 
 				if (it != this->mapSctpStreamIdDataConsumers.end())
 				{
-					auto* dataConsumer = it->second;
+					auto* const dataConsumer = it->second;
 
 					dataConsumersToClose.push_back(dataConsumer);
 					streamsToReset.push_back(streamId);
@@ -3283,10 +3563,12 @@ namespace RTC
 
 			if (!dataConsumersToClose.empty())
 			{
-				for (auto* dataConsumer : dataConsumersToClose)
+				for (auto* const dataConsumer : dataConsumersToClose)
 				{
-					// Remove it from the maps.
-					this->mapDataConsumers.erase(dataConsumer->id);
+					// Remove it from the maps. The extracted entry also keeps the
+					// DataConsumer alive, so `dataConsumer` remains valid below, and
+					// deletes it when leaving this block.
+					const auto extractedDataConsumer = this->mapDataConsumers.extract(dataConsumer->id);
 
 					if (dataConsumer->GetType() == RTC::DataConsumer::Type::SCTP)
 					{
@@ -3301,9 +3583,6 @@ namespace RTC
 					  "]",
 					  dataConsumer->id.c_str(),
 					  dataConsumer->GetSctpStreamParameters().streamId);
-
-					// Delete it.
-					delete dataConsumer;
 				}
 
 				// NOTE: This must be called after removing data consumers from the maps,
@@ -3353,9 +3632,19 @@ namespace RTC
 		return IsConnected() && (!this->mapDataProducers.empty() || !this->mapDataConsumers.empty());
 	}
 
-	void Transport::OnRttCalculatorRttUpdated(RTC::RttCalculator* /*rttCalculator*/, int64_t avgRttMs)
+	void Transport::OnRttCalculatorRttUpdated(
+	  RTC::RttCalculator* /*rttCalculator*/, int64_t avgRttMs, int64_t maxRttMs)
 	{
 		MS_TRACE();
+
+		// Whatever stream it was measured on, it is the round trip time of the
+		// path every stream received on this Transport goes through.
+		for (const auto& kv : this->mapProducers)
+		{
+			auto* const producer = kv.second.get();
+
+			producer->UpdateRttMs(maxRttMs);
+		}
 
 		if (this->senderTransportCongestionController)
 		{
@@ -3410,7 +3699,7 @@ namespace RTC
 		const std::weak_ptr<RTC::BWE::SenderTransportCongestionController>
 		  senderTransportCongestionControllerWeakPtr(this->senderTransportCongestionController);
 
-		auto* shared = this->shared;
+		auto* const shared = this->shared;
 
 		SendRtpPacket(
 		  nullptr,
@@ -3419,7 +3708,7 @@ namespace RTC
 		  {
 			  if (sent)
 			  {
-				  auto senderTransportCongestionController =
+				  const auto senderTransportCongestionController =
 				    senderTransportCongestionControllerWeakPtr.lock();
 
 				  if (senderTransportCongestionController)
@@ -3442,7 +3731,7 @@ namespace RTC
 
 	void Transport::OnReceiverTransportCongestionControllerSendRtcpPacket(
 	  RTC::BWE::ReceiverTransportCongestionController* /*receiverTransportCongestionController*/,
-	  const RTC::NEW_RTCP::Packet* packet)
+	  const RTC::RTCP::Packet* packet)
 	{
 		MS_TRACE();
 
@@ -3456,7 +3745,7 @@ namespace RTC
 		// RTCP timer.
 		if (timer == this->rtcpTimer.get())
 		{
-			auto intervalMs = static_cast<int64_t>(RTC::RTCP::MaxVideoIntervalMs);
+			int64_t intervalMs = RTC::Consts::MaxVideoRtcpIntervalMs;
 
 			SendRtcp(this->shared->GetTimeUs());
 

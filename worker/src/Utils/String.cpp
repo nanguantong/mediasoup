@@ -14,7 +14,6 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
-#include <cstring> // std::memset()
 
 /* Static. */
 
@@ -25,17 +24,19 @@ static constexpr uint8_t Base64Table[65] =
 
 namespace Utils
 {
-	std::string Utils::String::Base64Encode(const uint8_t* data, size_t len)
+	std::string String::Base64Encode(const uint8_t* data, size_t len)
 	{
 		MS_TRACE();
 
-		const uint8_t* out = BufferOut;
-		uint8_t* pos;
-		const uint8_t* end;
-		const uint8_t* in;
-		size_t olen;
+		uint8_t* const out       = BufferOut;
+		const size_t olen        = (len * 4 / 3) + 4; // 3-byte blocks to 4-byte.
+		const uint8_t* const end = data + len;
 
-		olen = (len * 4 / 3) + 4; // 3-byte blocks to 4-byte.
+		const uint8_t* in = data;
+		// NOTE: misc-const-correctness does not take `*pos++ = x` as a write through
+		// `pos`, so it wrongly suggests making its pointee const.
+		// NOLINTNEXTLINE(misc-const-correctness)
+		uint8_t* pos = out;
 
 		if (olen < len)
 		{
@@ -46,32 +47,36 @@ namespace Utils
 			MS_THROW_TYPE_ERROR("data too big");
 		}
 
-		end = data + len;
-		in  = data;
-		pos = const_cast<uint8_t*>(out);
-
 		while (end - in >= 3)
 		{
-			*pos++ = Base64Table[in[0] >> 2];
-			*pos++ = Base64Table[((in[0] & 0x03) << 4) | (in[1] >> 4)];
-			*pos++ = Base64Table[((in[1] & 0x0f) << 2) | (in[2] >> 6)];
-			*pos++ = Base64Table[in[2] & 0x3f];
+			const uint32_t byte0 = in[0];
+			const uint32_t byte1 = in[1];
+			const uint32_t byte2 = in[2];
+
+			*pos++ = Base64Table[byte0 >> 2];
+			*pos++ = Base64Table[((byte0 & 0x03) << 4) | (byte1 >> 4)];
+			*pos++ = Base64Table[((byte1 & 0x0f) << 2) | (byte2 >> 6)];
+			*pos++ = Base64Table[byte2 & 0x3f];
 			in += 3;
 		}
 
 		if (end - in)
 		{
-			*pos++ = Base64Table[in[0] >> 2];
+			const uint32_t byte0 = in[0];
+
+			*pos++ = Base64Table[byte0 >> 2];
 
 			if (end - in == 1)
 			{
-				*pos++ = Base64Table[(in[0] & 0x03) << 4];
+				*pos++ = Base64Table[(byte0 & 0x03) << 4];
 				*pos++ = '=';
 			}
 			else
 			{
-				*pos++ = Base64Table[((in[0] & 0x03) << 4) | (in[1] >> 4)];
-				*pos++ = Base64Table[(in[1] & 0x0f) << 2];
+				const uint32_t byte1 = in[1];
+
+				*pos++ = Base64Table[((byte0 & 0x03) << 4) | (byte1 >> 4)];
+				*pos++ = Base64Table[(byte1 & 0x0f) << 2];
 			}
 
 			*pos++ = '=';
@@ -80,7 +85,7 @@ namespace Utils
 		return { reinterpret_cast<const char*>(out), static_cast<size_t>(pos - out) };
 	}
 
-	std::string Utils::String::Base64Encode(const std::string& str)
+	std::string String::Base64Encode(const std::string& str)
 	{
 		MS_TRACE();
 
@@ -89,18 +94,19 @@ namespace Utils
 		return Base64Encode(data, str.size());
 	}
 
-	uint8_t* Utils::String::Base64Decode(const uint8_t* data, size_t len, size_t& outLen)
+	uint8_t* String::Base64Decode(const uint8_t* data, size_t len, size_t& outLen)
 	{
 		MS_TRACE();
 
+		uint8_t* const out = BufferOut;
+
 		uint8_t dtable[256];
-		uint8_t* out = BufferOut;
 		uint8_t* pos;
-		uint8_t block[4];
+		uint32_t block[4];
 		uint8_t tmp;
 		size_t i;
 		size_t count;
-		int pad{ 0 };
+		size_t pad{ 0 };
 
 		// NOTE: This is not really accurate but anyway.
 		if (len > BufferOutSize - 1)
@@ -114,9 +120,11 @@ namespace Utils
 		{
 			dtable[Base64Table[i]] = static_cast<uint8_t>(i);
 		}
+
 		dtable[uint8_t{ '=' }] = 0;
 
 		count = 0;
+
 		for (i = 0; i < len; ++i)
 		{
 			if (dtable[data[i]] != 0x80)
@@ -182,7 +190,7 @@ namespace Utils
 		return out;
 	}
 
-	uint8_t* Utils::String::Base64Decode(const std::string& str, size_t& outLen)
+	uint8_t* String::Base64Decode(const std::string& str, size_t& outLen)
 	{
 		MS_TRACE();
 

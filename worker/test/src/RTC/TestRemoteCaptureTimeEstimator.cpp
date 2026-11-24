@@ -1,9 +1,11 @@
 #include "common.hpp"
-#include "RTC/RTCP/SenderReport.hpp"
+#include "RTC/RTCP/packet/Packet.hpp"
+#include "RTC/RTCP/packet/SenderReportPacket.hpp"
 #include "RTC/RTP/RtpStreamRecv.hpp"
 #include "RTC/RemoteCaptureTimeEstimator.hpp"
 #include "RTC/RtpDictionaries.hpp"
 #include "Utils.hpp"
+#include "test/include/RTC/RTCP/rtcpCommon.hpp"
 #include "test/include/RTC/RTP/rtpCommon.hpp"
 #include "mocks/include/MockShared.hpp"
 #include <catch2/catch_test_macros.hpp>
@@ -29,7 +31,7 @@ SCENARIO("RemoteCaptureTimeEstimator", "[rtp][rtcp][remotecapturetimeestimator]"
 		}
 
 		void OnRtpStreamSendRtcpPacket(
-		  RTC::RTP::RtpStreamRecv* /*rtpStream*/, RTC::RTCP::Packet* /*packet*/) override
+		  RTC::RTP::RtpStreamRecv* /*rtpStream*/, const RTC::RTCP::Packet* /*packet*/) override
 		{
 		}
 
@@ -40,6 +42,15 @@ SCENARIO("RemoteCaptureTimeEstimator", "[rtp][rtcp][remotecapturetimeestimator]"
 
 		void OnRtpStreamSpatialLayerActivityChanged(
 		  RTC::RTP::RtpStreamRecv* /*rtpStream*/, uint8_t /*spatialLayer*/, bool /*isActive*/) override
+		{
+		}
+
+		void OnRtpStreamRestarted(
+		  RTC::RTP::RtpStreamRecv* /*rtpStream*/, const RTC::RTP::Packet* /*packet*/) override
+		{
+		}
+
+		void OnRtpStreamKeyFrameRequired(RTC::RTP::RtpStreamRecv* /*rtpStream*/) override
 		{
 		}
 	};
@@ -73,14 +84,16 @@ SCENARIO("RemoteCaptureTimeEstimator", "[rtp][rtcp][remotecapturetimeestimator]"
 	{
 		nowUs = LocalBaseUs + (idx * 1000000);
 
-		RTC::RTCP::SenderReport report;
+		const std::unique_ptr<RTC::RTCP::SenderReportPacket> senderReportPacket{
+			RTC::RTCP::SenderReportPacket::Factory(
+			  rtcpCommon::FactoryBuffer, sizeof(rtcpCommon::FactoryBuffer))
+		};
 
-		report.SetSsrc(Ssrc);
-		report.SetNtpSec(RemoteBaseNtpSec + idx);
-		report.SetNtpFrac(0);
-		report.SetRtpTs(RemoteBaseTs + (idx * ClockRate));
+		senderReportPacket->SetSsrc(Ssrc);
+		senderReportPacket->SetNtp({ .seconds = RemoteBaseNtpSec + idx, .fractions = 0 });
+		senderReportPacket->SetRtpTimestamp(RemoteBaseTs + (idx * ClockRate));
 
-		rtpStream.ReceiveRtcpSenderReport(std::addressof(report), shared.GetTimeUs());
+		rtpStream.ReceiveRtcpSenderReportPacket(senderReportPacket.get(), shared.GetTimeUs());
 		estimator.SenderReportReceived(std::addressof(rtpStream));
 	};
 
@@ -106,13 +119,13 @@ SCENARIO("RemoteCaptureTimeEstimator", "[rtp][rtcp][remotecapturetimeestimator]"
 			 rtpCommon::DataBuffer }
 		};
 
-		REQUIRE(packet->SetExtensions(RTC::RTP::Packet::ExtensionsType::OneByte, extensions) == true);
+		REQUIRE(packet->SetExtensions(RTC::RTP::Packet::ExtensionsForm::OneByte, extensions) == true);
 
-		RTC::RTP::HeaderExtensionIds headerExtensionIds;
+		RTC::RTP::ExtensionMapping extensionMapping;
 
-		headerExtensionIds.absCaptureTime = AbsCaptureTimeId;
+		extensionMapping.absCaptureTime = AbsCaptureTimeId;
 
-		packet->AssignExtensionIds(headerExtensionIds);
+		packet->SetExtensionMapping(extensionMapping);
 
 		const auto ntp = Utils::Time::TimeUsToNtp(static_cast<int64_t>(RemoteBaseNtpSec) * 1000000);
 

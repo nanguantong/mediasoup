@@ -78,12 +78,13 @@ namespace RTC
 					return nullptr;
 				}
 
-				Chunk* chunk{ nullptr }; // NOLINT(misc-const-correctness)
+				Chunk* chunk{ nullptr };
 
 				MS_DEBUG_DEV(
-				  "parsing SCTP chunk [ptr:%zu, type:%" PRIu8 "]",
+				  "parsing SCTP chunk [ptr:%zu, type:%" PRIu8 " (%s)]",
 				  ptr - buffer,
-				  static_cast<uint8_t>(chunkType));
+				  static_cast<uint8_t>(chunkType),
+				  Chunk::ChunkTypeToString(chunkType).c_str());
 
 				switch (chunkType)
 				{
@@ -275,6 +276,15 @@ namespace RTC
 			return packet;
 		}
 
+		size_t Packet::ComputeLengthFor(size_t chunksLength)
+		{
+			MS_TRACE();
+
+			// The chunks go right after the common header, and each one is already
+			// padded to 4 bytes.
+			return Packet::CommonHeaderLength + chunksLength;
+		}
+
 		/* Instance methods. */
 
 		Packet::Packet(uint8_t* buffer, size_t bufferLength) : Serializable(buffer, bufferLength)
@@ -340,7 +350,7 @@ namespace RTC
 			Serializable::CloneInto(clonedPacket);
 
 			// Soft clone packet chunks into the given cloned packet.
-			for (auto* chunk : this->chunks)
+			for (const auto* chunk : this->chunks)
 			{
 				const size_t offset = chunk->GetBuffer() - GetBuffer();
 
@@ -392,7 +402,7 @@ namespace RTC
 			// NOTE: It may throw.
 			SetLength(previousLength + chunk->GetLength());
 
-			Chunk* clonedChunk{ nullptr }; // NOLINT(misc-const-correctness)
+			Chunk* clonedChunk{ nullptr };
 
 			try
 			{
@@ -419,7 +429,7 @@ namespace RTC
 
 			SetChecksum(0);
 
-			auto crc32c = Utils::Crypto::GetCRC32c(GetBuffer(), GetLength());
+			const auto crc32c = Utils::Crypto::GetCRC32c(GetBuffer(), GetLength());
 
 			SetChecksum(crc32c);
 		}
@@ -428,12 +438,12 @@ namespace RTC
 		{
 			MS_TRACE();
 
-			auto crc32c = GetChecksum();
+			const auto crc32c = GetChecksum();
 
 			// NOTE: Cannot use `SetChecksum()` because this is a `const` method.
 			GetHeaderPointer()->checksum = 0;
 
-			auto computedCrc32c = Utils::Crypto::GetCRC32c(GetBuffer(), GetLength());
+			const auto computedCrc32c = Utils::Crypto::GetCRC32c(GetBuffer(), GetLength());
 
 			GetHeaderPointer()->checksum = htonl(crc32c);
 

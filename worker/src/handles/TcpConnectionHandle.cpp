@@ -6,15 +6,20 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
+#include <array>
+#include <cstdlib> // std::abort()
 #include <cstring> // std::memcpy()
+#include <exception>
 
 /* Static methods for UV callbacks. */
 
+// libuv imposes the callback signature.
+// NOLINTNEXTLINE(misc-const-correctness)
 inline static void onAlloc(uv_handle_t* handle, size_t suggestedSize, uv_buf_t* buf)
 {
 	MS_TRACE();
 
-	auto* connection = static_cast<TcpConnectionHandle*>(handle->data);
+	auto* const connection = static_cast<TcpConnectionHandle*>(handle->data);
 
 	if (connection)
 	{
@@ -22,11 +27,13 @@ inline static void onAlloc(uv_handle_t* handle, size_t suggestedSize, uv_buf_t* 
 	}
 }
 
+// libuv imposes the callback signature.
+// NOLINTNEXTLINE(misc-const-correctness)
 inline static void onRead(uv_stream_t* handle, ssize_t nread, const uv_buf_t* buf)
 {
 	MS_TRACE();
 
-	auto* connection = static_cast<TcpConnectionHandle*>(handle->data);
+	auto* const connection = static_cast<TcpConnectionHandle*>(handle->data);
 
 	if (connection)
 	{
@@ -34,13 +41,15 @@ inline static void onRead(uv_stream_t* handle, ssize_t nread, const uv_buf_t* bu
 	}
 }
 
+// libuv imposes the callback signature.
+// NOLINTNEXTLINE(misc-const-correctness)
 inline static void onWrite(uv_write_t* req, int status)
 {
 	MS_TRACE();
 
-	auto* writeData  = static_cast<TcpConnectionHandle::UvWriteData*>(req->data);
-	auto* handle     = req->handle;
-	auto* connection = static_cast<TcpConnectionHandle*>(handle->data);
+	const auto* const writeData     = static_cast<TcpConnectionHandle::UvWriteData*>(req->data);
+	const uv_stream_t* const handle = req->handle;
+	auto* const connection          = static_cast<TcpConnectionHandle*>(handle->data);
 
 	if (connection)
 	{
@@ -60,11 +69,13 @@ inline static void onCloseTcp(uv_handle_t* handle)
 	delete reinterpret_cast<uv_tcp_t*>(handle);
 }
 
+// libuv imposes the callback signature.
+// NOLINTNEXTLINE(misc-const-correctness)
 inline static void onShutdown(uv_shutdown_t* req, int /*status*/)
 {
 	MS_TRACE();
 
-	auto* handle = req->handle;
+	uv_stream_t* const handle = req->handle;
 
 	delete req;
 
@@ -91,7 +102,16 @@ TcpConnectionHandle::~TcpConnectionHandle()
 
 	if (!this->closed)
 	{
-		InternalClose();
+		try
+		{
+			InternalClose();
+		}
+		// NOTE: MS_ABORT() throws in the lib build, and an exception cannot leave
+		// a destructor.
+		catch (const std::exception&)
+		{
+			std::abort();
+		}
 	}
 
 	delete[] this->buffer;
@@ -125,7 +145,7 @@ void TcpConnectionHandle::Dump(int indentation) const
 }
 
 void TcpConnectionHandle::Setup(
-  Listener* listener, struct sockaddr_storage* localAddr, const std::string& localIp, uint16_t localPort)
+  Listener* listener, sockaddr_storage* localAddr, const std::string& localIp, uint16_t localPort)
 {
 	MS_TRACE();
 
@@ -158,7 +178,6 @@ bool TcpConnectionHandle::Start() noexcept
 		return false;
 	}
 
-	// NOLINTNEXTLINE(misc-const-correctness)
 	const int err = uv_read_start(
 	  reinterpret_cast<uv_stream_t*>(this->uvHandle),
 	  static_cast<uv_alloc_cb>(onAlloc),
@@ -209,16 +228,15 @@ void TcpConnectionHandle::Write(
 	// data then build a uv_req_t and use uv_write().
 
 	const size_t totalLen = len1 + len2;
-	uv_buf_t buffers[2];
-	int written{ 0 };
-	int err;
+	const std::array<uv_buf_t, 2> buffers{
+		uv_buf_init(reinterpret_cast<char*>(const_cast<uint8_t*>(data1)), len1),
+		uv_buf_init(reinterpret_cast<char*>(const_cast<uint8_t*>(data2)), len2)
+	};
 
-	buffers[0] = uv_buf_init(reinterpret_cast<char*>(const_cast<uint8_t*>(data1)), len1);
-	buffers[1] = uv_buf_init(reinterpret_cast<char*>(const_cast<uint8_t*>(data2)), len2);
-	written    = uv_try_write(reinterpret_cast<uv_stream_t*>(this->uvHandle), buffers, 2);
+	int written = uv_try_write(reinterpret_cast<uv_stream_t*>(this->uvHandle), buffers.data(), 2);
 
 	// All the data was written. Done.
-	if (written == static_cast<int>(totalLen))
+	if (std::cmp_equal(written, totalLen))
 	{
 		// Update sent bytes.
 		this->sentBytes += written;
@@ -245,13 +263,17 @@ void TcpConnectionHandle::Write(
 		written = 0;
 	}
 
+	// Update sent bytes with the data that uv_try_write() already wrote.
+	this->sentBytes += written;
+
 	const size_t pendingLen = totalLen - written;
-	auto* writeData         = new UvWriteData(pendingLen);
+
+	auto* const writeData = new UvWriteData(pendingLen);
 
 	writeData->req.data = static_cast<void*>(writeData);
 
 	// If the first buffer was not entirely written then splice it.
-	if (static_cast<size_t>(written) < len1)
+	if (std::cmp_less(written, len1))
 	{
 		std::memcpy(
 		  writeData->store, data1 + static_cast<size_t>(written), len1 - static_cast<size_t>(written));
@@ -270,7 +292,7 @@ void TcpConnectionHandle::Write(
 
 	const uv_buf_t buffer = uv_buf_init(reinterpret_cast<char*>(writeData->store), pendingLen);
 
-	err = uv_write(
+	const int err = uv_write(
 	  std::addressof(writeData->req),
 	  reinterpret_cast<uv_stream_t*>(this->uvHandle),
 	  std::addressof(buffer),
@@ -318,6 +340,12 @@ void TcpConnectionHandle::InternalClose()
 
 	this->closed = true;
 
+	// There is no UV handle if Setup() failed.
+	if (!this->uvHandle)
+	{
+		return;
+	}
+
 	// Tell the UV handle that the TcpConnectionHandle has been closed.
 	this->uvHandle->data = nullptr;
 
@@ -326,14 +354,7 @@ void TcpConnectionHandle::InternalClose()
 
 	if (err != 0)
 	{
-		try
-		{
-			MS_ABORT("uv_read_stop() failed: %s", uv_strerror(err));
-		}
-		catch (const std::exception& e)
-		{
-			MS_ERROR("%s", e.what());
-		}
+		MS_ABORT("uv_read_stop() failed: %s", uv_strerror(err));
 	}
 
 	// If there is no error and the peer didn't close its connection side then close gracefully.
@@ -341,21 +362,16 @@ void TcpConnectionHandle::InternalClose()
 	{
 		// Use uv_shutdown() so pending data to be written will be sent to the peer
 		// before closing.
-		auto* req = new uv_shutdown_t;
+		auto* const req = new uv_shutdown_t;
+
 		req->data = static_cast<void*>(this);
-		err       = uv_shutdown(
+
+		err = uv_shutdown(
 		  req, reinterpret_cast<uv_stream_t*>(this->uvHandle), static_cast<uv_shutdown_cb>(onShutdown));
 
 		if (err != 0)
 		{
-			try
-			{
-				MS_ABORT("uv_shutdown() failed: %s", uv_strerror(err));
-			}
-			catch (const std::exception& e)
-			{
-				MS_ERROR("%s", e.what());
-			}
+			MS_ABORT("uv_shutdown() failed: %s", uv_strerror(err));
 		}
 	}
 	// Otherwise directly close the socket.
@@ -369,17 +385,14 @@ bool TcpConnectionHandle::SetPeerAddress()
 {
 	MS_TRACE();
 
-	int err;
 	int len = sizeof(this->peerAddr);
 
 	// NOTE: `uv_tcp_getpeername()` fails if the socket is not connected. This is
 	// a legitimate scenario since at the time `uv_accept()` was called it may
 	// happen that the peer sent a TCP RST already. In fact, this is the proper
 	// and only way to check whether the socket remains connected now.
-	err = uv_tcp_getpeername(
-	  this->uvHandle,
-	  reinterpret_cast<struct sockaddr*>(std::addressof(this->peerAddr)),
-	  std::addressof(len));
+	const int err = uv_tcp_getpeername(
+	  this->uvHandle, reinterpret_cast<sockaddr*>(std::addressof(this->peerAddr)), std::addressof(len));
 
 	if (err != 0)
 	{
@@ -391,7 +404,7 @@ bool TcpConnectionHandle::SetPeerAddress()
 	int family;
 
 	Utils::IP::GetAddressInfo(
-	  reinterpret_cast<const struct sockaddr*>(std::addressof(this->peerAddr)),
+	  reinterpret_cast<const sockaddr*>(std::addressof(this->peerAddr)),
 	  family,
 	  this->peerIp,
 	  this->peerPort);

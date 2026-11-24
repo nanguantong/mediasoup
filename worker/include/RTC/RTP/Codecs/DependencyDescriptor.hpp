@@ -2,25 +2,25 @@
 #define MS_RTC_RTP_CODECS_DEPENDENCY_DESCRIPTOR_HPP
 
 #include "common.hpp"
-#include "Utils.hpp" // BitStream.
+#include "Utils/UnwrappedSequenceNumber.hpp"
+#include "Utils.hpp"
 #include <ankerl/unordered_dense.h>
 
 namespace RTC
 {
 	namespace RTP
 	{
+		class Packet;
+
 		namespace Codecs
 		{
 			struct DependencyDescriptor
 			{
-				class Listener
-				{
-				public:
-					virtual ~Listener() = default;
-
-				public:
-					virtual void OnDependencyDescriptorUpdated(const uint8_t* data, size_t len) = 0;
-				};
+			public:
+				/**
+				 * Bits the Dependency Descriptor numbers frames with.
+				 */
+				static constexpr uint8_t FrameIdLength{ 16 };
 
 			public:
 				enum class DecodeTargetIndication : uint8_t
@@ -32,7 +32,7 @@ namespace RTC
 				};
 
 			private:
-				static ankerl::unordered_dense::map<DecodeTargetIndication, std::string> dtiToString;
+				static const ankerl::unordered_dense::map<DecodeTargetIndication, std::string> Dti2String;
 
 			private:
 				struct FrameDependencyTemplate
@@ -49,6 +49,15 @@ namespace RTC
 					std::vector<uint8_t> frameDiffChains;
 				};
 
+				/**
+				 * Spatial and temporal layer a decode target corresponds to.
+				 */
+				struct DecodeTargetLayer
+				{
+					uint8_t spatialLayer{ 0 };
+					uint8_t temporalLayer{ 0 };
+				};
+
 			public:
 				struct TemplateDependencyStructure
 				{
@@ -56,7 +65,67 @@ namespace RTC
 					uint32_t temporalLayers{ 0 };
 					uint8_t templateIdOffset{ 0 };
 					uint8_t decodeTargetCount{ 0 };
+					uint32_t chainCount{ 0 };
 					std::vector<FrameDependencyTemplate> templateLayers;
+					/**
+					 * Which spatial and temporal layer each decode target corresponds to,
+					 * derived from the decode target indications of the templates.
+					 */
+					std::vector<DecodeTargetLayer> decodeTargetLayers;
+				};
+
+				/**
+				 * What parsing the descriptors of a stream takes: the template
+				 * dependency structure in use and which frame brought it.
+				 *
+				 * @remarks
+				 * - The frame is kept so that a descriptor of an older one, which a
+				 *   retransmission or a reordered packet may carry, does not replace
+				 *   the structure in use with an outdated one, leaving every following
+				 *   packet parsed with the wrong templates until the next key frame.
+				 */
+				struct Context
+				{
+					/**
+					 * Template dependency structure the descriptors of the stream are
+					 * parsed with.
+					 */
+					std::shared_ptr<TemplateDependencyStructure> templateDependencyStructure;
+					/**
+					 * Orders the frames of the stream despite their number wrapping around.
+					 * Given every frame, not just the ones that bring a structure.
+					 */
+					Utils::UnwrappedSequenceNumber<uint16_t>::Unwrapper frameNumberUnwrapper;
+					/**
+					 * Frame that brought the structure in use, if any yet.
+					 */
+					std::optional<Utils::UnwrappedSequenceNumber<uint16_t>> unwrappedStructureFrameNumber;
+				};
+
+				/**
+				 * Changes to apply to the descriptor when writing it.
+				 *
+				 * @remarks
+				 * - The frame number is fixed width, so moving it never changes the
+				 *   length of the descriptor. Only the active decode targets bitmask may
+				 *   make it longer than it came.
+				 */
+				struct RewriteParams
+				{
+					/**
+					 * Frame number to tell the endpoint, or no value to leave the one the
+					 * descriptor came with.
+					 *
+					 * The frame numbers of a stream switched to follow the ones already
+					 * sent rather than going back, which would make the endpoint drop the
+					 * key frame.
+					 */
+					std::optional<uint16_t> frameNumber;
+					/**
+					 * Decode targets to tell the endpoint are active, or no value to
+					 * leave the descriptor saying whatever it came with.
+					 */
+					std::optional<uint32_t> activeDecodeTargetsBitmask;
 				};
 
 			public:
@@ -65,38 +134,143 @@ namespace RTC
 				uint8_t frameDependencyTemplateId{ 0 };
 				uint16_t frameNumber{ 0 };
 				uint8_t templateId{ 0 };
-				// Given by argument.
-				TemplateDependencyStructure* const templateDependencyStructure;
+
+				/**
+				 * Given by argument, and replaced by a new one whenever this descriptor
+				 * carries a template dependency structure.
+				 *
+				 * @remarks
+				 * - Shared so that descriptors parsed with a previous structure (which
+				 *   may still sit in a retransmission buffer) keep seeing it unchanged.
+				 */
+				std::shared_ptr<TemplateDependencyStructure> templateDependencyStructure;
 				std::vector<uint8_t> decodeTargetProtectedBy;
-				std::optional<uint32_t> activeDecodeTargetsBitmask{ std::nullopt };
+				std::optional<uint32_t> activeDecodeTargetsBitmask;
 				// Calculated.
 				uint8_t temporalLayer{ 0 };
 				uint8_t spatialLayer{ 0 };
 				// Whether the frame is a key frame. Set to true if the descriptor contains template layers.
 				bool isKeyFrame{ false };
 
-			private:
-				DependencyDescriptor::Listener* listener;
-
 			public:
-				static DependencyDescriptor* Parse(
-				  const uint8_t* data,
-				  size_t len,
-				  DependencyDescriptor::Listener* listener,
-				  std::unique_ptr<TemplateDependencyStructure>& templateDependencyStructure);
+				static DependencyDescriptor* Parse(const uint8_t* data, size_t len, Context& context);
 
 				DependencyDescriptor(
 				  const uint8_t* data,
 				  size_t len,
-				  DependencyDescriptor::Listener* listener,
-				  TemplateDependencyStructure* templateDependencyStructure);
+				  std::shared_ptr<TemplateDependencyStructure> templateDependencyStructure);
 
 				void Dump(int indentation = 0) const;
-				void UpdateListener(DependencyDescriptor::Listener* listener);
-				const uint8_t* Serialize(uint8_t& len);
-				bool UpdateActiveDecodeTargets(uint32_t maxSpatialLayer, uint32_t maxTemporalLayer);
+
+				/**
+				 * Rewrites the descriptor of the given packet with the given params,
+				 * and tells whether it carries the new info.
+				 *
+				 * @remarks
+				 * - Writing the active decode targets bitmask makes the descriptor longer
+				 *   than it came. `Producer::MangleRtpPacket()` reserves room for it, so
+				 *   it fits unless the descriptor was already bigger than 250 bytes, in
+				 *   which case writing it would exceed the maximum size of a 2 bytes RTP
+				 *   header extension. In that case we opt for skipping the bitmask and
+				 *   rewriting the frame number, so the endpoint can decode the frame.
+				 * - The packet is given on every call rather than remembered, since a
+				 *   packet shares its payload descriptor handler with its clones and every
+				 *   Consumer of its Producer.
+				 */
+				bool Rewrite(const RewriteParams& params, RTP::Packet* packet);
+
+				/**
+				 * Writes the descriptor back as it was received, undoing any rewrite.
+				 */
+				void Restore(RTP::Packet* packet);
+
+				/**
+				 * Bitmask of the decode targets given the maximum spatial and temporal layers.
+				 *
+				 * Bit i corresponds to decode target i, so the returned value is what
+				 * `active_decode_targets_bitmask` must be set to.
+				 */
+				uint32_t GetDecodeTargetsBitmask(uint8_t maxSpatialLayer, uint8_t maxTemporalLayer) const;
+
+				/**
+				 * Bytes the descriptor takes once rewritten by `Write()`, which may be
+				 * more than it came in since the active decode targets bitmask is always
+				 * written even if it was not present.
+				 *
+				 * It's a maximum because when layers are not filtered the descriptor stays
+				 * untouched. The Producer uses it to reserve room in the RTP header
+				 * extension for whatever its Consumers may write there.
+				 */
+				uint8_t GetMaxLength() const;
+
+				/**
+				 * Writes the descriptor into the given buffer with the given params,
+				 * and returns how many bytes it wrote, or 0 if it does not fit.
+				 *
+				 * Everything else is copied over from the descriptor as received,
+				 * including the template dependency structure and the custom frame
+				 * dependency fields, which are not parsed into any field of this class.
+				 */
+				uint8_t Write(const RewriteParams& params, uint8_t* buffer) const;
+
+				/**
+				 * Whether decoding can start at this frame for the decode target formed
+				 * by the given spatial and temporal layer, this is, whether an endpoint
+				 * that was not being sent that decode target can be switched into it
+				 * here.
+				 *
+				 * That is what a "switch" indication means: this frame and every later
+				 * frame of that decode target can be decoded without any older one.
+				 */
+				bool IsSwitchPointForDecodeTarget(uint8_t spatialLayer, uint8_t temporalLayer) const;
+
+				/**
+				 * Whether decoding can start at this frame for the decode target formed
+				 * by the spatial layer of this very frame and the given temporal layer,
+				 * this is, whether an endpoint can be switched into that temporal layer
+				 * here.
+				 *
+				 * That is what a "switch" indication means: this frame and every later
+				 * frame of that decode target can be decoded without any older one.
+				 */
+				bool IsSwitchPointForTemporalLayer(uint8_t temporalLayer) const;
+
+				/**
+				 * Whether this frame belongs to the decode target formed by the given
+				 * spatial and temporal layer, this is, whether an endpoint decoding just
+				 * that decode target needs it.
+				 *
+				 * @remarks
+				 * - A frame whose decode target indication for it is "not present" is
+				 *   not part of it. That is how K-SVC differs from full SVC: there the
+				 *   lower spatial layers of a delta picture are not referenced by the
+				 *   higher ones, so an endpoint on a higher layer does not need them.
+				 *   Key frames, which is where inter layer prediction happens, are
+				 *   present in every decode target and hence always kept.
+				 */
+				bool IsPresentInDecodeTarget(uint8_t spatialLayer, uint8_t temporalLayer) const;
+
+				/**
+				 * Whether the decode target formed by the given spatial and temporal
+				 * layer is already reaching an endpoint that is being sent the one formed
+				 * by the forwarded pair, this is, whether every frame it needs is also
+				 * needed by that one.
+				 *
+				 * @remarks
+				 * - This is what tells a switch point apart from an entry point. A
+				 *   "switch" indication promises that no frame of the decode target
+				 *   older than this one is needed, which is of no use when its frames
+				 *   were not being sent at all, as happens in K-SVC.
+				 */
+				bool IsDecodeTargetActive(
+				  uint8_t spatialLayer,
+				  uint8_t temporalLayer,
+				  uint8_t forwardedSpatialLayer,
+				  uint8_t forwardedTemporalLayer) const;
 
 			private:
+				size_t GetDecodeTarget(uint8_t spatialLayer, uint8_t temporalLayer) const;
+				bool IsDecodeTargetActive(size_t decodeTarget, size_t forwardedDecodeTarget) const;
 				uint8_t GetSpatialLayer() const;
 				uint8_t GetTemporalLayer() const;
 
@@ -107,12 +281,31 @@ namespace RTC
 				bool ReadTemplateDecodeTargetIndications();
 				bool ReadTemplateFrameDiffs();
 				bool ReadTemplateFrameDiffChains();
+				bool ReadRenderResolutions();
 				bool ReadFrameDependencyDefinition();
-				bool WriteMandatoryDescriptorFields();
-				bool WriteExtendedDescriptorFields();
+				bool ReadFrameDecodeTargetIndications();
+				bool ReadFrameDiffs();
+				bool ReadFrameDiffChains();
+				void ComputeDecodeTargetLayers() const;
+				uint32_t GetRewrittenBitCount(bool withActiveDecodeTargets) const;
 
 			private:
-				Utils::BitStream bitStream;
+				Utils::BitReader bitReader;
+				// Length of the descriptor as received.
+				const uint8_t length;
+				// Whether the descriptor in the packet no longer is the one received.
+				bool rewritten{ false };
+				// Where things are within the descriptor as received, so that the parts
+				// that are not parsed can be copied over verbatim when rewriting.
+				bool extendedDescriptorFieldsPresent{ false };
+				bool templateDependencyStructurePresent{ false };
+				bool activeDecodeTargetsPresent{ false };
+				bool customDecodeTargetIndicationsPresent{ false };
+				bool customFrameDiffsPresent{ false };
+				bool customChainsPresent{ false };
+				uint32_t templateDependencyStructureEndOffset{ 0 };
+				uint32_t frameDependencyDefinitionOffset{ 0 };
+				uint32_t frameDependencyDefinitionEndOffset{ 0 };
 			};
 		} // namespace Codecs
 	} // namespace RTP
